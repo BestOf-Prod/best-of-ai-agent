@@ -3,6 +3,14 @@ run = "streamlit run app.py"
 
 [nix]
 channel = "stable-24_05"
+packages = ["glibcLocales"]
 
 [deployment]
 run = ["sh", "-c", "streamlit run app.py"]
+
+[[ports]]
+localPort = 8501
+externalPort = 80
+
+[objectStorage]
+defaultBucketID = "replit-objstore-57e42b1e-e51d-430d-837c-ce676128b474"
