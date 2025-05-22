@@ -7,7 +7,7 @@ import uuid
 import time
 
 # Import modules
-from extractors.espn_extractor import extract_from_espn
+from extractors.url_extractor import extract_from_url
 from utils.logger import setup_logging
 from utils.processor import process_article
 
@@ -20,7 +20,7 @@ def main():
     
     # Configure page
     st.set_page_config(
-        page_title="Sports Article Extractor", 
+        page_title="Best of AI Agent", 
         layout="wide",
         initial_sidebar_state="expanded"
     )
@@ -36,7 +36,7 @@ def main():
         logger.info("Initialized current_extraction session state")
     
     # Application title
-    st.title("Sports Article Extractor")
+    st.title("Best of AI Agent")
     st.subheader("Demonstration of automated article extraction")
     logger.info("Rendered application header")
     
@@ -129,7 +129,7 @@ def handle_extraction_input(extraction_method, delay):
                 
                 try:
                     logger.info("Starting ESPN extraction")
-                    article_data = extract_from_espn(url)
+                    article_data = extract_from_url(url)
                     logger.debug(f"Extraction result: success={article_data['success']}")
                     
                     if article_data["success"]:
@@ -158,7 +158,7 @@ def handle_extraction_input(extraction_method, delay):
                     # Extract from a known good ESPN article
                     sample_url = "https://www.espn.com/nfl/story/_/id/38786845/nfl-week-11-takeaways-2023-what-learned-big-questions-every-game-future-team-outlooks"
                     logger.info(f"Using sample URL: {sample_url}")
-                    article_data = extract_from_espn(sample_url)
+                    article_data = extract_from_url(sample_url)
                     logger.debug(f"Sample extraction result: success={article_data['success']}")
                     
                     if article_data["success"]:
@@ -181,6 +181,13 @@ def display_current_extraction():
     article = st.session_state.current_extraction
     
     st.write("## Extracted Article Preview")
+    
+    # Display the newspaper clipping at the top if available
+    if article.get("clipping_image"):
+        st.write("### Newspaper Clipping")
+        st.image(article["clipping_image"], use_column_width=True)
+        logger.debug("Newspaper clipping displayed")
+        st.write("---")  # Add a separator after the clipping
     
     col1, col2 = st.columns([1, 2])
     

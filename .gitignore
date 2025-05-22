@@ -51,3 +51,11 @@ htmlcov/
 .cache
 coverage.xml
 *.cover 
+
+# Images
+images/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp

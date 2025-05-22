@@ -1,25 +1,143 @@
-# ESPN extractor
+# Generic article extractor
 import requests
 from bs4 import BeautifulSoup
 import re
 import logging
 from utils.logger import setup_logging
 import time
+from urllib.parse import urlparse
+from PIL import Image, ImageDraw, ImageFont
+import io
+import textwrap
+import os
+from datetime import datetime
 
 # Setup logging
 logger = setup_logging(__name__)
 
-def extract_from_espn(url):
+def wrap_text(text, font, max_width, draw):
     """
-    Extract article content from an ESPN article URL
+    Wrap text for a given pixel width using the provided font.
+    """
+    lines = []
+    if not text:
+        return lines
+    words = text.split()
+    line = ''
+    for word in words:
+        test_line = f"{line} {word}".strip()
+        bbox = draw.textbbox((0, 0), test_line, font=font)
+        width = bbox[2] - bbox[0]
+        if width <= max_width:
+            line = test_line
+        else:
+            if line:
+                lines.append(line)
+            line = word
+    if line:
+        lines.append(line)
+    return lines
+
+def create_newspaper_clipping(article_data):
+    """
+    Create a newspaper clipping style image from the article data
     
     Args:
-        url (str): The URL of the ESPN article to extract
+        article_data (dict): The extracted article data
+        
+    Returns:
+        bytes: The image data in bytes format
+    """
+    logger.info("Starting newspaper clipping creation")
+    try:
+        # Create a new image with a white background
+        width = 1200
+        height = 1600
+        margin = 100
+        section_padding = 30
+        logger.info(f"Creating new image with dimensions {width}x{height}")
+        image = Image.new('RGB', (width, height), 'white')
+        draw = ImageDraw.Draw(image)
+        
+        # Load fonts (using default fonts for now)
+        logger.info("Loading fonts")
+        try:
+            headline_font = ImageFont.truetype("Arial Bold", 48)
+            date_font = ImageFont.truetype("Arial", 24)
+            content_font = ImageFont.truetype("Arial", 28)
+            logger.info("Successfully loaded Arial fonts")
+        except:
+            # Fallback to default font if Arial is not available
+            logger.warning("Arial fonts not available, falling back to default font")
+            headline_font = ImageFont.load_default()
+            date_font = ImageFont.load_default()
+            content_font = ImageFont.load_default()
+        
+        # Add a light gray background for the clipping effect
+        logger.info("Adding background and border effects")
+        draw.rectangle([(50, 50), (width-50, height-50)], fill='#f5f5f5')
+        
+        # Add the headline
+        headline = article_data.get('headline', 'Unknown Headline')
+        max_text_width = width - 2 * margin
+        headline_lines = wrap_text(headline, headline_font, max_text_width, draw)
+        headline_text = '\n'.join(headline_lines)
+        logger.info(f"Adding headline: {headline[:50]}...")
+        y = margin
+        draw.multiline_text((margin, y), headline_text, fill='black', font=headline_font, spacing=6)
+        # Calculate height of headline block
+        bbox = draw.multiline_textbbox((margin, y), headline_text, font=headline_font, spacing=6)
+        y = bbox[3] + section_padding
+        
+        # Add the date and source
+        date_text = f"{article_data.get('date', 'Unknown Date')} - {article_data.get('source', 'Unknown Source')}"
+        date_lines = wrap_text(date_text, date_font, max_text_width, draw)
+        date_text_wrapped = '\n'.join(date_lines)
+        logger.info(f"Adding date and source: {date_text}")
+        draw.multiline_text((margin, y), date_text_wrapped, fill='#666666', font=date_font, spacing=4)
+        bbox = draw.multiline_textbbox((margin, y), date_text_wrapped, font=date_font, spacing=4)
+        y = bbox[3] + section_padding
+        
+        # Add the content
+        content = article_data.get('text', '')
+        content_lines = wrap_text(content, content_font, max_text_width, draw)
+        content_text = '\n'.join(content_lines)
+        logger.info(f"Adding content (first 50 chars): {content[:50]}...")
+        draw.multiline_text((margin, y), content_text, fill='black', font=content_font, spacing=6)
+        # No need to update y further unless you want to add more sections
+        
+        # Add a decorative border
+        draw.rectangle([(40, 40), (width-40, height-40)], outline='#333333', width=2)
+        
+        # Save the image to disk in the images directory
+        logger.info("Saving image to disk")
+        os.makedirs('images', exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        image_path = os.path.join('images', f'newspaper_clipping_{timestamp}.png')
+        image.save(image_path, format='PNG')
+        
+        # Convert the saved image to bytes
+        logger.info("Reading image bytes from disk")
+        with open(image_path, 'rb') as f:
+            img_byte_arr = f.read()
+        
+        logger.info("Successfully created newspaper clipping in memory")
+        return img_byte_arr
+    except Exception as e:
+        logger.error(f"Error creating newspaper clipping: {str(e)}")
+        return None
+
+def extract_from_url(url):
+    """
+    Extract article content from a given URL
+    
+    Args:
+        url (str): The URL of the article to extract
         
     Returns:
         dict: A dictionary containing the extracted article data or error information
     """
-    logger.info(f"Starting extraction from ESPN URL: {url}")
+    logger.info(f"Starting extraction from URL: {url}")
     
     try:
         # Configure request headers to mimic a browser
@@ -49,7 +167,15 @@ def extract_from_espn(url):
         # Extract headline - try multiple selectors
         logger.debug("Extracting headline")
         headline = None
-        headline_selectors = ['h1', '.article-header h1', '.article-headline']
+        headline_selectors = [
+            'h1', 
+            'article h1',
+            '.article-header h1', 
+            '.article-headline',
+            '.headline',
+            '.story-headline',
+            'header h1'
+        ]
         
         for selector in headline_selectors:
             headline_elem = soup.select_one(selector)
@@ -79,13 +205,21 @@ def extract_from_espn(url):
             '.article-meta', 
             '.pub-date',
             '.article-date',
-            'time'
+            'time',
+            '.date',
+            '.published-date',
+            'meta[property="article:published_time"]'
         ]
         
         for selector in date_selectors:
             date_element = soup.select_one(selector)
             if date_element:
-                date_text = date_element.text.strip()
+                # Handle both content and meta tags
+                if date_element.name == 'meta':
+                    date_text = date_element.get('content', '').strip()
+                else:
+                    date_text = date_element.text.strip()
+                
                 logger.debug(f"Found date using selector '{selector}': {date_text}")
                 
                 # Try to extract just the date part with regex
@@ -104,13 +238,20 @@ def extract_from_espn(url):
             '.author', 
             '.byline',
             '.author-name',
-            '.article-meta .name'
+            '.article-meta .name',
+            '.writer',
+            'meta[name="author"]',
+            '.contributor'
         ]
         
         for selector in author_selectors:
             author_element = soup.select_one(selector)
             if author_element:
-                author = author_element.text.strip()
+                # Handle both content and meta tags
+                if author_element.name == 'meta':
+                    author = author_element.get('content', '').strip()
+                else:
+                    author = author_element.text.strip()
                 
                 # Clean up common prefixes
                 author = re.sub(r'^By\s+', '', author, flags=re.IGNORECASE)
@@ -129,7 +270,11 @@ def extract_from_espn(url):
             '#story-body',
             '.story-content',
             '[data-article-id]',
-            '.article__content'
+            '.article__content',
+            'article',
+            '.post-content',
+            '.entry-content',
+            '.content'
         ]
         
         article_body = None
@@ -149,7 +294,7 @@ def extract_from_espn(url):
             for p in paragraphs:
                 text = p.text.strip()
                 # Skip very short paragraphs or known ad/promo text
-                if len(text) > 20 and not any(skip in text.lower() for skip in ['advertisement', 'subscribe', 'privacy policy']):
+                if len(text) > 20 and not any(skip in text.lower() for skip in ['advertisement', 'subscribe', 'privacy policy', 'cookie policy', 'terms of use']):
                     filtered_paragraphs.append(text)
             
             content = "\n\n".join(filtered_paragraphs)
@@ -178,13 +323,22 @@ def extract_from_espn(url):
             '.article-featured-image img',
             '.main-image img',
             'article img',
-            '.article img'
+            '.article img',
+            '.featured-image img',
+            'meta[property="og:image"]',
+            'meta[name="twitter:image"]'
         ]
         
         for selector in image_selectors:
             image_tags = soup.select(selector)
             for img in image_tags:
-                if img.get('src') and not any(skip in img.get('src', '').lower() for skip in ['spacer', 'pixel', 'advertisement']):
+                # Handle both img tags and meta tags
+                if img.name == 'meta':
+                    image_url = img.get('content')
+                else:
+                    image_url = img.get('src')
+                
+                if image_url and not any(skip in image_url.lower() for skip in ['spacer', 'pixel', 'advertisement']):
                     # Filter out small icons or tracking pixels
                     if img.get('width') and img.get('height'):
                         try:
@@ -195,10 +349,11 @@ def extract_from_espn(url):
                         except (ValueError, TypeError):
                             pass  # Can't determine size, continue
 
-                    image_url = img['src']
                     # Fix relative URLs
                     if image_url.startswith('/'):
-                        image_url = 'https://www.espn.com' + image_url
+                        parsed_url = urlparse(url)
+                        base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+                        image_url = base_url + image_url
                     logger.debug(f"Found image URL: {image_url}")
                     break
             
@@ -210,17 +365,30 @@ def extract_from_espn(url):
         else:
             logger.info("No suitable image found")
         
+        # Get the source domain
+        parsed_url = urlparse(url)
+        source = parsed_url.netloc.replace('www.', '')
+        
         logger.info("Article extraction completed successfully")
-        return {
+        
+        # After successful extraction, create the newspaper clipping
+        article_data = {
             "success": True,
             "headline": headline_text,
             "date": date_text,
             "author": author,
             "text": content,
-            "source": "ESPN",
+            "source": source,
             "url": url,
             "image_url": image_url,
         }
+        
+        # Generate the newspaper clipping
+        clipping_image = create_newspaper_clipping(article_data)
+        if clipping_image:
+            article_data["clipping_image"] = clipping_image
+            
+        return article_data
         
     except requests.RequestException as e:
         # Handle network-related errors
