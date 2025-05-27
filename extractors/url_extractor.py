@@ -46,7 +46,7 @@ def create_newspaper_clipping(article_data):
         article_data (dict): The extracted article data
         
     Returns:
-        bytes: The image data in bytes format
+        bytes: The image data in bytes format, or None if creation failed
     """
     logger.info("Starting newspaper clipping creation")
     try:
@@ -109,17 +109,11 @@ def create_newspaper_clipping(article_data):
         # Add a decorative border
         draw.rectangle([(40, 40), (width-40, height-40)], outline='#333333', width=2)
         
-        # Save the image to disk in the images directory
-        logger.info("Saving image to disk")
-        os.makedirs('images', exist_ok=True)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        image_path = os.path.join('images', f'newspaper_clipping_{timestamp}.png')
-        image.save(image_path, format='PNG')
-        
-        # Convert the saved image to bytes
-        logger.info("Reading image bytes from disk")
-        with open(image_path, 'rb') as f:
-            img_byte_arr = f.read()
+        # Convert image to bytes
+        logger.info("Converting image to bytes")
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format='PNG')
+        img_byte_arr = img_byte_arr.getvalue()
         
         logger.info("Successfully created newspaper clipping in memory")
         return img_byte_arr
