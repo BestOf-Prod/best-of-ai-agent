@@ -1,6 +1,7 @@
+
 import os
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 import io
 from utils.logger import setup_logging
@@ -9,7 +10,7 @@ from utils.logger import setup_logging
 logger = setup_logging(__name__)
 
 try:
-    from replit.object_storage import Client as ReplitStorageClient
+    from replit.object_storage import Client
     REPLIT_STORAGE_AVAILABLE = True
     logger.info("Replit Object Storage client imported successfully")
 except ImportError:
@@ -26,18 +27,20 @@ class StorageManager:
         Initialize the storage manager
         
         Args:
-            bucket_name (str, optional): Name of the bucket to use. If not provided, will try to get from environment
+            bucket_name (str, optional): Name of the bucket to use. Note: bucket_name is deprecated in favor of bucket_id
             project_name (str, optional): Name of the project folder to use. If not provided, will use 'default'
         """
+        # Note: bucket_name is kept for backwards compatibility but the SDK uses bucket_id
         self.bucket_name = bucket_name or os.environ.get('REPLIT_BUCKET_NAME', 'newspaper-clippings')
         self.project_name = project_name or 'default'
         self.client = None
-        self.bucket = None
         
         if REPLIT_STORAGE_AVAILABLE:
             try:
-                self.client = ReplitStorageClient()
-                logger.info(f"Storage manager initialized for bucket: {self.bucket_name}, project: {self.project_name}")
+                # The official SDK uses bucket_id, not bucket_name
+                # If no bucket_id is provided, it uses the default bucket from .replit config
+                self.client = Client()
+                logger.info(f"Storage manager initialized for project: {self.project_name}")
             except Exception as e:
                 logger.error(f"Failed to initialize Replit Storage client: {str(e)}")
         else:
@@ -77,12 +80,6 @@ class StorageManager:
             if not self.client:
                 raise Exception("Storage client not initialized")
             
-            # Ensure we have a bucket
-            self._ensure_bucket_exists()
-            
-            # Prepare the file for upload
-            image_file = io.BytesIO(image_data)
-            
             # Add timestamp to filename to avoid conflicts
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             unique_filename = f"{timestamp}_{filename}"
@@ -90,7 +87,14 @@ class StorageManager:
             # Get the full path including project folder
             full_path = self._get_project_path(unique_filename)
             
-            # Prepare metadata
+            # Upload using the official SDK method
+            logger.debug(f"Uploading with path '{full_path}'")
+            
+            self.client.upload_from_bytes(full_path, image_data)
+            
+            logger.info(f"Successfully uploaded image: {full_path}")
+            
+            # Prepare metadata for return (the SDK doesn't support metadata in upload)
             upload_metadata = {
                 'uploaded_at': datetime.now().isoformat(),
                 'content_type': 'image/png',
@@ -101,25 +105,12 @@ class StorageManager:
             if metadata:
                 upload_metadata.update(metadata)
             
-            # Upload to Replit Object Storage
-            logger.debug(f"Uploading to bucket '{self.bucket_name}' with path '{full_path}'")
-            
-            result = self.client.upload_file(
-                bucket_name=self.bucket_name,
-                object_name=full_path,
-                file_data=image_file,
-                metadata=upload_metadata
-            )
-            
-            logger.info(f"Successfully uploaded image: {full_path}")
-            
             return {
                 'success': True,
                 'filename': unique_filename,
                 'project': self.project_name,
-                'bucket': self.bucket_name,
-                'metadata': upload_metadata,
-                'url': f"gs://{self.bucket_name}/{full_path}"  # GCS-style URL
+                'full_path': full_path,
+                'metadata': upload_metadata
             }
             
         except Exception as e:
@@ -129,28 +120,6 @@ class StorageManager:
                 'error': str(e),
                 'filename': filename
             }
-    
-    def _ensure_bucket_exists(self):
-        """
-        Ensure the bucket exists, create it if it doesn't
-        """
-        try:
-            if not self.bucket:
-                logger.debug(f"Checking if bucket '{self.bucket_name}' exists")
-                
-                # Try to access the bucket first
-                try:
-                    self.bucket = self.client.get_bucket(self.bucket_name)
-                    logger.debug(f"Bucket '{self.bucket_name}' already exists")
-                except Exception:
-                    # Bucket doesn't exist, create it
-                    logger.info(f"Creating new bucket: {self.bucket_name}")
-                    self.bucket = self.client.create_bucket(self.bucket_name)
-                    logger.info(f"Successfully created bucket: {self.bucket_name}")
-                    
-        except Exception as e:
-            logger.error(f"Error ensuring bucket exists: {str(e)}")
-            raise Exception(f"Failed to ensure bucket '{self.bucket_name}' exists: {str(e)}")
     
     def _save_locally(self, image_data: bytes, filename: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -219,11 +188,9 @@ class StorageManager:
             if not self.client:
                 raise Exception("Storage client not initialized")
             
-            self._ensure_bucket_exists()
-            
-            # List objects in the bucket with project prefix
+            # List objects with project prefix using the official SDK
             prefix = f"{self.project_name}/"
-            objects = self.client.list_objects(self.bucket_name, prefix=prefix)
+            objects = self.client.list(prefix=prefix)
             
             images = []
             for obj in objects:
@@ -231,9 +198,9 @@ class StorageManager:
                 display_name = obj.name[len(prefix):] if obj.name.startswith(prefix) else obj.name
                 images.append({
                     'name': display_name,
-                    'size': obj.size,
-                    'created': obj.time_created,
-                    'url': f"gs://{self.bucket_name}/{obj.name}"
+                    'full_path': obj.name,
+                    'size': getattr(obj, 'size', 0),  # Some Object instances may not have size
+                    'created': getattr(obj, 'time_created', 'Unknown')  # Some may not have time_created
                 })
             
             logger.info(f"Found {len(images)} images in project {self.project_name}")
@@ -291,4 +258,106 @@ class StorageManager:
             return {
                 'success': False,
                 'error': str(e)
-            } 
+            }
+    
+    def download_image(self, object_name: str) -> Dict[str, Any]:
+        """
+        Download an image from Replit Object Storage
+        
+        Args:
+            object_name (str): The name/path of the object to download
+            
+        Returns:
+            dict: Result with image data or error information
+        """
+        logger.info(f"Downloading image: {object_name}")
+        
+        try:
+            if not REPLIT_STORAGE_AVAILABLE:
+                return {
+                    'success': False,
+                    'error': 'Replit Object Storage not available in development mode'
+                }
+            
+            if not self.client:
+                raise Exception("Storage client not initialized")
+            
+            # Download using the official SDK
+            image_data = self.client.download_as_bytes(object_name)
+            
+            logger.info(f"Successfully downloaded image: {object_name}")
+            
+            return {
+                'success': True,
+                'object_name': object_name,
+                'data': image_data,
+                'size': len(image_data)
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to download image {object_name}: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e),
+                'object_name': object_name
+            }
+    
+    def delete_image(self, object_name: str) -> Dict[str, Any]:
+        """
+        Delete an image from Replit Object Storage
+        
+        Args:
+            object_name (str): The name/path of the object to delete
+            
+        Returns:
+            dict: Result of the delete operation
+        """
+        logger.info(f"Deleting image: {object_name}")
+        
+        try:
+            if not REPLIT_STORAGE_AVAILABLE:
+                return {
+                    'success': False,
+                    'error': 'Replit Object Storage not available in development mode'
+                }
+            
+            if not self.client:
+                raise Exception("Storage client not initialized")
+            
+            # Delete using the official SDK
+            self.client.delete(object_name)
+            
+            logger.info(f"Successfully deleted image: {object_name}")
+            
+            return {
+                'success': True,
+                'object_name': object_name
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to delete image {object_name}: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e),
+                'object_name': object_name
+            }
+    
+    def check_image_exists(self, object_name: str) -> bool:
+        """
+        Check if an image exists in Replit Object Storage
+        
+        Args:
+            object_name (str): The name/path of the object to check
+            
+        Returns:
+            bool: True if the object exists, False otherwise
+        """
+        try:
+            if not REPLIT_STORAGE_AVAILABLE or not self.client:
+                return False
+            
+            return self.client.exists(object_name)
+            
+        except Exception as e:
+            logger.error(f"Failed to check if image exists {object_name}: {str(e)}")
+            return False
