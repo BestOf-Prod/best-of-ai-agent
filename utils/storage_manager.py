@@ -196,11 +196,31 @@ class StorageManager:
             for obj in objects:
                 # Remove project prefix from display name
                 display_name = obj.name[len(prefix):] if obj.name.startswith(prefix) else obj.name
+                
+                # Try to get object metadata for size and creation time
+                size = 0
+                created = 'Unknown'
+                try:
+                    # Download the object to get its size
+                    obj_data = self.client.download_as_bytes(obj.name)
+                    size = len(obj_data)
+                    
+                    # Try to extract creation time from filename timestamp
+                    if display_name.startswith('2'):  # Timestamp format: YYYYMMDD_HHMMSS_
+                        timestamp_part = display_name.split('_')[0] + '_' + display_name.split('_')[1]
+                        try:
+                            created_dt = datetime.strptime(timestamp_part, '%Y%m%d_%H%M%S')
+                            created = created_dt.isoformat()
+                        except ValueError:
+                            pass
+                except Exception as e:
+                    logger.warning(f"Could not get metadata for {obj.name}: {str(e)}")
+                
                 images.append({
                     'name': display_name,
                     'full_path': obj.name,
-                    'size': getattr(obj, 'size', 0),  # Some Object instances may not have size
-                    'created': getattr(obj, 'time_created', 'Unknown')  # Some may not have time_created
+                    'size': size,
+                    'created': created
                 })
             
             logger.info(f"Found {len(images)} images in project {self.project_name}")
@@ -361,3 +381,57 @@ class StorageManager:
         except Exception as e:
             logger.error(f"Failed to check if image exists {object_name}: {str(e)}")
             return False
+
+    def get_image_preview(self, object_name: str) -> Dict[str, Any]:
+        """
+        Get image data for preview display
+        
+        Args:
+            object_name (str): The name/path of the object to preview
+            
+        Returns:
+            dict: Result with image data for preview or error information
+        """
+        logger.info(f"Getting image preview: {object_name}")
+        
+        try:
+            if not REPLIT_STORAGE_AVAILABLE:
+                # Try to load local file for preview
+                local_storage_dir = os.path.join('local_storage', self.project_name)
+                local_path = os.path.join(local_storage_dir, object_name)
+                if os.path.exists(local_path):
+                    with open(local_path, 'rb') as f:
+                        image_data = f.read()
+                    return {
+                        'success': True,
+                        'data': image_data,
+                        'size': len(image_data),
+                        'is_local': True
+                    }
+                else:
+                    return {
+                        'success': False,
+                        'error': 'Local file not found'
+                    }
+            
+            if not self.client:
+                raise Exception("Storage client not initialized")
+            
+            # Download image from object storage
+            image_data = self.client.download_as_bytes(object_name)
+            
+            logger.info(f"Successfully retrieved image preview: {object_name} ({len(image_data)} bytes)")
+            
+            return {
+                'success': True,
+                'data': image_data,
+                'size': len(image_data),
+                'is_local': False
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get image preview {object_name}: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }

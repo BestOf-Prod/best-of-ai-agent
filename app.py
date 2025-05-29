@@ -428,18 +428,63 @@ def display_images_gallery(config):
                     with col:
                         st.write(f"**{img['name'][:30]}...**" if len(img['name']) > 30 else f"**{img['name']}**")
                         st.write(f"Size: {img['size']:,} bytes")
-                        st.write(f"Created: {img['created'][:10]}")
                         
-                        # For local images, display them
+                        # Format creation date
+                        created_display = img['created']
+                        if created_display != 'Unknown' and 'T' in created_display:
+                            try:
+                                created_dt = datetime.fromisoformat(created_display.replace('Z', '+00:00'))
+                                created_display = created_dt.strftime('%Y-%m-%d %H:%M')
+                            except:
+                                created_display = created_display[:16]  # Show first 16 chars
+                        st.write(f"Created: {created_display}")
+                        
+                        # Add preview button for each image
+                        if st.button(f"🔍 Preview", key=f"preview_{i}_{j}"):
+                            show_image_preview(img, config)
+                        
+                        # For local images, show thumbnail
                         if 'local_path' in img:
                             try:
                                 st.image(img['local_path'], use_column_width=True)
                             except Exception as e:
                                 st.error(f"Could not load image: {str(e)}")
                         else:
-                            st.info("Image stored in Replit Object Storage")
+                            st.info("Click Preview to view image")
     else:
         st.info("No images uploaded yet. Process some URLs to generate newspaper clippings!")
+
+def show_image_preview(img, config):
+    """Show image preview in a modal-like display"""
+    logger.info(f"Showing preview for image: {img['name']}")
+    
+    storage_manager = StorageManager(bucket_name=config['bucket_name'], project_name=config['project_name'])
+    
+    # Use full_path for object storage, name for local files
+    object_name = img.get('full_path', img['name'])
+    if 'local_path' not in img and not object_name.startswith(config['project_name'] + '/'):
+        object_name = f"{config['project_name']}/{img['name']}"
+    
+    with st.spinner(f"Loading preview for {img['name']}..."):
+        try:
+            if 'local_path' in img:
+                # Local file - display directly
+                st.image(img['local_path'], caption=img['name'], use_column_width=True)
+                st.success(f"✅ Local image preview loaded")
+            else:
+                # Object storage - download and display
+                preview_result = storage_manager.get_image_preview(object_name)
+                
+                if preview_result['success']:
+                    # Display the image using bytes data
+                    st.image(preview_result['data'], caption=img['name'], use_column_width=True)
+                    st.success(f"✅ Image preview loaded ({preview_result['size']:,} bytes)")
+                else:
+                    st.error(f"❌ Failed to load preview: {preview_result['error']}")
+                    
+        except Exception as e:
+            logger.error(f"Error showing image preview: {str(e)}")
+            st.error(f"Error loading preview: {str(e)}")
 
 def display_footer():
     """Display the footer with information"""
