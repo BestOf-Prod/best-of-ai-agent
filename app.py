@@ -89,6 +89,12 @@ def sidebar_config():
         help="Name of the Replit Object Storage bucket to upload images to"
     )
     
+    project_name = st.sidebar.text_input(
+        "Project Name",
+        value="default",
+        help="Name of the project folder to organize images in storage"
+    )
+    
     # Processing configuration
     st.sidebar.subheader("Batch Processing")
     max_workers = st.sidebar.slider("Concurrent Workers", 1, 5, 3, help="Number of URLs to process simultaneously")
@@ -116,6 +122,7 @@ def sidebar_config():
     
     return {
         'bucket_name': bucket_name,
+        'project_name': project_name,
         'max_workers': max_workers,
         'delay_between_requests': delay_between_requests
     }
@@ -124,11 +131,11 @@ def test_storage_connection(bucket_name):
     """Test the connection to Replit Object Storage"""
     logger.info("Testing storage connection")
     try:
-        storage_manager = StorageManager(bucket_name)
+        storage_manager = StorageManager(bucket_name=bucket_name, project_name=config['project_name'])
         result = storage_manager.list_uploaded_images()
         
         if result['success']:
-            st.sidebar.success(f"✅ Storage connected! Found {result['count']} images.")
+            st.sidebar.success(f"✅ Storage connected! Found {result['count']} images in project '{config['project_name']}'.")
             if result.get('note'):
                 st.sidebar.info(result['note'])
         else:
@@ -273,7 +280,7 @@ def start_batch_processing(config):
     urls = st.session_state.extracted_urls
     
     # Initialize storage manager and batch processor
-    storage_manager = StorageManager(config['bucket_name'])
+    storage_manager = StorageManager(bucket_name=config['bucket_name'], project_name=config['project_name'])
     batch_processor = BatchProcessor(
         storage_manager=storage_manager, 
         max_workers=config['max_workers']
@@ -396,11 +403,11 @@ def display_images_gallery(config):
     
     with col1:
         if st.button("🔄 Refresh Images"):
-            storage_manager = StorageManager(config['bucket_name'])
+            storage_manager = StorageManager(bucket_name=config['bucket_name'], project_name=config['project_name'])
             result = storage_manager.list_uploaded_images()
             if result['success']:
                 st.session_state.uploaded_images = result['images']
-                st.success(f"Found {len(result['images'])} images")
+                st.success(f"Found {len(result['images'])} images in project '{config['project_name']}'")
             else:
                 st.error(f"Failed to load images: {result['error']}")
     
