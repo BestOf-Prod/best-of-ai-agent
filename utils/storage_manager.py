@@ -1,4 +1,3 @@
-
 import os
 import logging
 from typing import Optional, Dict, Any, List
@@ -9,13 +8,18 @@ from utils.logger import setup_logging
 # Setup logging
 logger = setup_logging(__name__)
 
-try:
-    from replit.object_storage import Client
-    REPLIT_STORAGE_AVAILABLE = True
-    logger.info("Replit Object Storage client imported successfully")
-except ImportError:
-    REPLIT_STORAGE_AVAILABLE = False
-    logger.warning("Replit Object Storage client not available - running in development mode")
+# Check if running on Replit by looking for REPL_ID environment variable
+REPLIT_STORAGE_AVAILABLE = bool(os.environ.get('REPL_ID'))
+
+if REPLIT_STORAGE_AVAILABLE:
+    try:
+        from replit.object_storage import Client
+        logger.info("Replit Object Storage client imported successfully")
+    except ImportError:
+        REPLIT_STORAGE_AVAILABLE = False
+        logger.warning("Replit Object Storage client not available - running in development mode")
+else:
+    logger.info("Running in development mode - Replit Object Storage not available")
 
 class StorageManager:
     """
