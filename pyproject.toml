@@ -5,7 +5,10 @@ description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
     "beautifulsoup4==4.12.3",
+    "docx==0.2.4",
     "pandas==2.2.3",
+    "python-docx-replace==0.4.4",
+    "replit-object-storage==1.0.2",
     "requests==2.32.3",
     "streamlit==1.40.2",
 ]

@@ -9,7 +9,7 @@ from utils.logger import setup_logging
 logger = setup_logging(__name__)
 
 try:
-    from replit_object_storage import Client as ReplitStorageClient
+    from replit.object_storage import Client as ReplitStorageClient
     REPLIT_STORAGE_AVAILABLE = True
     logger.info("Replit Object Storage client imported successfully")
 except ImportError:
