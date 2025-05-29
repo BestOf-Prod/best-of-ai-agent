@@ -9,6 +9,7 @@ import io
 
 # Import modules
 from extractors.url_extractor import extract_from_url
+from extractors.newspapers_extractor import extract_from_newspapers_com
 from utils.logger import setup_logging
 from utils.processor import process_article
 from utils.document_processor import extract_urls_from_docx, validate_document_format
@@ -100,6 +101,13 @@ def sidebar_config():
     max_workers = st.sidebar.slider("Concurrent Workers", 1, 5, 3, help="Number of URLs to process simultaneously")
     delay_between_requests = st.sidebar.slider("Delay Between Requests (sec)", 0.5, 5.0, 1.0, 0.5, help="Delay between requests to be respectful to servers")
     
+    # Newspapers.com configuration
+    st.sidebar.subheader("Newspapers.com Settings")
+    newspapers_cookies = st.sidebar.text_area(
+        "Session Cookies (Optional)",
+        help="Paste your Newspapers.com session cookies here if you have a subscription"
+    )
+    
     # Debug controls
     st.sidebar.divider()
     st.sidebar.subheader("Debug Options")
@@ -124,7 +132,8 @@ def sidebar_config():
         'bucket_name': bucket_name,
         'project_name': project_name,
         'max_workers': max_workers,
-        'delay_between_requests': delay_between_requests
+        'delay_between_requests': delay_between_requests,
+        'newspapers_cookies': newspapers_cookies
     }
 
 def test_storage_connection(bucket_name):
@@ -283,7 +292,8 @@ def start_batch_processing(config):
     storage_manager = StorageManager(bucket_name=config['bucket_name'], project_name=config['project_name'])
     batch_processor = BatchProcessor(
         storage_manager=storage_manager, 
-        max_workers=config['max_workers']
+        max_workers=config['max_workers'],
+        newspapers_cookies=config['newspapers_cookies']
     )
     
     # Create progress tracking
