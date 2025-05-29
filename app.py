@@ -469,7 +469,7 @@ def show_image_preview(img, config):
         try:
             if 'local_path' in img:
                 # Local file - display directly
-                st.image(img['local_path'], caption=img['name'], use_column_width=True)
+                st.image(img['local_path'], caption=img['name'], use_container_width=True)
                 st.success(f"✅ Local image preview loaded")
             else:
                 # Object storage - download and display
@@ -477,7 +477,7 @@ def show_image_preview(img, config):
                 
                 if preview_result['success']:
                     # Display the image using bytes data
-                    st.image(preview_result['data'], caption=img['name'], use_column_width=True)
+                    st.image(preview_result['data'], caption=img['name'], use_container_width=True)
                     st.success(f"✅ Image preview loaded ({preview_result['size']:,} bytes)")
                 else:
                     st.error(f"❌ Failed to load preview: {preview_result['error']}")
