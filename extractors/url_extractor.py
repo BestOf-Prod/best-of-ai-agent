@@ -367,7 +367,6 @@ def extract_from_url(url):
         
         # After successful extraction, create the newspaper clipping
         article_data = {
-            "success": True,
             "headline": headline_text,
             "date": date_text,
             "author": author,
@@ -382,6 +381,9 @@ def extract_from_url(url):
         if clipping_image:
             article_data["clipping_image"] = clipping_image
             
+        article_data["success"] = True
+        
+        logger.info('url_extractor article_data: ' + str(article_data))
         return article_data
         
     except requests.RequestException as e:

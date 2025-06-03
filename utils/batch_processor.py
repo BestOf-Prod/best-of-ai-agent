@@ -1,183 +1,518 @@
-import logging
-from typing import List, Dict, Any, Callable, Optional
+# utils/batch_processor.py
+# Enhanced batch processor with auto-authentication support
+
+import concurrent.futures
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import logging
 from datetime import datetime
-from utils.logger import setup_logging
-from utils.storage_manager import StorageManager
+from typing import List, Dict, Callable, Optional
+import requests
+import threading
+
 from extractors.url_extractor import extract_from_url
 from extractors.newspapers_extractor import extract_from_newspapers_com
-from utils.processor import process_article
 
-# Setup logging
-logger = setup_logging(__name__)
-
-def is_newspapers_com_url(url: str) -> bool:
-    """Check if the URL is from Newspapers.com"""
-    return "newspapers.com" in url.lower()
+logger = logging.getLogger(__name__)
 
 class BatchProcessor:
-    """
-    Handles batch processing of multiple URLs for article extraction and image generation
-    """
+    """Enhanced batch processor with auto-authentication support"""
     
-    def __init__(self, storage_manager: Optional[StorageManager] = None, max_workers: int = 3, newspapers_cookies: str = None):
-        """
-        Initialize the batch processor
-        
-        Args:
-            storage_manager (StorageManager, optional): Storage manager for uploading images
-            max_workers (int): Maximum number of concurrent workers for processing
-            newspapers_cookies (str, optional): Session cookies for Newspapers.com
-        """
-        self.storage_manager = storage_manager or StorageManager()
+    def __init__(self, storage_manager, max_workers: int = 3, newspapers_cookies: str = "", 
+                 newspapers_extractor: Optional = None):
+        self.storage_manager = storage_manager
         self.max_workers = max_workers
         self.newspapers_cookies = newspapers_cookies
-        self.results = []
-        self.errors = []
-        logger.info(f"Batch processor initialized with {max_workers} max workers")
+        self.newspapers_extractor = newspapers_extractor
+        self.total_processed = 0
+        self.total_successful = 0
+        self.total_failed = 0
+        self.start_time = None
+        self.executor = None  # Initialize as None, create on demand
+        self._lock = threading.Lock()  # Add thread safety
+        
+        logger.info(f"Initialized BatchProcessor with {max_workers} workers")
+        if newspapers_extractor:
+            logger.info("Using enhanced Newspapers.com extractor with auto-authentication")
     
-    def process_url(self, url: str) -> Dict[str, Any]:
+    def __del__(self):
+        """Cleanup ThreadPoolExecutor on object destruction"""
+        self._shutdown_executor()
+    
+    def _shutdown_executor(self):
+        """Safely shutdown the executor"""
+        if self.executor is not None:
+            try:
+                logger.info("Shutting down ThreadPoolExecutor")
+                self.executor.shutdown(wait=True)
+                self.executor = None
+            except Exception as e:
+                logger.error(f"Error shutting down executor: {str(e)}")
+    
+    def _get_executor(self):
+        """Get or create the ThreadPoolExecutor"""
+        if self.executor is None:
+            with self._lock:
+                if self.executor is None:  # Double-check pattern
+                    logger.info(f"Creating new ThreadPoolExecutor with {self.max_workers} workers")
+                    self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers)
+        return self.executor
+    
+    def process_urls_batch(
+        self, 
+        urls: List[str], 
+        progress_callback: Optional[Callable] = None, 
+        delay_between_requests: float = 1.0,
+        player_name: Optional[str] = None,
+        enable_advanced_processing: bool = True
+    ) -> Dict:
         """
-        Process a single URL using the appropriate extractor
+        Process multiple URLs in batch with enhanced features
         
         Args:
-            url (str): The URL to process
+            urls: List of URLs to process
+            progress_callback: Function to call with progress updates
+            delay_between_requests: Delay between requests in seconds
+            player_name: Optional player name for filtering
+            enable_advanced_processing: Whether to use advanced image processing
             
         Returns:
-            dict: The processing results
-        """
-        start_time = time.time()
-        logger.info(f"Processing URL: {url}")
-        
-        try:
-            # Choose extractor based on URL type
-            if is_newspapers_com_url(url):
-                logger.info("Using Newspapers.com extractor")
-                article_data = extract_from_newspapers_com(url, self.newspapers_cookies)
-            else:
-                logger.info("Using generic URL extractor")
-                article_data = extract_from_url(url)
-            
-            # Process the article data
-            if article_data.get("success", False):
-                processed_data = process_article(article_data)
-                if processed_data:
-                    # Upload image if available
-                    if "clipping_image" in article_data:
-                        upload_result = self.storage_manager.upload_image(
-                            image_data=article_data["clipping_image"],
-                            filename=processed_data["filename"]
-                        )
-                        processed_data["upload_result"] = upload_result
-                    
-                    return {
-                        "success": True,
-                        "url": url,
-                        "headline": processed_data.get("headline", "Unknown"),
-                        "source": processed_data.get("source", "Unknown"),
-                        "upload_result": processed_data.get("upload_result", {}),
-                        "processing_time_seconds": time.time() - start_time
-                    }
-            
-            return {
-                "success": False,
-                "url": url,
-                "error": article_data.get("error", "Unknown error"),
-                "processing_time_seconds": time.time() - start_time
-            }
-            
-        except Exception as e:
-            logger.error(f"Error processing URL {url}: {str(e)}")
-            return {
-                "success": False,
-                "url": url,
-                "error": str(e),
-                "processing_time_seconds": time.time() - start_time
-            }
-    
-    def process_urls_batch(self, urls: List[str], progress_callback: Optional[Callable] = None, delay_between_requests: float = 1.0) -> Dict[str, Any]:
-        """
-        Process a batch of URLs concurrently
-        
-        Args:
-            urls (List[str]): List of URLs to process
-            progress_callback (Callable, optional): Callback function for progress updates
-            delay_between_requests (float): Delay between requests in seconds
-            
-        Returns:
-            dict: Summary of batch processing results
+            Dictionary with processing results and statistics
         """
         logger.info(f"Starting batch processing of {len(urls)} URLs")
-        start_time = time.time()
+        self.start_time = time.time()
         
         results = []
         errors = []
-        processed = 0
+        processed_count = 0
         
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all URLs for processing
-            future_to_url = {executor.submit(self.process_url, url): url for url in urls}
+        try:
+            # Get or create executor
+            executor = self._get_executor()
             
-            # Process results as they complete
-            for future in as_completed(future_to_url):
-                url = future_to_url[future]
+            # Submit all tasks
+            future_to_url = {}
+            for url in urls:
                 try:
-                    result = future.result()
-                    processed += 1
+                    future = executor.submit(
+                        self._process_single_url_enhanced,
+                        url,
+                        player_name,
+                        enable_advanced_processing
+                    )
+                    future_to_url[future] = url
                     
-                    if result["success"]:
-                        results.append(result)
+                    # Add delay to respect rate limits
+                    time.sleep(delay_between_requests)
+                except Exception as e:
+                    logger.error(f"Error submitting task for URL {url}: {str(e)}")
+                    errors.append({
+                        'url': url,
+                        'error': f"Task submission failed: {str(e)}",
+                        'processing_time_seconds': 0.0
+                    })
+                    self.total_failed += 1
+            
+            # Collect results as they complete
+            for future in concurrent.futures.as_completed(future_to_url):
+                url = future_to_url[future]
+                processed_count += 1
+                
+                try:
+                    result = future.result(timeout=300)  # Add timeout of 5 minutes
+                    
+                    # Handle both dictionary and object results
+                    is_success = False
+                    if isinstance(result, dict):
+                        is_success = result.get('success', False)
                     else:
-                        errors.append(result)
+                        is_success = getattr(result, 'success', False)
+                    
+                    if is_success:
+                        # Upload to storage if successful
+                        upload_result = self._upload_to_storage(result, url)
+                        result_dict = {
+                            'url': url,
+                            'success': True,
+                            'headline': result.get('headline', '') if isinstance(result, dict) else getattr(result, 'headline', ''),
+                            'source': result.get('source', '') if isinstance(result, dict) else getattr(result, 'source', ''),
+                            'date': result.get('date', '') if isinstance(result, dict) else getattr(result, 'date', ''),
+                            'content': (result.get('content', '') if isinstance(result, dict) else getattr(result, 'content', ''))[:200] + '...',
+                            'processing_time_seconds': result.get('processing_time_seconds', 0.0) if isinstance(result, dict) else getattr(result, 'processing_time_seconds', 0.0),
+                            'upload_result': upload_result,
+                            'metadata': result.get('metadata', {}) if isinstance(result, dict) else getattr(result, 'metadata', {})
+                        }
+                        results.append(result_dict)
+                        self.total_successful += 1
+                        logger.info(f"Successfully processed: {url}")
+                    else:
+                        error_dict = {
+                            'url': url,
+                            'error': result.get('error', '') if isinstance(result, dict) else getattr(result, 'error', 'General extraction failed'),
+                            'processing_time_seconds': result.get('processing_time_seconds', 0.0) if isinstance(result, dict) else getattr(result, 'processing_time_seconds', 0.0)
+                        }
+                        errors.append(error_dict)
+                        self.total_failed += 1
+                        logger.warning(f"Failed to process: {url} - {error_dict['error']}")
                     
                     # Call progress callback if provided
                     if progress_callback:
-                        progress_callback(processed, len(urls), result)
-                    
-                    # Add delay between requests
-                    time.sleep(delay_between_requests)
+                        progress_callback(processed_count, len(urls), result_dict if is_success else error_dict)
+                        
+                except concurrent.futures.TimeoutError:
+                    error_dict = {
+                        'url': url,
+                        'error': "Processing timed out after 5 minutes",
+                        'processing_time_seconds': 300.0
+                    }
+                    errors.append(error_dict)
+                    self.total_failed += 1
+                    logger.error(f"Timeout processing {url}")
                     
                 except Exception as e:
-                    logger.error(f"Error processing {url}: {str(e)}")
-                    errors.append({
-                        "success": False,
-                        "url": url,
-                        "error": str(e),
-                        "processing_time_seconds": time.time() - start_time
-                    })
-                    processed += 1
+                    error_dict = {
+                        'url': url,
+                        'error': f"Unexpected error: {str(e)}",
+                        'processing_time_seconds': 0.0
+                    }
+                    errors.append(error_dict)
+                    self.total_failed += 1
+                    logger.error(f"Unexpected error processing {url}: {str(e)}", exc_info=True)
+                    
                     if progress_callback:
-                        progress_callback(processed, len(urls), {
-                            "success": False,
-                            "url": url,
-                            "error": str(e)
-                        })
+                        progress_callback(processed_count, len(urls), error_dict)
+                
+                self.total_processed += 1
+                
+        except Exception as e:
+            logger.error(f"Critical error in batch processing: {str(e)}", exc_info=True)
+            # Ensure we return partial results even if there's a critical error
+            return {
+                'total_urls': len(urls),
+                'processed': processed_count,
+                'successful': len(results),
+                'failed': len(errors),
+                'processing_time_seconds': time.time() - self.start_time,
+                'results': results,
+                'errors': errors,
+                'critical_error': str(e)
+            }
+        finally:
+            # Don't shutdown executor here, let it be reused
+            pass
         
-        processing_time = time.time() - start_time
-        logger.info(f"Batch processing completed in {processing_time:.2f} seconds")
+        total_time = time.time() - self.start_time
+        
+        # Compile final results
+        batch_results = {
+            'total_urls': len(urls),
+            'processed': processed_count,
+            'successful': len(results),
+            'failed': len(errors),
+            'processing_time_seconds': total_time,
+            'average_time_per_url': total_time / len(urls) if urls else 0,
+            'results': results,
+            'errors': errors,
+            'statistics': {
+                'newspapers_com_urls': len([url for url in urls if 'newspapers.com' in url.lower()]),
+                'other_urls': len([url for url in urls if 'newspapers.com' not in url.lower()]),
+                'success_rate': (len(results) / len(urls) * 100) if urls else 0,
+                'enhanced_processing_enabled': enable_advanced_processing,
+                'auto_authentication_used': self.newspapers_extractor is not None
+            }
+        }
+        
+        logger.info(f"Batch processing completed: {len(results)}/{len(urls)} successful in {total_time:.2f}s")
+        return batch_results
+    
+    def _process_single_url_enhanced(
+        self, 
+        url: str, 
+        player_name: Optional[str] = None,
+        enable_advanced_processing: bool = True
+    ):
+        """Process a single URL with enhanced features"""
+        logger.debug(f"Processing URL with enhanced features: {url}")
+        
+        try:
+            # Determine processing method based on URL type
+            if 'newspapers.com' in url.lower():
+                return self._process_newspapers_url(url, player_name, enable_advanced_processing)
+            else:
+                return self._process_general_url(url, player_name)
+                
+        except Exception as e:
+            logger.error(f"Error in enhanced processing for {url}: {str(e)}")
+            # Create a simple result object for compatibility
+            class SimpleResult:
+                def __init__(self, success=False, error="", processing_time_seconds=0.0):
+                    self.success = success
+                    self.error = error
+                    self.processing_time_seconds = processing_time_seconds
+                    self.headline = ""
+                    self.source = ""
+                    self.date = ""
+                    self.content = ""
+                    self.image_data = None
+                    self.metadata = {}
+                    
+            return SimpleResult(
+                success=False,
+                error=f"Enhanced processing error: {str(e)}",
+                processing_time_seconds=0.0
+            )
+    
+    def _process_newspapers_url(
+        self, 
+        url: str, 
+        player_name: Optional[str] = None,
+        enable_advanced_processing: bool = True
+    ):
+        """Process Newspapers.com URL with enhanced authentication"""
+        logger.debug(f"Processing Newspapers.com URL: {url}")
+        
+        if self.newspapers_extractor and enable_advanced_processing:
+            # Use enhanced extractor with auto-authentication
+            logger.debug("Using enhanced Newspapers.com extractor")
+            return self.newspapers_extractor.extract_from_url(url, player_name=player_name)
+        else:
+            # Fall back to standard extraction
+            logger.debug("Using standard Newspapers.com extraction")
+            return extract_from_newspapers_com(
+                url=url,
+                cookies=self.newspapers_cookies,
+                player_name=player_name
+            )
+    
+    def _process_general_url(self, url: str, player_name: Optional[str] = None):
+        """Process general URL with standard extraction"""
+        logger.info(f"Processing general URL: {url}")
+        
+        # Simple result class for compatibility
+        class SimpleResult:
+            def __init__(self, success=False, error="", processing_time_seconds=0.0):
+                self.success = success
+                self.error = error
+                self.processing_time_seconds = processing_time_seconds
+                self.headline = ""
+                self.source = ""
+                self.date = ""
+                self.content = ""
+                self.image_data = None
+                self.metadata = {}
+        
+        try:
+            # Use existing URL extractor for non-newspapers.com URLs
+            result = extract_from_url(url)
+            
+            # Convert to compatible format
+            if isinstance(result, dict) and result.get('success'):
+                simple_result = SimpleResult(success=True)
+                simple_result.headline = result.get('headline', 'Article')
+                simple_result.source = result.get('source', 'Unknown')
+                simple_result.date = result.get('date', datetime.now().strftime('%Y-%m-%d'))
+                simple_result.content = result.get('text', '')
+                simple_result.image_data = result.get('clipping_image')
+                simple_result.metadata = {
+                    'url': url,
+                    'extraction_method': 'general',
+                    'player_name': player_name,
+                    'timestamp': datetime.now().isoformat()
+                }
+                simple_result.processing_time_seconds = result.get('processing_time_seconds', 0.0)
+                return simple_result
+            else:
+                return SimpleResult(
+                    success=False,
+                    error=result.get('error', 'General extraction failed') if isinstance(result, dict) else 'General extraction failed',
+                    processing_time_seconds=result.get('processing_time_seconds', 0.0) if isinstance(result, dict) else 0.0
+                )
+                
+        except Exception as e:
+            logger.error(f"Error in general URL processing: {str(e)}")
+            return SimpleResult(
+                success=False,
+                error=f"General extraction error: {str(e)}",
+                processing_time_seconds=0.0
+            )
+    
+    def _upload_to_storage(self, result, url: str) -> Dict:
+        """Upload processed result to storage"""
+        try:
+            if not result.image_data:
+                logger.warning(f"No image data to upload for {url}")
+                return {
+                    'success': False,
+                    'error': 'No image data available'
+                }
+            
+            # Generate filename
+            filename = self._generate_filename(result, url)
+            
+            # Upload to storage
+            upload_result = self.storage_manager.upload_image(
+                image_data=result.image_data,
+                filename=filename,
+                metadata={
+                    'url': url,
+                    'headline': result.headline,
+                    'source': result.source,
+                    'date': result.date,
+                    'processing_method': result.metadata.get('extraction_method', 'unknown') if result.metadata else 'unknown',
+                    'upload_timestamp': datetime.now().isoformat()
+                }
+            )
+            
+            if upload_result.get('success'):
+                logger.info(f"Successfully uploaded image for {url}")
+                return upload_result
+            else:
+                logger.error(f"Failed to upload image for {url}: {upload_result.get('error')}")
+                return upload_result
+                
+        except Exception as e:
+            logger.error(f"Error uploading to storage for {url}: {str(e)}")
+            return {
+                'success': False,
+                'error': f"Upload error: {str(e)}"
+            }
+    
+    def _generate_filename(self, result, url: str) -> str:
+        """Generate a unique filename for the processed result"""
+        try:
+            # Extract domain from URL
+            from urllib.parse import urlparse
+            parsed_url = urlparse(url)
+            domain = parsed_url.netloc.replace('www.', '').replace('.', '_')
+            
+            # Create timestamp
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            # Create safe headline
+            safe_headline = ''.join(c for c in result.headline[:30] if c.isalnum() or c in (' ', '-', '_')).strip()
+            safe_headline = safe_headline.replace(' ', '_')
+            
+            if not safe_headline:
+                safe_headline = 'article'
+            
+            filename = f"{domain}_{safe_headline}_{timestamp}.png"
+            
+            logger.debug(f"Generated filename: {filename}")
+            return filename
+            
+        except Exception as e:
+            logger.error(f"Error generating filename: {str(e)}")
+            # Fallback filename
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            return f"article_{timestamp}.png"
+    
+    def get_processing_statistics(self) -> Dict:
+        """Get current processing statistics"""
+        current_time = time.time()
+        elapsed_time = current_time - self.start_time if self.start_time else 0
         
         return {
-            "total_urls": len(urls),
-            "processed": processed,
-            "successful": len(results),
-            "failed": len(errors),
-            "processing_time_seconds": processing_time,
-            "results": results,
-            "errors": errors
+            'total_processed': self.total_processed,
+            'total_successful': self.total_successful,
+            'total_failed': self.total_failed,
+            'success_rate': (self.total_successful / self.total_processed * 100) if self.total_processed > 0 else 0,
+            'elapsed_time_seconds': elapsed_time,
+            'average_time_per_url': elapsed_time / self.total_processed if self.total_processed > 0 else 0,
+            'processing_rate_per_minute': (self.total_processed / elapsed_time * 60) if elapsed_time > 0 else 0
         }
     
-    def get_summary(self) -> Dict[str, Any]:
-        """
-        Get a summary of the last batch processing operation
+    def reset_statistics(self):
+        """Reset processing statistics"""
+        self.total_processed = 0
+        self.total_successful = 0
+        self.total_failed = 0
+        self.start_time = None
+        logger.info("Processing statistics reset")
+
+class EnhancedBatchProcessor(BatchProcessor):
+    """Enhanced batch processor with additional features for newspapers.com"""
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.processing_history = []
         
-        Returns:
-            dict: Summary statistics and information
-        """
-        return {
-            'total_results': len(self.results),
-            'total_errors': len(self.errors),
-            'success_rate': len(self.results) / (len(self.results) + len(self.errors)) if (self.results or self.errors) else 0,
-            'successful_uploads': len([r for r in self.results if r.get('upload_result', {}).get('success')]),
-            'failed_uploads': len([r for r in self.results if not r.get('upload_result', {}).get('success')])
-        } 
+    def process_urls_with_retry(
+        self, 
+        urls: List[str], 
+        max_retries: int = 2,
+        retry_delay: float = 5.0,
+        **kwargs
+    ) -> Dict:
+        """Process URLs with retry logic for failed extractions"""
+        logger.info(f"Starting batch processing with retry (max {max_retries} retries)")
+        
+        # Initial processing
+        result = self.process_urls_batch(urls, **kwargs)
+        
+        # Retry failed URLs
+        retry_count = 0
+        while retry_count < max_retries and result['failed'] > 0:
+            retry_count += 1
+            logger.info(f"Retry attempt {retry_count}/{max_retries} for {result['failed']} failed URLs")
+            
+            # Extract failed URLs
+            failed_urls = [error['url'] for error in result['errors']]
+            
+            # Wait before retry
+            time.sleep(retry_delay)
+            
+            # Retry processing
+            retry_result = self.process_urls_batch(failed_urls, **kwargs)
+            
+            # Merge results
+            result['results'].extend(retry_result['results'])
+            result['successful'] += retry_result['successful']
+            result['failed'] = len(retry_result['errors'])
+            result['errors'] = retry_result['errors']
+            result['processing_time_seconds'] += retry_result['processing_time_seconds']
+            
+            # Update statistics
+            result['statistics']['retry_attempts'] = retry_count
+            result['statistics']['final_success_rate'] = (result['successful'] / result['total_urls'] * 100)
+        
+        # Store in history
+        self.processing_history.append({
+            'timestamp': datetime.now().isoformat(),
+            'total_urls': result['total_urls'],
+            'successful': result['successful'],
+            'failed': result['failed'],
+            'retry_attempts': retry_count
+        })
+        
+        logger.info(f"Batch processing completed with {retry_count} retry attempts")
+        return result
+    
+    def get_processing_history(self) -> List[Dict]:
+        """Get processing history"""
+        return self.processing_history
+    
+    def export_results_summary(self, results: Dict) -> str:
+        """Export results summary as text"""
+        summary = f"""
+                    Batch Processing Results Summary
+                    ================================
+                    Processed: {results['processed']}/{results['total_urls']} URLs
+                    Successful: {results['successful']} ({results['statistics']['success_rate']:.1f}%)
+                    Failed: {results['failed']}
+                    Processing Time: {results['processing_time_seconds']:.2f} seconds
+                    Average Time per URL: {results['average_time_per_url']:.2f} seconds
+
+                    Breakdown:
+                    - Newspapers.com URLs: {results['statistics']['newspapers_com_urls']}
+                    - Other URLs: {results['statistics']['other_urls']}
+                    - Auto-authentication: {'Yes' if results['statistics']['auto_authentication_used'] else 'No'}
+                    - Enhanced Processing: {'Yes' if results['statistics']['enhanced_processing_enabled'] else 'No'}
+
+                    Successful Extractions:
+                    {chr(10).join([f"- {r['headline']} ({r['source']})" for r in results['results'][:10]])}
+                    {'...' if len(results['results']) > 10 else ''}
+
+                    Failed URLs:
+                    {chr(10).join([f"- {e['url']}: {e['error']}" for e in results['errors'][:10]])}
+                    {'...' if len(results['errors']) > 10 else ''}
+                    """
+        return summary
