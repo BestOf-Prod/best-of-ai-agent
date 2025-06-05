@@ -102,7 +102,37 @@ class SeleniumLoginManager:
                 chrome_options.add_argument('--disable-webgl')
                 chrome_options.add_argument('--disable-webgl2')
                 chrome_options.add_argument('--disable-features=site-per-process')
-                chrome_options.binary_location = '/usr/bin/google-chrome'
+                
+                # Try to find Chrome binary in common locations
+                possible_chrome_paths = [
+                    '/usr/bin/google-chrome',
+                    '/usr/bin/google-chrome-stable',
+                    '/usr/bin/chromium',
+                    '/usr/bin/chromium-browser',
+                    '/snap/bin/chromium',
+                    '/nix/store/*/bin/chromium',
+                    '/nix/store/*/bin/google-chrome',
+                    '/nix/store/3qnxr5x6gw3k9a9i7d0akz0m6bksbwff-chromedriver-125.0.6422.141/bin/chromedriver'
+                ]
+                
+                chrome_binary = None
+                for path in possible_chrome_paths:
+                    if '*' in path:
+                        # Handle glob patterns
+                        import glob
+                        matches = glob.glob(path)
+                        if matches:
+                            chrome_binary = matches[0]
+                            break
+                    elif os.path.exists(path):
+                        chrome_binary = path
+                        break
+                
+                if chrome_binary:
+                    logger.info(f"Found Chrome binary at: {chrome_binary}")
+                    chrome_options.binary_location = chrome_binary
+                else:
+                    logger.warning("Chrome binary not found in standard locations")
             else:
                 # Add additional options for local environment
                 chrome_options.add_argument('--remote-debugging-port=9222')
@@ -122,9 +152,10 @@ class SeleniumLoginManager:
                     from selenium.webdriver.chrome.service import Service
                     service = Service('/nix/store/3qnxr5x6gw3k9a9i7d0akz0m6bksbwff-chromedriver-125.0.6422.141/bin/chromedriver')
                     self.driver = webdriver.Chrome(service=service, options=chrome_options)
+                    logger.info("Direct Chrome initialization successful")
                 else:
                     self.driver = webdriver.Chrome(options=chrome_options)
-                logger.info("Direct Chrome initialization successful")
+                    logger.info("Direct Chrome initialization successful")
             except Exception as e:
                 logger.warning(f"Failed to initialize Chrome directly: {str(e)}")
                 try:
@@ -137,10 +168,26 @@ class SeleniumLoginManager:
                     import subprocess
                     try:
                         if self.is_replit:
-                            chrome_version = subprocess.check_output(['google-chrome', '--version']).decode().strip()
+                            # Try multiple commands to get Chrome version
+                            chrome_commands = [
+                                ['google-chrome', '--version'],
+                                ['google-chrome-stable', '--version'],
+                                ['chromium', '--version'],
+                                ['chromium-browser', '--version']
+                            ]
+                            chrome_version = None
+                            for cmd in chrome_commands:
+                                try:
+                                    chrome_version = subprocess.check_output(cmd).decode().strip()
+                                    if chrome_version:
+                                        break
+                                except:
+                                    continue
+                            if chrome_version:
+                                logger.info(f"Detected Chrome version: {chrome_version}")
                         else:
                             chrome_version = subprocess.check_output(['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '--version']).decode().strip()
-                        logger.info(f"Detected Chrome version: {chrome_version}")
+                            logger.info(f"Detected Chrome version: {chrome_version}")
                     except:
                         logger.warning("Could not detect Chrome version")
                         chrome_version = None
