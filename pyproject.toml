@@ -5,10 +5,14 @@ description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
     "beautifulsoup4==4.12.3",
+    "browser-cookie3==0.19.1",
     "docx==0.2.4",
+    "opencv-python==4.10.0.84",
     "pandas==2.2.3",
+    "pytesseract==0.3.13",
     "python-docx-replace==0.4.4",
     "replit-object-storage==1.0.2",
     "requests==2.32.3",
+    "selenium==4.27.1",
     "streamlit==1.40.2",
 ]
