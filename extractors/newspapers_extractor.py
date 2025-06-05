@@ -53,6 +53,190 @@ class ClippingResult:
     bounding_box: Tuple[int, int, int, int]
 
 
+class SeleniumLoginManager:
+    """Handle direct login authentication using Selenium"""
+    
+    def __init__(self):
+        self.driver = None
+        self.cookies = {}
+        self.last_login = None
+        self.login_credentials = None
+        self.is_replit = 'REPL_ID' in os.environ or 'REPL_SLUG' in os.environ
+    
+    def set_credentials(self, email: str, password: str):
+        """Set login credentials"""
+        self.login_credentials = {'email': email, 'password': password}
+    
+    def login(self) -> bool:
+        """Perform login using Selenium"""
+        if not self.login_credentials:
+            logger.error("No login credentials set")
+            return False
+            
+        try:
+            # Set up Chrome options
+            chrome_options = Options()
+            chrome_options.add_argument('--headless=new')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--window-size=1920,1080')
+            chrome_options.add_argument('--disable-extensions')
+            chrome_options.add_argument('--disable-popup-blocking')
+            chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+            
+            # Add additional options for Replit environment
+            if self.is_replit:
+                chrome_options.add_argument('--disable-setuid-sandbox')
+                chrome_options.add_argument('--single-process')
+                chrome_options.binary_location = '/usr/bin/google-chrome'
+            else:
+                # Add additional options for local environment
+                chrome_options.add_argument('--remote-debugging-port=9222')
+                chrome_options.add_argument('--disable-web-security')
+                chrome_options.add_argument('--allow-running-insecure-content')
+                chrome_options.add_argument('--disable-features=IsolateOrigins,site-per-process')
+            
+            # Add user agent to avoid detection
+            chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+            
+            logger.info("Attempting to initialize Chrome...")
+            
+            try:
+                # Try to initialize Chrome directly first
+                logger.info("Trying direct Chrome initialization...")
+                self.driver = webdriver.Chrome(options=chrome_options)
+                logger.info("Direct Chrome initialization successful")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Chrome directly: {str(e)}")
+                try:
+                    # Try with ChromeDriverManager as fallback
+                    logger.info("Trying ChromeDriverManager initialization...")
+                    from webdriver_manager.chrome import ChromeDriverManager
+                    from selenium.webdriver.chrome.service import Service
+                    
+                    # Get the Chrome version
+                    import subprocess
+                    try:
+                        if self.is_replit:
+                            chrome_version = subprocess.check_output(['google-chrome', '--version']).decode().strip()
+                        else:
+                            chrome_version = subprocess.check_output(['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '--version']).decode().strip()
+                        logger.info(f"Detected Chrome version: {chrome_version}")
+                    except:
+                        logger.warning("Could not detect Chrome version")
+                        chrome_version = None
+                    
+                    # Install matching ChromeDriver
+                    service = Service(ChromeDriverManager().install())
+                    self.driver = webdriver.Chrome(service=service, options=chrome_options)
+                    logger.info("ChromeDriverManager initialization successful")
+                except Exception as e2:
+                    logger.error(f"Failed to initialize Chrome with ChromeDriverManager: {str(e2)}")
+                    return False
+            
+            # Set page load timeout
+            self.driver.set_page_load_timeout(30)
+            
+            # Navigate to login page
+            logger.info("Navigating to login page...")
+            try:
+                self.driver.get('https://www.newspapers.com/signin/')
+                logger.info("Successfully loaded login page")
+            except Exception as e:
+                logger.error(f"Failed to load login page: {str(e)}")
+                return False
+            
+            # Wait for login form with increased timeout
+            try:
+                logger.info("Waiting for login form...")
+                WebDriverWait(self.driver, 20).until(
+                    EC.presence_of_element_located((By.ID, "email"))
+                )
+                logger.info("Login form found")
+            except Exception as e:
+                logger.error(f"Failed to find login form: {str(e)}")
+                return False
+            
+            # Fill in login form
+            try:
+                email_field = self.driver.find_element(By.ID, "email")
+                password_field = self.driver.find_element(By.ID, "password")
+                
+                # Clear fields first
+                email_field.clear()
+                password_field.clear()
+                
+                # Send keys with small delay
+                email_field.send_keys(self.login_credentials['email'])
+                time.sleep(0.5)
+                password_field.send_keys(self.login_credentials['password'])
+                time.sleep(0.5)
+                
+                logger.info("Login form filled successfully")
+            except Exception as e:
+                logger.error(f"Failed to fill login form: {str(e)}")
+                return False
+            
+            # Submit form
+            try:
+                password_field.submit()
+                logger.info("Login form submitted")
+            except Exception as e:
+                logger.error(f"Failed to submit login form: {str(e)}")
+                return False
+            
+            # Wait for login to complete with better conditions
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    lambda driver: "login" not in driver.current_url.lower()
+                )
+                logger.info("Login successful - redirected from login page")
+            except Exception as e:
+                logger.error(f"Login failed - still on login page: {str(e)}")
+                return False
+            
+            # Additional wait for cookies to be set
+            time.sleep(3)
+            
+            # Extract cookies
+            self.cookies = {}
+            for cookie in self.driver.get_cookies():
+                self.cookies[cookie['name']] = cookie['value']
+            
+            if not self.cookies:
+                logger.error("No cookies found after login")
+                return False
+            
+            logger.info(f"Successfully extracted {len(self.cookies)} cookies")
+            self.last_login = datetime.now()
+            logger.info("Login process completed successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Login failed with unexpected error: {str(e)}")
+            return False
+            
+        finally:
+            if self.driver:
+                try:
+                    self.driver.quit()
+                except:
+                    pass
+                self.driver = None
+    
+    def refresh_if_needed(self) -> bool:
+        """Check if session needs refreshing and do so if needed"""
+        if not self.last_login:
+            return self.login()
+            
+        # Refresh if login is older than 6 hours
+        if datetime.now() - self.last_login > timedelta(hours=6):
+            logger.info("Session expired, refreshing login...")
+            return self.login()
+            
+        return True
+
 class AutoCookieManager:
     """Automatically extract and manage cookies from user's browser"""
     
@@ -60,124 +244,77 @@ class AutoCookieManager:
         self.cookies = {}
         self.session = requests.Session()
         self.last_extraction = None
+        self.selenium_login = SeleniumLoginManager()
+        
+    def set_login_credentials(self, email: str, password: str):
+        """Set login credentials for Selenium authentication"""
+        self.selenium_login.set_credentials(email, password)
         
     def auto_extract_cookies(self, domain: str = "newspapers.com") -> bool:
-        """Automatically extract cookies from all available browsers"""
-        extraction_methods = [
-            ("Chrome", self._extract_chrome_cookies),
-            ("Firefox", self._extract_firefox_cookies),
-            ("Edge", self._extract_edge_cookies),
-            ("Safari", self._extract_safari_cookies)
-        ]
-        
-        # Clear existing cookies before new extraction
-        self.cookies.clear()
-        self.session.cookies.clear()
-        
-        for browser_name, extract_func in extraction_methods:
-            try:
-                cookies = extract_func(domain)
-                if cookies:
-                    # Handle duplicate cookies by keeping the most recent one
-                    for name, value in cookies.items():
-                        self.cookies[name] = value
-                    
-                    # Synchronize with the session cookies
-                    self.session.cookies.clear()
-                    for name, value in self.cookies.items():
-                        self.session.cookies.set(name, value)
-                        
-                    st.success(f"✅ Extracted {len(cookies)} cookies from {browser_name}")
-                    self.last_extraction = datetime.now()
-                    return True
-                    
-            except Exception as e:
-                logger.debug(f"Failed to extract from {browser_name}: {str(e)}")
-                continue
-        
-        st.error("❌ Could not extract cookies from any browser")
-        return False
-    
-    def _extract_chrome_cookies(self, domain: str) -> Dict[str, str]:
-        """Extract cookies from Chrome"""
+        """Automatically extract cookies using Selenium login"""
         try:
-            cookies = browser_cookie3.chrome(domain_name=domain)
-            # Convert to dict, keeping only the most recent cookie for each name
-            cookie_dict = {}
-            for cookie in cookies:
-                cookie_dict[cookie.name] = cookie.value
-            return cookie_dict
+            # Try Selenium login first
+            if self.selenium_login.login():
+                self.cookies = self.selenium_login.cookies
+                self.last_extraction = datetime.now()
+
+                # Update session cookies (clear first)
+                self.session.cookies.clear()
+                selenium_cookies = self.selenium_login.driver.get_cookies() if self.selenium_login.driver else []
+                for cookie in selenium_cookies:
+                    logger.debug(f"Transferring cookie: {cookie}")
+                    try:
+                        self.session.cookies.set(
+                            cookie['name'],
+                            cookie['value'],
+                            domain=cookie.get('domain'),
+                            path=cookie.get('path', '/')
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to set cookie {cookie['name']}: {e}")
+
+                # Also update from self.cookies dict for redundancy
+                for name, value in self.cookies.items():
+                    self.session.cookies.set(name, value)
+
+                logger.info(f"Session cookies after transfer: {self.session.cookies.get_dict()}")
+
+                st.success("✅ Successfully logged in to Newspapers.com")
+                return True
+
+            st.error("❌ Failed to log in to Newspapers.com")
+            return False
+
         except Exception as e:
-            logger.debug(f"Chrome extraction failed: {e}")
-            return {}
-    
-    def _extract_firefox_cookies(self, domain: str) -> Dict[str, str]:
-        """Extract cookies from Firefox"""
-        try:
-            cookies = browser_cookie3.firefox(domain_name=domain)
-            # Convert to dict, keeping only the most recent cookie for each name
-            cookie_dict = {}
-            for cookie in cookies:
-                cookie_dict[cookie.name] = cookie.value
-            return cookie_dict
-        except Exception as e:
-            logger.debug(f"Firefox extraction failed: {e}")
-            return {}
-    
-    def _extract_edge_cookies(self, domain: str) -> Dict[str, str]:
-        """Extract cookies from Edge"""
-        try:
-            cookies = browser_cookie3.edge(domain_name=domain)
-            # Convert to dict, keeping only the most recent cookie for each name
-            cookie_dict = {}
-            for cookie in cookies:
-                cookie_dict[cookie.name] = cookie.value
-            return cookie_dict
-        except Exception as e:
-            logger.debug(f"Edge extraction failed: {e}")
-            return {}
-    
-    def _extract_safari_cookies(self, domain: str) -> Dict[str, str]:
-        """Extract cookies from Safari (macOS only)"""
-        try:
-            cookies = browser_cookie3.safari(domain_name=domain)
-            # Convert to dict, keeping only the most recent cookie for each name
-            cookie_dict = {}
-            for cookie in cookies:
-                cookie_dict[cookie.name] = cookie.value
-            return cookie_dict
-        except Exception as e:
-            logger.debug(f"Safari extraction failed: {e}")
-            return {}
+            logger.error(f"Cookie extraction failed: {str(e)}")
+            return False
     
     def test_authentication(self, test_url: str = "https://www.newspapers.com/") -> bool:
         """Test if extracted cookies provide valid authentication"""
         try:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
-            
-            # Update session cookies with our managed cookies
+
             self.session.cookies.clear()
             for name, value in self.cookies.items():
                 self.session.cookies.set(name, value)
-            
+
+            logger.info(f"Testing authentication with cookies: {self.session.cookies.get_dict()}")
+            logger.info(f"Testing authentication with headers: {headers}")
+
             response = self.session.get(test_url, headers=headers, timeout=10)
-            
-            # Check for authentication indicators
+
             if response.status_code == 200:
                 content = response.text.lower()
                 if any(indicator in content for indicator in ['logout', 'account', 'subscription', 'premium']):
                     if 'sign-in' not in response.url and 'login' not in response.url:
                         st.success("🔓 Authentication verified - Premium access detected")
                         return True
-                
                 st.warning("⚠️ Basic access detected - may have limited functionality")
                 return True
-            
             st.error(f"❌ Authentication failed - HTTP {response.status_code}")
             return False
-            
         except Exception as e:
             st.error(f"❌ Authentication test failed: {str(e)}")
             return False
@@ -616,12 +753,15 @@ class NewspapersComExtractor:
         self.results = []
         self.auto_auth = auto_auth
         
-    def initialize(self) -> bool:
+    def initialize(self, email: str = None, password: str = None) -> bool:
         """Initialize the scraper with automatic authentication"""
-        st.info("🔍 Automatically detecting browser cookies...")
+        st.info("🔍 Setting up Newspapers.com authentication...")
+        
+        if email and password:
+            self.cookie_manager.set_login_credentials(email, password)
         
         if not self.cookie_manager.auto_extract_cookies():
-            st.error("Failed to extract cookies. Please ensure you're logged into newspapers.com in your browser.")
+            st.error("Failed to authenticate. Please check your login credentials.")
             return False
         
         return self.cookie_manager.test_authentication()
@@ -846,10 +986,6 @@ class NewspapersComExtractor:
     
     def extract_from_url(self, url: str, player_name: Optional[str] = None, extract_multi_page: bool = True) -> Dict:
         """Extract content from a specific newspapers.com URL with improved multi-page detection"""
-        logger.info(f"Starting extraction from URL: {url}")
-        logger.info(f"Target player: {player_name}")
-        logger.info(f"Multi-page extraction: {extract_multi_page}")
-        
         try:
             # Refresh cookies if needed
             if not self.cookie_manager.refresh_cookies_if_needed():
@@ -864,20 +1000,88 @@ class NewspapersComExtractor:
                 'Accept-Encoding': 'gzip, deflate, br',
                 'DNT': '1',
                 'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
+                'Upgrade-Insecure-Requests': '1'
             }
             
             logger.info("Fetching newspaper page...")
             response = self.cookie_manager.session.get(url, headers=headers, timeout=30)
             
-            if response.status_code != 200:
-                logger.error(f"Failed to fetch page: HTTP {response.status_code}")
-                return {'success': False, 'error': f"Failed to fetch article: {response.status_code}"}
+            # Check for paywall indicators
+            paywall_indicators = [
+                'you need a subscription',
+                'start a 7-day free trial',
+                'sign in to view this page',
+                'already have an account',
+                'subscribe',
+                'paywall',
+                'please sign in',
+                'log in to view'
+            ]
+            is_paywalled = any(ind in response.text.lower() for ind in paywall_indicators)
+
+            if response.status_code != 200 or is_paywalled:
+                logger.warning(f"Requests-based fetch returned paywall or error (status {response.status_code}, paywalled={is_paywalled}). Trying Selenium fallback.")
+                try:
+                    # Set up Chrome options
+                    chrome_options = Options()
+                    chrome_options.add_argument('--headless')
+                    chrome_options.add_argument('--no-sandbox')
+                    chrome_options.add_argument('--disable-dev-shm-usage')
+                    chrome_options.add_argument('--disable-gpu')
+                    chrome_options.add_argument('--window-size=1920,1080')
+                    chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+                    
+                    # Initialize driver
+                    driver = webdriver.Chrome(options=chrome_options)
+                    
+                    # First visit the main site to set cookies
+                    logger.info("Loading main site to set cookies...")
+                    driver.get('https://www.newspapers.com/')
+                    
+                    # Add our extracted cookies
+                    for name, value in self.cookie_manager.cookies.items():
+                        try:
+                            driver.add_cookie({
+                                'name': name,
+                                'value': value,
+                                'domain': '.newspapers.com'
+                            })
+                            logger.debug(f"Added cookie: {name}")
+                        except Exception as e:
+                            logger.debug(f"Could not add cookie {name}: {e}")
+                    
+                    # Now load the target page
+                    logger.info(f"Loading target page: {url}")
+                    driver.get(url)
+                    
+                    # Wait for page to load
+                    WebDriverWait(driver, 15).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+                    )
+                    
+                    # Give extra time for JavaScript to load content
+                    time.sleep(3)
+                    
+                    # Check if we're still on a paywall page
+                    if any(ind in driver.page_source.lower() for ind in paywall_indicators):
+                        logger.error("Still encountering paywall after Selenium fallback")
+                        driver.quit()
+                        return {'success': False, 'error': "Paywall detected even after authentication"}
+                    
+                    html = driver.page_source
+                    driver.quit()
+                    logger.info("Fetched article page with Selenium fallback.")
+                    response_text = html
+                except Exception as e:
+                    logger.error(f"Selenium fallback failed: {e}")
+                    return {'success': False, 'error': f"Failed to fetch article (paywall): {e}"}
+            else:
+                response_text = response.text
             
-            logger.info(f"Successfully fetched page ({len(response.content)} bytes)")
+            logger.info(f"Successfully fetched page ({len(response_text)} bytes)")
             
             # Parse the page content to extract image metadata
-            image_metadata = self._extract_image_metadata(response.text)
+            image_metadata = self._extract_image_metadata(response_text)
             if not image_metadata:
                 logger.error("Failed to extract image metadata from page")
                 return {'success': False, 'error': "Could not find image metadata in page"}
@@ -893,7 +1097,7 @@ class NewspapersComExtractor:
             
             if extract_multi_page and base_image_id:
                 logger.info("Searching for genuine multi-page article indicators...")
-                multi_page_data = self._find_multi_page_images(response.text, str(base_image_id))
+                multi_page_data = self._find_multi_page_images(response_text, str(base_image_id))
                 
                 if multi_page_data:
                     logger.info(f"Found {len(multi_page_data)} genuine additional pages")
@@ -1108,28 +1312,12 @@ class NewspapersComExtractor:
         except Exception as e:
             logger.error(f"Error processing article page: {e}", exc_info=True)
             return {'success': False, 'error': str(e)}
-    
-    def _extract_image_metadata(self, html_content: str) -> Optional[Dict]:
+
+    def _extract_image_metadata(self, page_content: str) -> Optional[Dict]:
         """Extract image metadata from newspapers.com JavaScript objects"""
         logger.info("Parsing HTML for image metadata...")
         
         try:
-            # Look for the Object.defineProperty(window, 'page', ...) pattern
-            # Updated regex to match the actual structure in the HTML
-            page_match = re.search(r'Object\.defineProperty\(window,\s*[\'"]page[\'"],\s*\{value:\s*Object\.freeze\(({.*?})\)', html_content, re.DOTALL)
-            if not page_match:
-                logger.error("Could not find Object.defineProperty(window, 'page', ...) object in HTML")
-                # Try alternative pattern in case the structure varies
-                page_match = re.search(r'window\.page\s*=\s*Object\.freeze\(({.*?})\)', html_content, re.DOTALL)
-                if not page_match:
-                    logger.error("Could not find any window.page object pattern in HTML")
-                    return None
-            
-            # Extract the JSON-like content (note: it's not pure JSON due to JavaScript syntax)
-            page_content = page_match.group(1)
-            logger.info(f"Found page object content: {page_content[:200]}...")
-            
-            # Parse image metadata using regex (since it's not pure JSON)
             image_data = {}
             
             # Extract basic image info from the nested "image" object
@@ -1139,11 +1327,11 @@ class NewspapersComExtractor:
                 logger.error("Could not find 'image' section with imageId in page object")
                 return None
             
-            # Extract imageId first
-            image_data['image_id'] = int(image_match.group(1))
-            logger.info(f"Found image ID: {image_data['image_id']}")
+            # Extract image ID
+            if match := re.search(r'"imageId":(\d+)', page_content):
+                image_data['image_id'] = int(match.group(1))
+                logger.info(f"Found image ID: {image_data['image_id']}")
             
-            # Now extract other fields from the full page content since they're in the image section
             if match := re.search(r'"date":"([^"]+)"', page_content):
                 image_data['date'] = match.group(1)
             
@@ -1166,7 +1354,7 @@ class NewspapersComExtractor:
                 image_data['wfm_image_path'] = match.group(1)
             
             # Look for ncom object for image URL construction
-            ncom_match = re.search(r'Object\.defineProperty\(window,\s*[\'"]ncom[\'"],\s*\{value:\s*Object\.freeze\(({.*?})\)', html_content, re.DOTALL)
+            ncom_match = re.search(r'Object\.defineProperty\(window,\s*[\'"]ncom[\'"],\s*\{value:\s*Object\.freeze\(({.*?})\)', page_content, re.DOTALL)
             if ncom_match:
                 ncom_content = ncom_match.group(1)
                 if match := re.search(r'"image":"([^"]+)"', ncom_content):
@@ -1176,6 +1364,14 @@ class NewspapersComExtractor:
                 # Fallback to default base URL
                 image_data['base_image_url'] = 'https://img.newspapers.com'
                 logger.info("Using default base image URL")
+            
+            # Extract the original URL from the page
+            if match := re.search(r'<link\s+rel="canonical"\s+href="([^"]+)"', page_content):
+                image_data['url'] = match.group(1)
+                logger.info(f"Found original URL: {image_data['url']}")
+            elif match := re.search(r'<meta\s+property="og:url"\s+content="([^"]+)"', page_content):
+                image_data['url'] = match.group(1)
+                logger.info(f"Found original URL from og:url: {image_data['url']}")
             
             logger.info(f"Successfully extracted image metadata: {image_data}")
             return image_data if image_data else None
@@ -1824,11 +2020,8 @@ def main():
     
     # Authentication status
     if not st.session_state.initialized:
-        if st.button("🔓 Initialize Auto-Authentication"):
-            with st.spinner("Extracting cookies and testing authentication..."):
-                if st.session_state.scraper.initialize():
-                    st.session_state.initialized = True
-                    st.rerun()
+        st.info("🔐 Please enter your Newspapers.com login credentials in the sidebar to begin")
+        st.stop()
     
     if st.session_state.initialized:
         st.success("✅ Authentication successful! Ready to scrape.")
@@ -1954,53 +2147,6 @@ def main():
                             
                     except Exception as e:
                         st.error(f"❌ Extraction error: {str(e)}")
-            
-            # Debug HTML Capture Section
-            st.subheader("🐛 Debug HTML Capture")
-            st.write("Capture the raw HTML from any newspapers.com page for debugging")
-            
-            debug_url = st.text_input(
-                "Newspapers.com URL for Debug Capture",
-                placeholder="https://www.newspapers.com/..."
-            )
-            
-            if st.button("📄 Capture Page HTML", disabled=not debug_url):
-                with st.spinner("Capturing page HTML with Selenium..."):
-                    try:
-                        result = st.session_state.scraper.capture_page_html(debug_url)
-                        
-                        if result['success']:
-                            st.success("✅ Successfully captured page HTML!")
-                            
-                            col_info, col_stats = st.columns([1, 1])
-                            
-                            with col_info:
-                                st.write("**Page Information:**")
-                                st.write(f"📄 Title: {result['page_title']}")
-                                st.write(f"🔗 URL: {result['url']}")
-                                st.write(f"📏 HTML Size: {result['html_size']:,} characters")
-                                st.write(f"⏰ Captured: {result['capture_timestamp']}")
-                            
-                            with col_stats:
-                                st.write("**Element Counts:**")
-                                for element_type, count in result['elements_info'].items():
-                                    st.write(f"• {element_type}: {count}")
-                                
-                                st.write("**Newspaper-specific Elements:**")
-                                for element_type, count in result['newspaper_elements'].items():
-                                    st.write(f"• {element_type}: {count}")
-                            
-                            # Show HTML preview (first 1000 chars)
-                            st.write("**HTML Preview (first 1000 characters):**")
-                            st.code(result['html_content'][:1000] + "..." if len(result['html_content']) > 1000 else result['html_content'], language='html')
-                            
-                            st.info("💾 Full HTML and debug summary saved to `debug_html/` directory")
-                            
-                        else:
-                            st.error(f"❌ Failed to capture HTML: {result.get('error', 'Unknown error')}")
-                            
-                    except Exception as e:
-                        st.error(f"❌ Debug capture failed: {str(e)}")
         
         with col2:
             st.subheader("📚 Saved Clippings")
@@ -2022,8 +2168,8 @@ def main():
     # Footer
     st.write("---")
     st.write("💡 **Tips:**")
-    st.write("• Ensure you're logged into newspapers.com in your browser before initializing")
-    st.write("• The scraper will automatically detect and use your browser cookies")
+    st.write("• Enter your Newspapers.com login credentials in the sidebar to begin")
+    st.write("• The system will automatically handle authentication and session management")
     st.write("• Results are saved locally and can be accessed anytime")
 
 

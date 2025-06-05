@@ -1,4 +1,4 @@
-# Generic article extractor
+# Enhanced Dynamic Newspaper Article Generator
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -11,36 +11,362 @@ import io
 import textwrap
 import os
 from datetime import datetime
+import math
+from enum import Enum
+from dataclasses import dataclass
+from typing import List, Tuple, Optional
 
 # Setup logging
 logger = setup_logging(__name__)
 
-def wrap_text(text, font, max_width, draw):
-    """
-    Wrap text for a given pixel width using the provided font.
-    """
-    lines = []
-    if not text:
-        return lines
-    words = text.split()
-    line = ''
-    for word in words:
-        test_line = f"{line} {word}".strip()
-        bbox = draw.textbbox((0, 0), test_line, font=font)
-        width = bbox[2] - bbox[0]
-        if width <= max_width:
-            line = test_line
+class LayoutType(Enum):
+    SINGLE_COLUMN = 1
+    TWO_COLUMN = 2
+    THREE_COLUMN = 3
+
+@dataclass
+class LayoutConfig:
+    columns: int
+    width: int
+    height: int
+    margin: int
+    column_gap: int
+    header_height: int
+
+class NewspaperLayoutEngine:
+    """Advanced newspaper layout engine with dynamic column support"""
+    
+    def __init__(self):
+        self.layouts = {
+            LayoutType.SINGLE_COLUMN: LayoutConfig(
+                columns=1, width=800, height=1200, margin=60, 
+                column_gap=0, header_height=200
+            ),
+            LayoutType.TWO_COLUMN: LayoutConfig(
+                columns=2, width=1000, height=1400, margin=60, 
+                column_gap=40, header_height=220
+            ),
+            LayoutType.THREE_COLUMN: LayoutConfig(
+                columns=3, width=1200, height=1600, margin=60, 
+                column_gap=30, header_height=240
+            )
+        }
+        
+        # Font configurations for different elements
+        self.font_configs = {
+            'headline': {'size_range': (32, 48), 'weight': 'Bold', 'family': 'Georgia'},
+            'subhead': {'size_range': (20, 28), 'weight': 'Regular', 'family': 'Georgia'},
+            'byline': {'size_range': (16, 20), 'weight': 'Italic', 'family': 'Georgia'},
+            'date': {'size_range': (14, 18), 'weight': 'Regular', 'family': 'Arial'},
+            'body': {'size_range': (12, 16), 'weight': 'Regular', 'family': 'Georgia'},
+            'caption': {'size_range': (10, 12), 'weight': 'Italic', 'family': 'Arial'}
+        }
+
+    def determine_layout(self, article_data: dict) -> LayoutType:
+        """Intelligently determine the best layout based on article characteristics"""
+        content_length = len(article_data.get('text', ''))
+        headline_length = len(article_data.get('headline', ''))
+        has_image = bool(article_data.get('image_url'))
+        
+        # Decision logic for layout selection
+        if content_length < 500:
+            return LayoutType.SINGLE_COLUMN
+        elif content_length < 1200:
+            return LayoutType.TWO_COLUMN
         else:
-            if line:
-                lines.append(line)
-            line = word
-    if line:
-        lines.append(line)
-    return lines
+            return LayoutType.THREE_COLUMN
+    
+    def load_fonts(self, layout_type: LayoutType):
+        """Load appropriate fonts based on layout size"""
+        config = self.layouts[layout_type]
+        fonts = {}
+        
+        # Scale fonts based on layout size
+        scale_factor = min(config.width / 1000, config.height / 1400)
+        
+        for element, font_config in self.font_configs.items():
+            base_size = int(font_config['size_range'][1] * scale_factor)
+            
+            try:
+                # Try to load system fonts
+                font_name = f"{font_config['family']} {font_config['weight']}"
+                fonts[element] = ImageFont.truetype(font_name, base_size)
+            except:
+                try:
+                    # Fallback to basic font files
+                    if font_config['weight'] == 'Bold':
+                        fonts[element] = ImageFont.truetype("arial-bold.ttf", base_size)
+                    elif font_config['weight'] == 'Italic':
+                        fonts[element] = ImageFont.truetype("arial-italic.ttf", base_size)
+                    else:
+                        fonts[element] = ImageFont.truetype("arial.ttf", base_size)
+                except:
+                    # Final fallback to default font
+                    fonts[element] = ImageFont.load_default()
+        
+        return fonts
+
+    def wrap_text_to_width(self, text: str, font: ImageFont, max_width: int, draw: ImageDraw) -> List[str]:
+        """Advanced text wrapping with proper word breaking"""
+        if not text.strip():
+            return []
+            
+        lines = []
+        paragraphs = text.split('\n')
+        
+        for paragraph in paragraphs:
+            if not paragraph.strip():
+                lines.append('')
+                continue
+                
+            words = paragraph.split()
+            current_line = ''
+            
+            for word in words:
+                test_line = f"{current_line} {word}".strip()
+                bbox = draw.textbbox((0, 0), test_line, font=font)
+                line_width = bbox[2] - bbox[0]
+                
+                if line_width <= max_width:
+                    current_line = test_line
+                else:
+                    if current_line:
+                        lines.append(current_line)
+                        current_line = word
+                    else:
+                        # Handle very long words
+                        lines.append(word)
+                        current_line = ''
+            
+            if current_line:
+                lines.append(current_line)
+                
+        return lines
+
+    def distribute_text_across_columns(self, lines: List[str], column_count: int, 
+                                     column_height: int, font: ImageFont, 
+                                     draw: ImageDraw) -> List[List[str]]:
+        """Distribute text lines across multiple columns evenly"""
+        if column_count == 1:
+            return [lines]
+        
+        # Calculate how many lines fit in each column
+        line_height = draw.textbbox((0, 0), "Ag", font=font)[3] + 4
+        lines_per_column = column_height // line_height
+        
+        columns = [[] for _ in range(column_count)]
+        total_lines = len(lines)
+        
+        # Distribute lines as evenly as possible
+        lines_per_col = total_lines // column_count
+        extra_lines = total_lines % column_count
+        
+        start_idx = 0
+        for col_idx in range(column_count):
+            col_lines = lines_per_col + (1 if col_idx < extra_lines else 0)
+            end_idx = start_idx + col_lines
+            columns[col_idx] = lines[start_idx:end_idx]
+            start_idx = end_idx
+            
+        return columns
+
+    def draw_newspaper_header(self, draw: ImageDraw, fonts: dict, config: LayoutConfig, 
+                            article_data: dict) -> int:
+        """Draw the newspaper header with classic styling"""
+        y_pos = config.margin
+        
+        # Draw top rule
+        draw.rectangle([
+            (config.margin, y_pos), 
+            (config.width - config.margin, y_pos + 2)
+        ], fill='black')
+        y_pos += 15
+        
+        # Draw headline with proper newspaper styling
+        headline = article_data.get('headline', 'Unknown Headline')
+        max_width = config.width - (2 * config.margin)
+        
+        # Make headline bold and large
+        headline_lines = self.wrap_text_to_width(headline, fonts['headline'], max_width, draw)
+        
+        for line in headline_lines:
+            bbox = draw.textbbox((0, 0), line, font=fonts['headline'])
+            line_width = bbox[2] - bbox[0]
+            x_center = (config.width - line_width) // 2
+            
+            draw.text((x_center, y_pos), line, fill='black', font=fonts['headline'])
+            y_pos += bbox[3] + 8
+        
+        y_pos += 10
+        
+        # Draw subtitle rule
+        rule_width = min(max_width // 2, 300)
+        rule_x = (config.width - rule_width) // 2
+        draw.rectangle([
+            (rule_x, y_pos), 
+            (rule_x + rule_width, y_pos + 1)
+        ], fill='black')
+        y_pos += 20
+        
+        # Draw byline and date
+        author = article_data.get('author', 'Staff Reporter')
+        date = article_data.get('date', 'Unknown Date')
+        source = article_data.get('source', 'News Source')
+        
+        byline_text = f"By {author}"
+        date_text = f"{date} | {source}"
+        
+        # Center the byline
+        bbox = draw.textbbox((0, 0), byline_text, font=fonts['byline'])
+        line_width = bbox[2] - bbox[0]
+        x_center = (config.width - line_width) // 2
+        draw.text((x_center, y_pos), byline_text, fill='#333333', font=fonts['byline'])
+        y_pos += bbox[3] + 8
+        
+        # Center the date
+        bbox = draw.textbbox((0, 0), date_text, font=fonts['date'])
+        line_width = bbox[2] - bbox[0]
+        x_center = (config.width - line_width) // 2
+        draw.text((x_center, y_pos), date_text, fill='#666666', font=fonts['date'])
+        y_pos += bbox[3] + 20
+        
+        # Draw bottom rule under header
+        draw.rectangle([
+            (config.margin, y_pos), 
+            (config.width - config.margin, y_pos + 2)
+        ], fill='black')
+        
+        return y_pos + 25
+
+    def draw_columns(self, draw: ImageDraw, fonts: dict, config: LayoutConfig, 
+                    article_data: dict, start_y: int) -> None:
+        """Draw article content in columns with proper newspaper formatting"""
+        content = article_data.get('text', '')
+        if not content:
+            return
+        
+        # Calculate column dimensions
+        total_width = config.width - (2 * config.margin)
+        column_width = (total_width - (config.column_gap * (config.columns - 1))) // config.columns
+        column_height = config.height - start_y - config.margin
+        
+        # Wrap text to column width
+        content_lines = self.wrap_text_to_width(content, fonts['body'], column_width, draw)
+        
+        # Distribute across columns
+        column_data = self.distribute_text_across_columns(
+            content_lines, config.columns, column_height, fonts['body'], draw
+        )
+        
+        # Draw each column
+        line_height = draw.textbbox((0, 0), "Ag", font=fonts['body'])[3] + 4
+        
+        for col_idx, column_lines in enumerate(column_data):
+            x_pos = config.margin + col_idx * (column_width + config.column_gap)
+            y_pos = start_y
+            
+            # Draw column separator (except for first column)
+            if col_idx > 0:
+                separator_x = x_pos - config.column_gap // 2
+                draw.line([
+                    (separator_x, start_y), 
+                    (separator_x, config.height - config.margin)
+                ], fill='#cccccc', width=1)
+            
+            # Draw text in column
+            for line in column_lines:
+                if y_pos + line_height > config.height - config.margin:
+                    break  # Don't overflow the page
+                    
+                draw.text((x_pos, y_pos), line, fill='black', font=fonts['body'])
+                y_pos += line_height
+
+    def create_newspaper_clipping(self, article_data: dict) -> Optional[bytes]:
+        """Create a dynamic newspaper clipping with appropriate layout"""
+        logger.info("Creating enhanced newspaper clipping")
+        
+        try:
+            # Determine the best layout for this article
+            layout_type = self.determine_layout(article_data)
+            config = self.layouts[layout_type]
+            
+            logger.info(f"Using {layout_type.name} layout ({config.columns} columns)")
+            
+            # Create image with calculated dimensions
+            image = Image.new('RGB', (config.width, config.height), '#fafafa')
+            draw = ImageDraw.Draw(image)
+            
+            # Load appropriate fonts
+            fonts = self.load_fonts(layout_type)
+            
+            # Add newspaper aging effect
+            self._add_aging_effect(draw, config)
+            
+            # Draw the header section
+            content_start_y = self.draw_newspaper_header(draw, fonts, config, article_data)
+            
+            # Draw the main content in columns
+            self.draw_columns(draw, fonts, config, article_data, content_start_y)
+            
+            # Add final touches
+            self._add_final_touches(draw, config)
+            
+            # Convert to bytes
+            img_byte_arr = io.BytesIO()
+            image.save(img_byte_arr, format='PNG', quality=95, optimize=True)
+            
+            logger.info(f"Successfully created {layout_type.name} newspaper clipping")
+            return img_byte_arr.getvalue()
+            
+        except Exception as e:
+            logger.error(f"Error creating enhanced newspaper clipping: {str(e)}")
+            return None
+
+    def _add_aging_effect(self, draw: ImageDraw, config: LayoutConfig):
+        """Add subtle aging effects to make it look like a real newspaper clipping"""
+        # Add slight shadow/border effect
+        shadow_offset = 5
+        draw.rectangle([
+            (shadow_offset, shadow_offset), 
+            (config.width, config.height)
+        ], fill='#e0e0e0')
+        
+        # Main newspaper background
+        draw.rectangle([
+            (0, 0), 
+            (config.width - shadow_offset, config.height - shadow_offset)
+        ], fill='#fefefe', outline='#d0d0d0', width=1)
+
+    def _add_final_touches(self, draw: ImageDraw, config: LayoutConfig):
+        """Add final decorative touches"""
+        # Add corner decorations
+        corner_size = 20
+        
+        # Top corners
+        draw.line([
+            (config.margin, config.margin), 
+            (config.margin + corner_size, config.margin)
+        ], fill='black', width=2)
+        draw.line([
+            (config.margin, config.margin), 
+            (config.margin, config.margin + corner_size)
+        ], fill='black', width=2)
+        
+        draw.line([
+            (config.width - config.margin - corner_size, config.margin), 
+            (config.width - config.margin, config.margin)
+        ], fill='black', width=2)
+        draw.line([
+            (config.width - config.margin, config.margin), 
+            (config.width - config.margin, config.margin + corner_size)
+        ], fill='black', width=2)
+
+# Create global instance
+layout_engine = NewspaperLayoutEngine()
 
 def create_newspaper_clipping(article_data):
     """
-    Create a newspaper clipping style image from the article data
+    Enhanced newspaper clipping creation with dynamic layouts
     
     Args:
         article_data (dict): The extracted article data
@@ -48,79 +374,13 @@ def create_newspaper_clipping(article_data):
     Returns:
         bytes: The image data in bytes format, or None if creation failed
     """
-    logger.info("Starting newspaper clipping creation")
-    try:
-        # Create a new image with a white background
-        width = 1200
-        height = 1600
-        margin = 100
-        section_padding = 30
-        logger.info(f"Creating new image with dimensions {width}x{height}")
-        image = Image.new('RGB', (width, height), 'white')
-        draw = ImageDraw.Draw(image)
-        
-        # Load fonts (using default fonts for now)
-        logger.info("Loading fonts")
-        try:
-            headline_font = ImageFont.truetype("Arial Bold", 48)
-            date_font = ImageFont.truetype("Arial", 24)
-            content_font = ImageFont.truetype("Arial", 28)
-            logger.info("Successfully loaded Arial fonts")
-        except:
-            # Fallback to default font if Arial is not available
-            logger.warning("Arial fonts not available, falling back to default font")
-            headline_font = ImageFont.load_default()
-            date_font = ImageFont.load_default()
-            content_font = ImageFont.load_default()
-        
-        # Add a light gray background for the clipping effect
-        logger.info("Adding background and border effects")
-        draw.rectangle([(50, 50), (width-50, height-50)], fill='#f5f5f5')
-        
-        # Add the headline
-        headline = article_data.get('headline', 'Unknown Headline')
-        max_text_width = width - 2 * margin
-        headline_lines = wrap_text(headline, headline_font, max_text_width, draw)
-        headline_text = '\n'.join(headline_lines)
-        logger.info(f"Adding headline: {headline[:50]}...")
-        y = margin
-        draw.multiline_text((margin, y), headline_text, fill='black', font=headline_font, spacing=6)
-        # Calculate height of headline block
-        bbox = draw.multiline_textbbox((margin, y), headline_text, font=headline_font, spacing=6)
-        y = bbox[3] + section_padding
-        
-        # Add the date and source
-        date_text = f"{article_data.get('date', 'Unknown Date')} - {article_data.get('source', 'Unknown Source')}"
-        date_lines = wrap_text(date_text, date_font, max_text_width, draw)
-        date_text_wrapped = '\n'.join(date_lines)
-        logger.info(f"Adding date and source: {date_text}")
-        draw.multiline_text((margin, y), date_text_wrapped, fill='#666666', font=date_font, spacing=4)
-        bbox = draw.multiline_textbbox((margin, y), date_text_wrapped, font=date_font, spacing=4)
-        y = bbox[3] + section_padding
-        
-        # Add the content
-        content = article_data.get('text', '')
-        content_lines = wrap_text(content, content_font, max_text_width, draw)
-        content_text = '\n'.join(content_lines)
-        logger.info(f"Adding content (first 50 chars): {content[:50]}...")
-        draw.multiline_text((margin, y), content_text, fill='black', font=content_font, spacing=6)
-        # No need to update y further unless you want to add more sections
-        
-        # Add a decorative border
-        draw.rectangle([(40, 40), (width-40, height-40)], outline='#333333', width=2)
-        
-        # Convert image to bytes
-        logger.info("Converting image to bytes")
-        img_byte_arr = io.BytesIO()
-        image.save(img_byte_arr, format='PNG')
-        img_byte_arr = img_byte_arr.getvalue()
-        
-        logger.info("Successfully created newspaper clipping in memory")
-        return img_byte_arr
-    except Exception as e:
-        logger.error(f"Error creating newspaper clipping: {str(e)}")
-        return None
+    return layout_engine.create_newspaper_clipping(article_data)
 
+def wrap_text(text, font, max_width, draw):
+    """Legacy function maintained for backward compatibility"""
+    return layout_engine.wrap_text_to_width(text, font, max_width, draw)
+
+# Rest of the extraction code remains the same...
 def extract_from_url(url):
     """
     Extract article content from a given URL
@@ -367,6 +627,7 @@ def extract_from_url(url):
         
         # After successful extraction, create the newspaper clipping
         article_data = {
+            "success": True,
             "headline": headline_text,
             "date": date_text,
             "author": author,
@@ -376,14 +637,11 @@ def extract_from_url(url):
             "image_url": image_url,
         }
         
-        # Generate the newspaper clipping
+        # Generate the enhanced newspaper clipping
         clipping_image = create_newspaper_clipping(article_data)
         if clipping_image:
             article_data["clipping_image"] = clipping_image
             
-        article_data["success"] = True
-        
-        logger.info('url_extractor article_data: ' + str(article_data))
         return article_data
         
     except requests.RequestException as e:

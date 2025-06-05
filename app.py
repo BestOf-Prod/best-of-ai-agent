@@ -8,6 +8,7 @@ import uuid
 import time
 import io
 import json
+import os
 
 # Import existing modules
 from extractors.url_extractor import extract_from_url
@@ -99,24 +100,23 @@ def enhanced_sidebar_config():
     # Authentication section
     st.sidebar.subheader("🔐 Newspapers.com Authentication")
     
-    auth_method = st.sidebar.radio(
-        "Authentication Method",
-        ["Auto-detect cookies", "Manual cookies", "No authentication"],
-        help="Choose how to authenticate with Newspapers.com"
+    # Get login credentials
+    email = st.sidebar.text_input(
+        "Newspapers.com Email",
+        help="Enter your Newspapers.com account email"
     )
     
-    newspapers_cookies = ""
-    if auth_method == "Manual cookies":
-        newspapers_cookies = st.sidebar.text_area(
-            "Session Cookies",
-            help="Paste your Newspapers.com session cookies here if auto-detection fails"
-        )
+    password = st.sidebar.text_input(
+        "Newspapers.com Password",
+        type="password",
+        help="Enter your Newspapers.com account password"
+    )
     
     # Initialize/refresh authentication
     col1, col2 = st.sidebar.columns(2)
     with col1:
         if st.sidebar.button("🔄 Initialize Auth"):
-            initialize_newspapers_authentication(auth_method, newspapers_cookies)
+            initialize_newspapers_authentication(email, password)
     
     with col2:
         if st.sidebar.button("🧪 Test Auth"):
@@ -143,72 +143,39 @@ def enhanced_sidebar_config():
     
     # Newspapers.com specific settings
     st.sidebar.subheader("📰 Newspapers.com Settings")
-    enable_advanced_processing = st.sidebar.checkbox(
-        "Enable Advanced Image Processing",
-        value=True,
-        help="Use advanced OCR and image processing for newspaper clippings"
-    )
-    
-    player_name = st.sidebar.text_input(
-        "Player Name (for filtering)",
-        help="Filter articles for specific player mentions"
-    )
-    
     date_range = st.sidebar.selectbox(
-        "Date Range Filter",
+        "Date Range",
         ["Any", "2020-2025", "2010-2019", "2000-2009", "1990-1999", "1980-1989"],
         help="Filter articles by date range"
     )
     
-    # Debug controls
-    st.sidebar.divider()
-    st.sidebar.subheader("🛠️ Debug Options")
-    
-    if st.sidebar.checkbox("Enable Verbose Logging"):
-        logger.setLevel(logging.DEBUG)
-        logger.debug("Verbose logging enabled")
-    
-    if st.sidebar.button("Clear Session State"):
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        logger.warning("Session state cleared")
-        st.rerun()
-    
-    # Storage test
-    st.sidebar.divider()
-    st.sidebar.subheader("🧪 Storage Test")
-    if st.sidebar.button("Test Storage Connection"):
-        test_storage_connection(bucket_name, project_name)
-    
     return {
-        'auth_method': auth_method,
-        'newspapers_cookies': newspapers_cookies,
         'bucket_name': bucket_name,
         'project_name': project_name,
         'max_workers': max_workers,
         'delay_between_requests': delay_between_requests,
-        'enable_advanced_processing': enable_advanced_processing,
-        'player_name': player_name,
-        'date_range': date_range if date_range != "Any" else None
+        'date_range': date_range
     }
 
-def initialize_newspapers_authentication(auth_method, manual_cookies=""):
+def initialize_newspapers_authentication(email: str, password: str):
     """Initialize Newspapers.com authentication"""
-    logger.info(f"Initializing Newspapers.com authentication: {auth_method}")
+    logger.info("Initializing Newspapers.com authentication")
     
     with st.spinner("Initializing Newspapers.com authentication..."):
         try:
-            if auth_method == "Auto-detect cookies":
-                extractor = NewspapersComExtractor(auto_auth=True)
-                success = extractor.initialize()
-            elif auth_method == "Manual cookies":
-                extractor = NewspapersComExtractor(auto_auth=False)
-                # Set manual cookies here if needed
-                success = extractor.initialize()
-            else:
-                extractor = NewspapersComExtractor(auto_auth=False)
-                success = extractor.initialize()
+            # Check if we're in Replit environment
+            is_replit = 'REPL_ID' in os.environ or 'REPL_SLUG' in os.environ
             
+            # Initialize extractor with appropriate settings
+            extractor = NewspapersComExtractor(auto_auth=True)
+            
+            # Set login credentials
+            extractor.cookie_manager.set_login_credentials(email, password)
+            
+            # Try to authenticate
+            success = extractor.initialize(email=email, password=password)
+            
+            # Store in session state
             st.session_state.newspapers_extractor = extractor
             st.session_state.authentication_status = extractor.get_authentication_status()
             
@@ -222,6 +189,9 @@ def initialize_newspapers_authentication(auth_method, manual_cookies=""):
         except Exception as e:
             logger.error(f"Authentication initialization failed: {str(e)}")
             st.error(f"❌ Authentication failed: {str(e)}")
+            return False
+            
+        return True
 
 def test_newspapers_authentication():
     """Test current Newspapers.com authentication"""
@@ -483,8 +453,6 @@ def manage_urls(config):
         st.write("**Processing Settings:**")
         st.write(f"🔧 Workers: {config['max_workers']}")
         st.write(f"⏱️ Delay: {config['delay_between_requests']}s")
-        if config.get('player_name'):
-            st.write(f"🏃 Player: {config['player_name']}")
 
 def start_enhanced_processing(config):
     """Enhanced batch processing with advanced features"""
