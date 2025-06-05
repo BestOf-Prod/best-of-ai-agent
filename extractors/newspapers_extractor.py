@@ -89,6 +89,19 @@ class SeleniumLoginManager:
             if self.is_replit:
                 chrome_options.add_argument('--disable-setuid-sandbox')
                 chrome_options.add_argument('--single-process')
+                chrome_options.add_argument('--no-zygote')
+                chrome_options.add_argument('--disable-dev-shm-usage')
+                chrome_options.add_argument('--disable-software-rasterizer')
+                chrome_options.add_argument('--disable-extensions')
+                chrome_options.add_argument('--disable-gpu-sandbox')
+                chrome_options.add_argument('--disable-accelerated-2d-canvas')
+                chrome_options.add_argument('--disable-accelerated-jpeg-decoding')
+                chrome_options.add_argument('--disable-accelerated-mjpeg-decode')
+                chrome_options.add_argument('--disable-accelerated-video-decode')
+                chrome_options.add_argument('--disable-accelerated-video')
+                chrome_options.add_argument('--disable-webgl')
+                chrome_options.add_argument('--disable-webgl2')
+                chrome_options.add_argument('--disable-features=site-per-process')
                 chrome_options.binary_location = '/usr/bin/google-chrome'
             else:
                 # Add additional options for local environment
@@ -105,7 +118,12 @@ class SeleniumLoginManager:
             try:
                 # Try to initialize Chrome directly first
                 logger.info("Trying direct Chrome initialization...")
-                self.driver = webdriver.Chrome(options=chrome_options)
+                if self.is_replit:
+                    from selenium.webdriver.chrome.service import Service
+                    service = Service('/usr/bin/chromedriver')
+                    self.driver = webdriver.Chrome(service=service, options=chrome_options)
+                else:
+                    self.driver = webdriver.Chrome(options=chrome_options)
                 logger.info("Direct Chrome initialization successful")
             except Exception as e:
                 logger.warning(f"Failed to initialize Chrome directly: {str(e)}")
@@ -128,7 +146,10 @@ class SeleniumLoginManager:
                         chrome_version = None
                     
                     # Install matching ChromeDriver
-                    service = Service(ChromeDriverManager().install())
+                    if self.is_replit:
+                        service = Service('/usr/bin/chromedriver')
+                    else:
+                        service = Service(ChromeDriverManager().install())
                     self.driver = webdriver.Chrome(service=service, options=chrome_options)
                     logger.info("ChromeDriverManager initialization successful")
                 except Exception as e2:
