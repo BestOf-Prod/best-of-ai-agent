@@ -120,7 +120,7 @@ class SeleniumLoginManager:
                 logger.info("Trying direct Chrome initialization...")
                 if self.is_replit:
                     from selenium.webdriver.chrome.service import Service
-                    service = Service('/usr/bin/chromedriver')
+                    service = Service('/nix/store/3qnxr5x6gw3k9a9i7d0akz0m6bksbwff-chromedriver-125.0.6422.141/bin/chromedriver')
                     self.driver = webdriver.Chrome(service=service, options=chrome_options)
                 else:
                     self.driver = webdriver.Chrome(options=chrome_options)
