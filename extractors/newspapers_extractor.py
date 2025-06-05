@@ -133,12 +133,6 @@ class SeleniumLoginManager:
                     chrome_options.binary_location = chrome_binary
                 else:
                     logger.warning("Chrome binary not found in standard locations")
-            else:
-                # Add additional options for local environment
-                chrome_options.add_argument('--remote-debugging-port=9222')
-                chrome_options.add_argument('--disable-web-security')
-                chrome_options.add_argument('--allow-running-insecure-content')
-                chrome_options.add_argument('--disable-features=IsolateOrigins,site-per-process')
             
             # Add user agent to avoid detection
             chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
@@ -206,7 +200,7 @@ class SeleniumLoginManager:
             # Set page load timeout
             self.driver.set_page_load_timeout(30)
             
-            # Navigate to login page
+            # Navigate to login page with timeout
             logger.info("Navigating to login page...")
             try:
                 self.driver.get('https://www.newspapers.com/signin/')
@@ -215,7 +209,7 @@ class SeleniumLoginManager:
                 logger.error(f"Failed to load login page: {str(e)}")
                 return False
             
-            # Wait for login form with increased timeout
+            # Wait for login form with increased timeout and better error handling
             try:
                 logger.info("Waiting for login form...")
                 WebDriverWait(self.driver, 20).until(
@@ -226,37 +220,49 @@ class SeleniumLoginManager:
                 logger.error(f"Failed to find login form: {str(e)}")
                 return False
             
-            # Fill in login form
-            try:
-                email_field = self.driver.find_element(By.ID, "email")
-                password_field = self.driver.find_element(By.ID, "password")
-                
-                # Clear fields first
-                email_field.clear()
-                password_field.clear()
-                
-                # Send keys with small delay
-                email_field.send_keys(self.login_credentials['email'])
-                time.sleep(0.5)
-                password_field.send_keys(self.login_credentials['password'])
-                time.sleep(0.5)
-                
-                logger.info("Login form filled successfully")
-            except Exception as e:
-                logger.error(f"Failed to fill login form: {str(e)}")
-                return False
+            # Fill in login form with retries
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    email_field = self.driver.find_element(By.ID, "email")
+                    password_field = self.driver.find_element(By.ID, "password")
+                    
+                    # Clear fields first
+                    email_field.clear()
+                    password_field.clear()
+                    
+                    # Send keys with small delay
+                    email_field.send_keys(self.login_credentials['email'])
+                    time.sleep(0.5)
+                    password_field.send_keys(self.login_credentials['password'])
+                    time.sleep(0.5)
+                    
+                    logger.info("Login form filled successfully")
+                    break
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        logger.error(f"Failed to fill login form after {max_retries} attempts: {str(e)}")
+                        return False
+                    logger.warning(f"Attempt {attempt + 1} failed to fill login form, retrying...")
+                    time.sleep(1)
             
-            # Submit form
-            try:
-                password_field.submit()
-                logger.info("Login form submitted")
-            except Exception as e:
-                logger.error(f"Failed to submit login form: {str(e)}")
-                return False
+            # Submit form with retry
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    password_field.submit()
+                    logger.info("Login form submitted")
+                    break
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        logger.error(f"Failed to submit login form after {max_retries} attempts: {str(e)}")
+                        return False
+                    logger.warning(f"Attempt {attempt + 1} failed to submit form, retrying...")
+                    time.sleep(1)
             
-            # Wait for login to complete with better conditions
+            # Wait for login to complete with better conditions and timeout
             try:
-                WebDriverWait(self.driver, 10).until(
+                WebDriverWait(self.driver, 20).until(
                     lambda driver: "login" not in driver.current_url.lower()
                 )
                 logger.info("Login successful - redirected from login page")
@@ -267,19 +273,34 @@ class SeleniumLoginManager:
             # Additional wait for cookies to be set
             time.sleep(3)
             
-            # Extract cookies
-            self.cookies = {}
-            for cookie in self.driver.get_cookies():
-                self.cookies[cookie['name']] = cookie['value']
+            # Extract cookies with retry
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    self.cookies = {}
+                    for cookie in self.driver.get_cookies():
+                        self.cookies[cookie['name']] = cookie['value']
+                    
+                    if not self.cookies:
+                        if attempt == max_retries - 1:
+                            logger.error("No cookies found after login")
+                            return False
+                        logger.warning(f"Attempt {attempt + 1} found no cookies, retrying...")
+                        time.sleep(2)
+                        continue
+                    
+                    logger.info(f"Successfully extracted {len(self.cookies)} cookies")
+                    self.last_login = datetime.now()
+                    logger.info("Login process completed successfully")
+                    return True
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        logger.error(f"Failed to extract cookies after {max_retries} attempts: {str(e)}")
+                        return False
+                    logger.warning(f"Attempt {attempt + 1} failed to extract cookies, retrying...")
+                    time.sleep(2)
             
-            if not self.cookies:
-                logger.error("No cookies found after login")
-                return False
-            
-            logger.info(f"Successfully extracted {len(self.cookies)} cookies")
-            self.last_login = datetime.now()
-            logger.info("Login process completed successfully")
-            return True
+            return False
             
         except Exception as e:
             logger.error(f"Login failed with unexpected error: {str(e)}")
