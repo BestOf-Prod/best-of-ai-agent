@@ -53,8 +53,8 @@ class ClippingResult:
     bounding_box: Tuple[int, int, int, int]
 
 
-class SeleniumLoginManager:
-    """Handle direct login authentication using Selenium"""
+class EnhancedSeleniumLoginManager:
+    """Enhanced Selenium login manager with better authentication handling"""
     
     def __init__(self):
         self.driver = None
@@ -62,248 +62,425 @@ class SeleniumLoginManager:
         self.last_login = None
         self.login_credentials = None
         self.is_replit = 'REPL_ID' in os.environ or 'REPL_SLUG' in os.environ
+        self.auth_data = {}  # Store complete authentication data
     
     def set_credentials(self, email: str, password: str):
         """Set login credentials"""
         self.login_credentials = {'email': email, 'password': password}
     
+    def setup_enhanced_chrome_options(self):
+        """Set up enhanced Chrome options for better stealth"""
+        chrome_options = Options()
+        
+        # Basic headless options
+        chrome_options.add_argument('--headless=new')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--window-size=1920,1080')
+        
+        # Enhanced stealth options
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        chrome_options.add_argument('--disable-extensions')
+        chrome_options.add_argument('--disable-popup-blocking')
+        
+        # Add realistic user agent
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        
+        # Replit-specific options
+        if self.is_replit:
+            chrome_options.add_argument('--disable-setuid-sandbox')
+            chrome_options.add_argument('--single-process')
+            chrome_options.add_argument('--no-zygote')
+            chrome_options.add_argument('--disable-software-rasterizer')
+            chrome_options.add_argument('--disable-gpu-sandbox')
+            chrome_options.add_argument('--disable-accelerated-2d-canvas')
+            chrome_options.add_argument('--disable-accelerated-jpeg-decoding')
+            chrome_options.add_argument('--disable-accelerated-mjpeg-decode')
+            chrome_options.add_argument('--disable-accelerated-video-decode')
+            chrome_options.add_argument('--disable-accelerated-video')
+            chrome_options.add_argument('--disable-webgl')
+            chrome_options.add_argument('--disable-webgl2')
+            chrome_options.add_argument('--disable-features=site-per-process')
+            
+            # Try to find Chrome binary
+            possible_chrome_paths = [
+                '/usr/bin/google-chrome',
+                '/usr/bin/google-chrome-stable',
+                '/usr/bin/chromium',
+                '/usr/bin/chromium-browser',
+                '/snap/bin/chromium',
+                '/nix/store/*/bin/chromium',
+                '/nix/store/*/bin/google-chrome',
+                '/nix/store/3qnxr5x6gw3k9a9i7d0akz0m6bksbwff-chromedriver-125.0.6422.141/bin/chromedriver'
+            ]
+            
+            chrome_binary = None
+            for path in possible_chrome_paths:
+                if '*' in path:
+                    import glob
+                    matches = glob.glob(path)
+                    if matches:
+                        chrome_binary = matches[0]
+                        break
+                elif os.path.exists(path):
+                    chrome_binary = path
+                    break
+            
+            if chrome_binary:
+                logger.info(f"Found Chrome binary at: {chrome_binary}")
+                chrome_options.binary_location = chrome_binary
+            else:
+                logger.warning("Chrome binary not found in standard locations")
+        
+        return chrome_options
+
+    def perform_human_like_login(self, email: str, password: str) -> bool:
+        """Perform enhanced human-like login sequence with better error handling"""
+        try:
+            # 1. Start from main page to establish session context
+            logger.info("Loading main page to establish session...")
+            self.driver.get('https://www.newspapers.com/')
+            time.sleep(3)
+            
+            # 2. Navigate to login page directly (more reliable)
+            logger.info("Navigating directly to login page...")
+            self.driver.get('https://www.newspapers.com/signin/')
+            time.sleep(3)
+            
+            # 3. Wait for login form with multiple strategies
+            try:
+                # Try different selectors for the email field
+                email_selectors = ["#email", "input[name='email']", "input[type='email']"]
+                email_field = None
+                
+                for selector in email_selectors:
+                    try:
+                        email_field = WebDriverWait(self.driver, 10).until(
+                            EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                        )
+                        logger.info(f"Found email field with selector: {selector}")
+                        break
+                    except:
+                        continue
+                
+                if not email_field:
+                    logger.error("Could not find email field with any selector")
+                    return False
+                
+                # Find password field
+                password_selectors = ["#password", "input[name='password']", "input[type='password']"]
+                password_field = None
+                
+                for selector in password_selectors:
+                    try:
+                        password_field = self.driver.find_element(By.CSS_SELECTOR, selector)
+                        logger.info(f"Found password field with selector: {selector}")
+                        break
+                    except:
+                        continue
+                
+                if not password_field:
+                    logger.error("Could not find password field")
+                    return False
+                    
+                logger.info("Login form fields found successfully")
+                
+            except Exception as e:
+                logger.error(f"Failed to find login form: {str(e)}")
+                # Save debug HTML to see what's on the page
+                self._save_debug_html_simple()
+                return False
+            
+            # 4. Clear fields and fill with human-like behavior
+            try:
+                # Focus and clear email field
+                email_field.click()
+                time.sleep(0.5)
+                email_field.clear()
+                time.sleep(0.5)
+                
+                # Type email slowly
+                for char in email:
+                    email_field.send_keys(char)
+                    time.sleep(0.08)  # Slightly slower typing
+                
+                time.sleep(1.5)
+                
+                # Focus and clear password field
+                password_field.click()
+                time.sleep(0.5)
+                password_field.clear()
+                time.sleep(0.5)
+                
+                # Type password slowly
+                for char in password:
+                    password_field.send_keys(char)
+                    time.sleep(0.08)
+                
+                time.sleep(2)
+                logger.info("Form filled successfully")
+                
+            except Exception as e:
+                logger.error(f"Failed to fill login form: {str(e)}")
+                return False
+            
+            # 5. Submit form with multiple strategies
+            try:
+                # Strategy 1: Try to find and click submit button
+                submit_selectors = [
+                    "input[type='submit']",
+                    "button[type='submit']", 
+                    "button:contains('Sign In')",
+                    ".btn-primary",
+                    "#signin-button",
+                    "form button"
+                ]
+                
+                submit_clicked = False
+                for selector in submit_selectors:
+                    try:
+                        if ":contains" in selector:
+                            # Handle pseudo-selector differently
+                            submit_button = self.driver.find_element(By.XPATH, "//button[contains(text(), 'Sign In') or contains(text(), 'Log In') or contains(text(), 'Submit')]")
+                        else:
+                            submit_button = self.driver.find_element(By.CSS_SELECTOR, selector)
+                        
+                        if submit_button and submit_button.is_enabled():
+                            submit_button.click()
+                            logger.info(f"Clicked submit button with selector: {selector}")
+                            submit_clicked = True
+                            break
+                    except:
+                        continue
+                
+                # Strategy 2: Submit the form directly
+                if not submit_clicked:
+                    try:
+                        password_field.submit()
+                        logger.info("Submitted form via password field")
+                        submit_clicked = True
+                    except:
+                        pass
+                
+                # Strategy 3: Press Enter in password field
+                if not submit_clicked:
+                    try:
+                        from selenium.webdriver.common.keys import Keys
+                        password_field.send_keys(Keys.RETURN)
+                        logger.info("Pressed Enter in password field")
+                        submit_clicked = True
+                    except:
+                        pass
+                
+                if not submit_clicked:
+                    logger.error("Could not submit login form with any method")
+                    return False
+                
+            except Exception as e:
+                logger.error(f"Failed to submit login form: {str(e)}")
+                return False
+            
+            # 6. Wait for login to complete with multiple checks
+            try:
+                # Wait a bit for the form to process
+                time.sleep(3)
+                
+                # Check multiple conditions for successful login
+                login_success = False
+                
+                # Check 1: URL changed away from login/signin
+                current_url = self.driver.current_url.lower()
+                if "login" not in current_url and "signin" not in current_url:
+                    logger.info("URL indicates successful login")
+                    login_success = True
+                
+                # Check 2: Look for login success indicators
+                success_indicators = [
+                    "account",
+                    "dashboard", 
+                    "profile",
+                    "logout"
+                ]
+                
+                page_content = self.driver.page_source.lower()
+                for indicator in success_indicators:
+                    if indicator in page_content:
+                        logger.info(f"Found login success indicator: {indicator}")
+                        login_success = True
+                        break
+                
+                # Check 3: Look for absence of login form
+                try:
+                    email_still_present = self.driver.find_element(By.ID, "email")
+                    if not email_still_present.is_displayed():
+                        logger.info("Login form no longer visible")
+                        login_success = True
+                except:
+                    # Email field not found, which is good
+                    logger.info("Login form not found on page")
+                    login_success = True
+                
+                if not login_success:
+                    logger.error("Login appears to have failed - still on login page")
+                    self._save_debug_html_simple()
+                    return False
+                
+            except Exception as e:
+                logger.error(f"Error checking login status: {str(e)}")
+                return False
+            
+            # 7. Additional wait for JavaScript session setup
+            time.sleep(5)
+            
+            # 8. Verify authentication by checking user object
+            try:
+                user_data = self.driver.execute_script("return window.ncom ? window.ncom.user : null;")
+                
+                if user_data and user_data != 'null' and user_data != 0:
+                    logger.info(f"Successfully authenticated as user: {user_data}")
+                    return True
+                else:
+                    logger.warning(f"Authentication may not be complete - user data: {user_data}")
+                    # Continue anyway as cookies might still be valid
+                    return True
+                    
+            except Exception as e:
+                logger.warning(f"Could not verify user authentication: {str(e)}")
+                # Continue anyway
+                return True
+                
+        except Exception as e:
+            logger.error(f"Enhanced login sequence failed: {str(e)}")
+            return False
+
+    def extract_complete_authentication_data(self):
+        """Extract all possible authentication data"""
+        auth_data = {}
+        
+        try:
+            # Get all cookies
+            auth_data['cookies'] = self.driver.get_cookies()
+            
+            # Get JavaScript session data
+            ncom_data = self.driver.execute_script("return window.ncom || {};")
+            auth_data['ncom'] = ncom_data
+            
+            # Get page data
+            page_data = self.driver.execute_script("return window.page || {};")
+            auth_data['page'] = page_data
+            
+            # Get localStorage if available
+            try:
+                local_storage = self.driver.execute_script("""
+                    var ls = {};
+                    for (var i = 0; i < localStorage.length; i++) {
+                        var key = localStorage.key(i);
+                        ls[key] = localStorage.getItem(key);
+                    }
+                    return ls;
+                """)
+                auth_data['localStorage'] = local_storage
+            except:
+                auth_data['localStorage'] = {}
+            
+            # Get sessionStorage if available
+            try:
+                session_storage = self.driver.execute_script("""
+                    var ss = {};
+                    for (var i = 0; i < sessionStorage.length; i++) {
+                        var key = sessionStorage.key(i);
+                        ss[key] = sessionStorage.getItem(key);
+                    }
+                    return ss;
+                """)
+                auth_data['sessionStorage'] = session_storage
+            except:
+                auth_data['sessionStorage'] = {}
+            
+            # Store authentication timestamp
+            auth_data['timestamp'] = datetime.now().isoformat()
+            
+            return auth_data
+            
+        except Exception as e:
+            logger.error(f"Error extracting authentication data: {str(e)}")
+            return {}
+
     def login(self) -> bool:
-        """Perform login using Selenium"""
+        """Enhanced login using improved authentication strategy with fallback"""
         if not self.login_credentials:
             logger.error("No login credentials set")
             return False
             
         try:
-            # Set up Chrome options
-            chrome_options = Options()
-            chrome_options.add_argument('--headless=new')
-            chrome_options.add_argument('--no-sandbox')
-            chrome_options.add_argument('--disable-dev-shm-usage')
-            chrome_options.add_argument('--disable-gpu')
-            chrome_options.add_argument('--window-size=1920,1080')
-            chrome_options.add_argument('--disable-extensions')
-            chrome_options.add_argument('--disable-popup-blocking')
-            chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+            # Set up enhanced Chrome options
+            chrome_options = self.setup_enhanced_chrome_options()
             
-            # Add additional options for Replit environment
-            if self.is_replit:
-                chrome_options.add_argument('--disable-setuid-sandbox')
-                chrome_options.add_argument('--single-process')
-                chrome_options.add_argument('--no-zygote')
-                chrome_options.add_argument('--disable-dev-shm-usage')
-                chrome_options.add_argument('--disable-software-rasterizer')
-                chrome_options.add_argument('--disable-extensions')
-                chrome_options.add_argument('--disable-gpu-sandbox')
-                chrome_options.add_argument('--disable-accelerated-2d-canvas')
-                chrome_options.add_argument('--disable-accelerated-jpeg-decoding')
-                chrome_options.add_argument('--disable-accelerated-mjpeg-decode')
-                chrome_options.add_argument('--disable-accelerated-video-decode')
-                chrome_options.add_argument('--disable-accelerated-video')
-                chrome_options.add_argument('--disable-webgl')
-                chrome_options.add_argument('--disable-webgl2')
-                chrome_options.add_argument('--disable-features=site-per-process')
-                
-                # Try to find Chrome binary in common locations
-                possible_chrome_paths = [
-                    '/usr/bin/google-chrome',
-                    '/usr/bin/google-chrome-stable',
-                    '/usr/bin/chromium',
-                    '/usr/bin/chromium-browser',
-                    '/snap/bin/chromium',
-                    '/nix/store/*/bin/chromium',
-                    '/nix/store/*/bin/google-chrome',
-                    '/nix/store/3qnxr5x6gw3k9a9i7d0akz0m6bksbwff-chromedriver-125.0.6422.141/bin/chromedriver'
-                ]
-                
-                chrome_binary = None
-                for path in possible_chrome_paths:
-                    if '*' in path:
-                        # Handle glob patterns
-                        import glob
-                        matches = glob.glob(path)
-                        if matches:
-                            chrome_binary = matches[0]
-                            break
-                    elif os.path.exists(path):
-                        chrome_binary = path
-                        break
-                
-                if chrome_binary:
-                    logger.info(f"Found Chrome binary at: {chrome_binary}")
-                    chrome_options.binary_location = chrome_binary
-                else:
-                    logger.warning("Chrome binary not found in standard locations")
-            
-            # Add user agent to avoid detection
-            chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-            
-            logger.info("Attempting to initialize Chrome...")
+            logger.info("Attempting to initialize Chrome with enhanced options...")
             
             try:
-                # Try to initialize Chrome directly first
-                logger.info("Trying direct Chrome initialization...")
+                # Initialize Chrome with enhanced options
                 if self.is_replit:
                     from selenium.webdriver.chrome.service import Service
                     service = Service('/nix/store/3qnxr5x6gw3k9a9i7d0akz0m6bksbwff-chromedriver-125.0.6422.141/bin/chromedriver')
                     self.driver = webdriver.Chrome(service=service, options=chrome_options)
-                    logger.info("Direct Chrome initialization successful")
                 else:
                     self.driver = webdriver.Chrome(options=chrome_options)
-                    logger.info("Direct Chrome initialization successful")
-            except Exception as e:
-                logger.warning(f"Failed to initialize Chrome directly: {str(e)}")
-                try:
-                    # Try with ChromeDriverManager as fallback
-                    logger.info("Trying ChromeDriverManager initialization...")
-                    from webdriver_manager.chrome import ChromeDriverManager
-                    from selenium.webdriver.chrome.service import Service
-                    
-                    # Get the Chrome version
-                    import subprocess
-                    try:
-                        if self.is_replit:
-                            # Try multiple commands to get Chrome version
-                            chrome_commands = [
-                                ['google-chrome', '--version'],
-                                ['google-chrome-stable', '--version'],
-                                ['chromium', '--version'],
-                                ['chromium-browser', '--version']
-                            ]
-                            chrome_version = None
-                            for cmd in chrome_commands:
-                                try:
-                                    chrome_version = subprocess.check_output(cmd).decode().strip()
-                                    if chrome_version:
-                                        break
-                                except:
-                                    continue
-                            if chrome_version:
-                                logger.info(f"Detected Chrome version: {chrome_version}")
-                        else:
-                            chrome_version = subprocess.check_output(['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '--version']).decode().strip()
-                            logger.info(f"Detected Chrome version: {chrome_version}")
-                    except:
-                        logger.warning("Could not detect Chrome version")
-                        chrome_version = None
-                    
-                    # Install matching ChromeDriver
-                    if self.is_replit:
-                        service = Service('/usr/bin/chromedriver')
-                    else:
-                        service = Service(ChromeDriverManager().install())
-                    self.driver = webdriver.Chrome(service=service, options=chrome_options)
-                    logger.info("ChromeDriverManager initialization successful")
-                except Exception as e2:
-                    logger.error(f"Failed to initialize Chrome with ChromeDriverManager: {str(e2)}")
-                    return False
-            
-            # Set page load timeout
-            self.driver.set_page_load_timeout(30)
-            
-            # Navigate to login page with timeout
-            logger.info("Navigating to login page...")
-            try:
-                self.driver.get('https://www.newspapers.com/signin/')
-                logger.info("Successfully loaded login page")
-            except Exception as e:
-                logger.error(f"Failed to load login page: {str(e)}")
-                return False
-            
-            # Wait for login form with increased timeout and better error handling
-            try:
-                logger.info("Waiting for login form...")
-                WebDriverWait(self.driver, 20).until(
-                    EC.presence_of_element_located((By.ID, "email"))
+                
+                logger.info("Chrome initialization successful")
+                
+                # Remove webdriver property to avoid detection
+                self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                
+                # Set page load timeout
+                self.driver.set_page_load_timeout(30)
+                
+                # Perform enhanced human-like login
+                login_attempted = self.perform_human_like_login(
+                    self.login_credentials['email'], 
+                    self.login_credentials['password']
                 )
-                logger.info("Login form found")
-            except Exception as e:
-                logger.error(f"Failed to find login form: {str(e)}")
-                return False
-            
-            # Fill in login form with retries
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    email_field = self.driver.find_element(By.ID, "email")
-                    password_field = self.driver.find_element(By.ID, "password")
+                
+                if login_attempted:
+                    # Extract complete authentication data regardless of login status
+                    self.auth_data = self.extract_complete_authentication_data()
                     
-                    # Clear fields first
-                    email_field.clear()
-                    password_field.clear()
-                    
-                    # Send keys with small delay
-                    email_field.send_keys(self.login_credentials['email'])
-                    time.sleep(0.5)
-                    password_field.send_keys(self.login_credentials['password'])
-                    time.sleep(0.5)
-                    
-                    logger.info("Login form filled successfully")
-                    break
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        logger.error(f"Failed to fill login form after {max_retries} attempts: {str(e)}")
-                        return False
-                    logger.warning(f"Attempt {attempt + 1} failed to fill login form, retrying...")
-                    time.sleep(1)
-            
-            # Submit form with retry
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    password_field.submit()
-                    logger.info("Login form submitted")
-                    break
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        logger.error(f"Failed to submit login form after {max_retries} attempts: {str(e)}")
-                        return False
-                    logger.warning(f"Attempt {attempt + 1} failed to submit form, retrying...")
-                    time.sleep(1)
-            
-            # Wait for login to complete with better conditions and timeout
-            try:
-                WebDriverWait(self.driver, 20).until(
-                    lambda driver: "login" not in driver.current_url.lower()
-                )
-                logger.info("Login successful - redirected from login page")
-            except Exception as e:
-                logger.error(f"Login failed - still on login page: {str(e)}")
-                return False
-            
-            # Additional wait for cookies to be set
-            time.sleep(3)
-            
-            # Extract cookies with retry
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
+                    # Extract cookies for backward compatibility
                     self.cookies = {}
-                    for cookie in self.driver.get_cookies():
+                    for cookie in self.auth_data.get('cookies', []):
                         self.cookies[cookie['name']] = cookie['value']
                     
-                    if not self.cookies:
-                        if attempt == max_retries - 1:
-                            logger.error("No cookies found after login")
-                            return False
-                        logger.warning(f"Attempt {attempt + 1} found no cookies, retrying...")
-                        time.sleep(2)
-                        continue
-                    
-                    logger.info(f"Successfully extracted {len(self.cookies)} cookies")
-                    self.last_login = datetime.now()
-                    logger.info("Login process completed successfully")
-                    return True
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        logger.error(f"Failed to extract cookies after {max_retries} attempts: {str(e)}")
+                    # Check if we have any cookies at all
+                    if self.cookies:
+                        logger.info(f"Successfully extracted {len(self.cookies)} cookies with enhanced method")
+                        self.last_login = datetime.now()
+                        
+                        # Save auth data for debugging
+                        try:
+                            with open('enhanced_auth_data.json', 'w') as f:
+                                import json
+                                # json.dump(self.auth_data, f, indent=2, default=str)
+                            logger.info("Saved enhanced authentication data for debugging")
+                        except Exception as e:
+                            logger.warning(f"Could not save auth data: {e}")
+                        
+                        return True
+                    else:
+                        logger.error("No cookies found after enhanced login attempt")
                         return False
-                    logger.warning(f"Attempt {attempt + 1} failed to extract cookies, retrying...")
-                    time.sleep(2)
-            
-            return False
+                else:
+                    logger.error("Enhanced login sequence failed completely")
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"Enhanced Chrome initialization failed: {str(e)}")
+                return False
             
         except Exception as e:
-            logger.error(f"Login failed with unexpected error: {str(e)}")
+            logger.error(f"Enhanced login failed with unexpected error: {str(e)}")
             return False
             
         finally:
@@ -326,38 +503,42 @@ class SeleniumLoginManager:
             
         return True
 
-class AutoCookieManager:
-    """Automatically extract and manage cookies from user's browser"""
+class EnhancedAutoCookieManager:
+    """Enhanced cookie manager with improved authentication"""
     
     def __init__(self):
         self.cookies = {}
         self.session = requests.Session()
         self.last_extraction = None
-        self.selenium_login = SeleniumLoginManager()
+        self.selenium_login = EnhancedSeleniumLoginManager()  # Use enhanced version
         
     def set_login_credentials(self, email: str, password: str):
         """Set login credentials for Selenium authentication"""
         self.selenium_login.set_credentials(email, password)
         
     def auto_extract_cookies(self, domain: str = "newspapers.com") -> bool:
-        """Automatically extract cookies using Selenium login"""
+        """Automatically extract cookies using enhanced Selenium login"""
         try:
-            # Try Selenium login first
+            # Try enhanced Selenium login
             if self.selenium_login.login():
                 self.cookies = self.selenium_login.cookies
                 self.last_extraction = datetime.now()
 
-                # Update session cookies (clear first)
+                # Update session cookies with enhanced data
                 self.session.cookies.clear()
-                selenium_cookies = self.selenium_login.driver.get_cookies() if self.selenium_login.driver else []
-                for cookie in selenium_cookies:
-                    logger.debug(f"Transferring cookie: {cookie}")
+                
+                # Use the complete auth data for better session management
+                auth_data = self.selenium_login.auth_data
+                
+                # Set cookies from the enhanced extraction
+                for cookie in auth_data.get('cookies', []):
                     try:
                         self.session.cookies.set(
                             cookie['name'],
                             cookie['value'],
                             domain=cookie.get('domain'),
-                            path=cookie.get('path', '/')
+                            path=cookie.get('path', '/'),
+                            secure=cookie.get('secure', False)
                         )
                     except Exception as e:
                         logger.warning(f"Failed to set cookie {cookie['name']}: {e}")
@@ -366,46 +547,170 @@ class AutoCookieManager:
                 for name, value in self.cookies.items():
                     self.session.cookies.set(name, value)
 
-                logger.info(f"Session cookies after transfer: {self.session.cookies.get_dict()}")
+                logger.info(f"Session cookies after enhanced transfer: {len(self.session.cookies.get_dict())} cookies")
 
-                st.success("✅ Successfully logged in to Newspapers.com")
+                # Save complete auth data for future use
+                try:
+                    with open('enhanced_auth_data.json', 'w') as f:
+                        import json
+                        json.dump(auth_data, f, indent=2, default=str)
+                    logger.info("Saved enhanced authentication data")
+                except Exception as e:
+                    logger.warning(f"Could not save auth data: {e}")
+
+                st.success("✅ Successfully logged in to Newspapers.com with enhanced authentication")
                 return True
 
-            st.error("❌ Failed to log in to Newspapers.com")
+            st.error("❌ Enhanced authentication failed")
             return False
 
         except Exception as e:
-            logger.error(f"Cookie extraction failed: {str(e)}")
+            logger.error(f"Enhanced cookie extraction failed: {str(e)}")
             return False
     
     def test_authentication(self, test_url: str = "https://www.newspapers.com/") -> bool:
-        """Test if extracted cookies provide valid authentication"""
+        """Test if extracted cookies provide valid authentication with better detection"""
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
 
+            # Clear and set cookies
             self.session.cookies.clear()
             for name, value in self.cookies.items():
                 self.session.cookies.set(name, value)
 
-            logger.info(f"Testing authentication with cookies: {self.session.cookies.get_dict()}")
-            logger.info(f"Testing authentication with headers: {headers}")
+            logger.info(f"Testing enhanced authentication with {len(self.cookies)} cookies")
+            logger.debug(f"Cookies: {list(self.cookies.keys())}")
 
-            response = self.session.get(test_url, headers=headers, timeout=10)
+            response = self.session.get(test_url, headers=headers, timeout=15)
 
             if response.status_code == 200:
                 content = response.text.lower()
-                if any(indicator in content for indicator in ['logout', 'account', 'subscription', 'premium']):
-                    if 'sign-in' not in response.url and 'login' not in response.url:
-                        st.success("🔓 Authentication verified - Premium access detected")
-                        return True
-                st.warning("⚠️ Basic access detected - may have limited functionality")
-                return True
-            st.error(f"❌ Authentication failed - HTTP {response.status_code}")
-            return False
+                
+                # Multiple checks for authentication status
+                auth_checks = {
+                    'has_logout': 'logout' in content,
+                    'has_account': 'account' in content or 'profile' in content,
+                    'has_subscription': 'subscription' in content or 'premium' in content,
+                    'not_login_page': 'sign-in' not in response.url and 'login' not in response.url,
+                    'no_login_form': 'id="email"' not in content or 'signin' not in content
+                }
+                
+                # Check for user ID in various formats
+                import re
+                user_id_patterns = [
+                    r'"user":(\d+)',
+                    r'"userID":"(\d+)"',
+                    r'"userId":(\d+)',
+                    r'user_id["\']:\s*["\']?(\d+)'
+                ]
+                
+                user_id = None
+                for pattern in user_id_patterns:
+                    match = re.search(pattern, content)
+                    if match and match.group(1) != '0' and match.group(1) != 'null':
+                        user_id = match.group(1)
+                        break
+                
+                auth_checks['has_user_id'] = user_id is not None
+                
+                # Count positive indicators
+                positive_indicators = sum(1 for check, result in auth_checks.items() if result)
+                
+                logger.info(f"Authentication check results: {auth_checks}")
+                logger.info(f"Positive indicators: {positive_indicators}/6")
+                
+                if user_id:
+                    logger.info(f"User ID found: {user_id}")
+                
+                # Determine authentication status based on indicators
+                if positive_indicators >= 4:  # Need at least 4 out of 6 positive indicators
+                    if user_id:
+                        st.success("🔓 Enhanced authentication verified - Premium access detected")
+                        logger.info("Full authentication confirmed")
+                    else:
+                        st.success("🔓 Authentication verified - Good access detected")
+                        logger.info("Authentication confirmed without user ID")
+                    return True
+                    
+                elif positive_indicators >= 2:
+                    st.warning("⚠️ Partial authentication detected - may have limited functionality")
+                    logger.warning("Partial authentication - some indicators missing")
+                    return True
+                    
+                else:
+                    st.error("❌ Authentication verification failed - no access detected")
+                    logger.error("Authentication failed - insufficient positive indicators")
+                    
+                    # Log what we found for debugging
+                    logger.debug(f"Page URL: {response.url}")
+                    logger.debug(f"Content preview: {content[:500]}...")
+                    
+                    return False
+                    
+            else:
+                st.error(f"❌ Authentication failed - HTTP {response.status_code}")
+                logger.error(f"HTTP error: {response.status_code}")
+                return False
+                
         except Exception as e:
             st.error(f"❌ Authentication test failed: {str(e)}")
+            logger.error(f"Authentication test exception: {str(e)}")
+            return False
+        
+    # Also add a method to check specific premium page access
+    def test_premium_access(self, test_url: str = "https://www.newspapers.com/image/635076099/") -> bool:
+        """Test access to a specific premium newspaper page"""
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://www.newspapers.com/'
+            }
+
+            response = self.session.get(test_url, headers=headers, timeout=15)
+            
+            if response.status_code == 200:
+                content = response.text.lower()
+                
+                # Check for paywall indicators
+                paywall_indicators = [
+                    'you need a subscription',
+                    'start a 7-day free trial', 
+                    'subscribe to view',
+                    'sign in to view this page',
+                    'subscription required'
+                ]
+                
+                has_paywall = any(indicator in content for indicator in paywall_indicators)
+                
+                # Check for successful page load indicators
+                success_indicators = [
+                    'image-viewer',
+                    'newspaper-image',
+                    'clip', 
+                    'print',
+                    'download'
+                ]
+                
+                has_content = any(indicator in content for indicator in success_indicators)
+                
+                if not has_paywall and has_content:
+                    logger.info("Premium page access confirmed")
+                    return True
+                elif has_paywall:
+                    logger.warning("Premium page shows paywall")
+                    return False
+                else:
+                    logger.warning("Premium page status unclear")
+                    return False
+                    
+            else:
+                logger.error(f"Premium page returned HTTP {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Premium access test failed: {str(e)}")
             return False
     
     def refresh_cookies_if_needed(self) -> bool:
@@ -836,7 +1141,7 @@ class NewspapersComExtractor:
     """Main scraper class that coordinates all components"""
     
     def __init__(self, auto_auth: bool = True):
-        self.cookie_manager = AutoCookieManager()
+        self.cookie_manager = EnhancedAutoCookieManager()
         self.image_processor = NewspaperImageProcessor()
         self.content_analyzer = ContentAnalyzer()
         self.results = []
@@ -1081,98 +1386,45 @@ class NewspapersComExtractor:
                 logger.error("Failed to refresh authentication cookies")
                 return {'success': False, 'error': "Authentication failed"}
             
-            # First try to authenticate and get the page content using Selenium
-            logger.info("Attempting to fetch page with Selenium for better authentication...")
-            try:
-                # Set up Chrome options
-                chrome_options = Options()
-                chrome_options.add_argument('--headless')
-                chrome_options.add_argument('--no-sandbox')
-                chrome_options.add_argument('--disable-dev-shm-usage')
-                chrome_options.add_argument('--disable-gpu')
-                chrome_options.add_argument('--window-size=1920,1080')
-                chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
-                
-                # Initialize driver
-                driver = webdriver.Chrome(options=chrome_options)
-                
-                # First visit the login page and perform login
-                logger.info("Performing login...")
-                driver.get('https://www.newspapers.com/signin/')
-                
-                # Wait for login form
-                WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.ID, "email"))
-                )
-                
-                # Fill in login form
-                email_field = driver.find_element(By.ID, "email")
-                password_field = driver.find_element(By.ID, "password")
-                
-                # Clear fields first
-                email_field.clear()
-                password_field.clear()
-                
-                # Send keys with small delay
-                email_field.send_keys(self.cookie_manager.selenium_login.login_credentials['email'])
-                time.sleep(0.5)
-                password_field.send_keys(self.cookie_manager.selenium_login.login_credentials['password'])
-                time.sleep(0.5)
-                
-                # Submit form
-                password_field.submit()
-                
-                # Wait for login to complete
-                WebDriverWait(driver, 20).until(
-                    lambda driver: "login" not in driver.current_url.lower()
-                )
-                
-                # Give extra time for cookies to be set
-                time.sleep(3)
-                
-                # Now load the target page
-                logger.info(f"Loading target page: {url}")
-                driver.get(url)
-                
-                # Wait for page to load
-                WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "body"))
-                )
-                
-                # Give extra time for JavaScript to load content
-                time.sleep(5)
-                
-                # Check for paywall indicators
-                paywall_indicators = [
-                    'you need a subscription',
-                    'start a 7-day free trial',
-                    'sign in to view this page',
-                    'already have an account',
-                    'subscribe',
-                    'paywall',
-                    'please sign in',
-                    'log in to view'
-                ]
-                
-                page_source = driver.page_source.lower()
-                if any(ind in page_source for ind in paywall_indicators):
-                    logger.error("Still encountering paywall after authentication")
-                    # Save debug HTML to help diagnose the issue
-                    self._save_debug_html(driver, url)
-                    driver.quit()
-                    return {'success': False, 'error': "Paywall detected even after authentication"}
-                
-                # Get the page content
-                response_text = driver.page_source
-                driver.quit()
-                logger.info("Successfully fetched page with Selenium")
-                
-            except Exception as e:
-                logger.error(f"Selenium fetch failed: {e}")
-                if driver:
-                    driver.quit()
-                return {'success': False, 'error': f"Failed to fetch article: {e}"}
+            # CRITICAL: Use the SAME session that was used for authentication
+            logger.info("Using requests session with authenticated cookies first...")
             
+            # Try using the authenticated requests session first
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Referer': 'https://www.newspapers.com/',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'same-origin',
+            }
+            
+            try:
+                # Use the existing authenticated session
+                response = self.cookie_manager.session.get(url, headers=headers, timeout=30)
+                
+                if response.status_code == 200:
+                    # Check if we got the actual content (not a paywall redirect)
+                    if 'subscription' not in response.text.lower() and 'sign in' not in response.url.lower():
+                        logger.info("Successfully fetched page using authenticated requests session")
+                        response_text = response.text
+                    else:
+                        logger.warning("Requests session hit paywall, falling back to Selenium with fresh auth")
+                        return self._extract_with_fresh_selenium_auth(url, player_name, extract_multi_page)
+                else:
+                    logger.warning(f"Requests session failed with status {response.status_code}, falling back to Selenium")
+                    return self._extract_with_fresh_selenium_auth(url, player_name, extract_multi_page)
+                    
+            except Exception as e:
+                logger.warning(f"Requests session failed: {e}, falling back to Selenium")
+                return self._extract_with_fresh_selenium_auth(url, player_name, extract_multi_page)
+            
+            # Continue with existing extraction logic...
             logger.info(f"Successfully fetched page ({len(response_text)} bytes)")
             
             # Parse the page content to extract image metadata
@@ -1408,6 +1660,116 @@ class NewspapersComExtractor:
             logger.error(f"Error processing article page: {e}", exc_info=True)
             return {'success': False, 'error': str(e)}
 
+    def _extract_with_fresh_selenium_auth(self, url: str, player_name: Optional[str] = None, extract_multi_page: bool = True) -> Dict:
+        """Fallback method: Use Selenium with fresh authentication in the same session"""
+        logger.info("Using Selenium with session continuity...")
+        
+        driver = None
+        try:
+            # CRITICAL CHANGE: Reuse the login process but stay in the same session
+            if not self.cookie_manager.selenium_login.login_credentials:
+                return {'success': False, 'error': "No login credentials available for fresh auth"}
+            
+            # Set up Chrome options
+            chrome_options = Options()
+            chrome_options.add_argument('--headless')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--window-size=1920,1080')
+            chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+            
+            # Initialize driver
+            driver = webdriver.Chrome(options=chrome_options)
+            
+            # Perform login in this session
+            logger.info("Performing login in extraction session...")
+            driver.get('https://www.newspapers.com/signin/')
+            
+            # Wait for login form
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.ID, "email"))
+            )
+            
+            # Fill in login form
+            email_field = driver.find_element(By.ID, "email")
+            password_field = driver.find_element(By.ID, "password")
+            
+            email_field.clear()
+            password_field.clear()
+            
+            email_field.send_keys(self.cookie_manager.selenium_login.login_credentials['email'])
+            time.sleep(0.5)
+            password_field.send_keys(self.cookie_manager.selenium_login.login_credentials['password'])
+            time.sleep(0.5)
+            
+            # Submit form
+            password_field.submit()
+            
+            # Wait for login to complete
+            WebDriverWait(driver, 20).until(
+                lambda driver: "login" not in driver.current_url.lower()
+            )
+            
+            # Give extra time for authentication to settle
+            time.sleep(3)
+            
+            # NOW navigate to the target page IN THE SAME SESSION
+            logger.info(f"Navigating to target page in authenticated session: {url}")
+            driver.get(url)
+            
+            # Wait for page to load
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            
+            # Give extra time for JavaScript to load content
+            time.sleep(5)
+            
+            # Check for paywall indicators
+            paywall_indicators = [
+                'you need a subscription',
+                'start a 7-day free trial',
+                'sign in to view this page',
+                'already have an account',
+                'subscribe',
+                'paywall',
+                'please sign in',
+                'log in to view'
+            ]
+            
+            page_source = driver.page_source.lower()
+            if any(ind in page_source for ind in paywall_indicators):
+                logger.error("Still encountering paywall after fresh authentication")
+                self._save_debug_html(driver, url)
+                return {'success': False, 'error': "Paywall detected even after fresh authentication - account may not have access"}
+            
+            # Success! Get the page content
+            response_text = driver.page_source
+            logger.info("Successfully fetched page with fresh authentication")
+            
+            # Parse the page content to extract image metadata
+            image_metadata = self._extract_image_metadata(response_text)
+            if not image_metadata:
+                logger.error("Failed to extract image metadata from page")
+                return {'success': False, 'error': "Could not find image metadata in page"}
+            
+            # Add the original URL to metadata for Selenium fallback
+            image_metadata['url'] = url
+            
+            # Continue with the rest of your existing extraction logic...
+            # ... (rest of the method remains the same as your original code)
+            
+        except Exception as e:
+            logger.error(f"Fresh Selenium auth failed: {e}")
+            return {'success': False, 'error': f"Failed to fetch article with fresh auth: {e}"}
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                except:
+                    pass
+    
     def _extract_image_metadata(self, page_content: str) -> Optional[Dict]:
         """Extract image metadata from newspapers.com JavaScript objects"""
         logger.info("Parsing HTML for image metadata...")
@@ -1574,23 +1936,19 @@ class NewspapersComExtractor:
             chrome_options.add_argument('--no-sandbox')
             chrome_options.add_argument('--disable-dev-shm-usage')
             chrome_options.add_argument('--disable-gpu')
-            # Increase window size for better resolution
             chrome_options.add_argument('--window-size=2560,1440')
-            # Force high DPI
             chrome_options.add_argument('--force-device-scale-factor=2')
             chrome_options.add_argument('--high-dpi-support=1')
             chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
             
             driver = webdriver.Chrome(options=chrome_options)
-            
-            # Set window size again after initialization for better quality
             driver.set_window_size(2560, 1440)
             
-            # First visit the main site to set cookies
-            logger.info("Loading main site to set cookies...")
+            # CRITICAL: Use existing authenticated cookies, don't login again
+            logger.info("Loading main site to set authenticated cookies...")
             driver.get('https://www.newspapers.com/')
             
-            # Add our extracted cookies
+            # Add authenticated cookies
             for name, value in self.cookie_manager.cookies.items():
                 try:
                     driver.add_cookie({'name': name, 'value': value, 'domain': '.newspapers.com'})
@@ -1741,6 +2099,28 @@ class NewspapersComExtractor:
                     driver.quit()
                 except:
                     pass
+                
+    def _save_debug_html_simple(self):
+        """Save debug HTML for troubleshooting"""
+        try:
+            debug_dir = "debug_html"
+            os.makedirs(debug_dir, exist_ok=True)
+            
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"login_debug_{timestamp}.html"
+            filepath = os.path.join(debug_dir, filename)
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(self.driver.page_source)
+            
+            logger.info(f"Saved login debug HTML to: {filepath}")
+            
+            # Also log current URL and title
+            logger.info(f"Current URL: {self.driver.current_url}")
+            logger.info(f"Page title: {self.driver.title}")
+            
+        except Exception as e:
+            logger.error(f"Failed to save debug HTML: {e}")
     
     def _save_debug_html(self, driver, url: str) -> None:
         """Save the current page HTML for debugging purposes"""
