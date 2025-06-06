@@ -146,7 +146,8 @@ class EnhancedSeleniumLoginManager:
                                 break
                     
                     if not email_field:
-                        self._save_debug_html_simple()
+                        if not self.is_replit:
+                            self._save_debug_html_simple()
                         return False
                 
                 password_selectors = ["#password", "input[name='password']", "input[type='password']"]
@@ -175,14 +176,16 @@ class EnhancedSeleniumLoginManager:
                                 break
                     
                     if not password_field:
-                        self._save_debug_html_simple()
+                        if not self.is_replit:
+                            self._save_debug_html_simple()
                         return False
                     
                 logger.info("Login form fields found successfully")
                 
             except Exception as e:
                 logger.error(f"Failed to find login form: {str(e)}")
-                self._save_debug_html_simple()
+                if not self.is_replit:
+                    self._save_debug_html_simple()
                 return False
             
             # Clear and fill form fields with human-like behavior
@@ -214,7 +217,8 @@ class EnhancedSeleniumLoginManager:
                 
             except Exception as e:
                 logger.error(f"Failed to fill login form: {str(e)}")
-                self._save_debug_html_simple()
+                if not self.is_replit:
+                    self._save_debug_html_simple()
                 return False
             
             # Submit form with multiple strategies
@@ -262,12 +266,14 @@ class EnhancedSeleniumLoginManager:
                 
                 if not submit_clicked:
                     logger.error("Could not submit login form with any method")
-                    self._save_debug_html_simple()
+                    if not self.is_replit:
+                        self._save_debug_html_simple()
                     return False
                 
             except Exception as e:
                 logger.error(f"Failed to submit login form: {str(e)}")
-                self._save_debug_html_simple()
+                if not self.is_replit:
+                    self._save_debug_html_simple()
                 return False
             
             # Wait for login to complete with enhanced verification
@@ -278,7 +284,8 @@ class EnhancedSeleniumLoginManager:
                 current_url = self.driver.current_url.lower()
                 if "login" in current_url or "signin" in current_url:
                     logger.error("Still on login page after submission")
-                    self._save_debug_html_simple()
+                    if not self.is_replit:
+                        self._save_debug_html_simple()
                     return False
                 
                 # Verify premium access by checking a known premium page
@@ -298,14 +305,16 @@ class EnhancedSeleniumLoginManager:
                 page_content = self.driver.page_source.lower()
                 if any(indicator in page_content for indicator in paywall_indicators):
                     logger.error("Premium access not granted - paywall detected")
-                    self._save_debug_html_simple()
+                    if not self.is_replit:
+                        self._save_debug_html_simple()
                     return False
                 
                 # Check for premium content indicators
                 premium_indicators = ['image-viewer', 'newspaper-image', 'clip', 'print', 'download']
                 if not any(indicator in page_content for indicator in premium_indicators):
                     logger.error("Premium content not found on test page")
-                    self._save_debug_html_simple()
+                    if not self.is_replit:
+                        self._save_debug_html_simple()
                     return False
                 
                 logger.info("Premium access verified successfully")
@@ -327,7 +336,8 @@ class EnhancedSeleniumLoginManager:
                 
             except Exception as e:
                 logger.error(f"Error verifying login status: {str(e)}")
-                self._save_debug_html_simple()
+                if not self.is_replit:
+                    self._save_debug_html_simple()
                 return False
             
             # Additional wait for session setup
