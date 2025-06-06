@@ -422,7 +422,6 @@ class EnhancedSeleniumLoginManager:
             chrome_options.add_argument('--disable-webgl')
             chrome_options.add_argument('--disable-webgl2')
             chrome_options.add_argument('--disable-features=site-per-process')
-            chrome_options.binary_location = '/usr/bin/google-chrome'
         else:
             # Add additional options for local environment
             chrome_options.add_argument('--remote-debugging-port=9222')
@@ -670,36 +669,117 @@ class EnhancedSeleniumLoginManager:
                 logger.info("Filling login form...")
                 email_field.clear()
                 email_field.send_keys(email)
+                time.sleep(1)
 
                 password_field.clear()
                 password_field.send_keys(password)
+                time.sleep(1)
 
-                # Submit
-                password_field.submit()
+                # IMPROVED SUBMISSION LOGIC
+                logger.info("Attempting form submission...")
 
-                # Wait for redirect
-                time.sleep(10)
+                # Method 1: Try to find and click submit button
+                submit_success = False
+                submit_selectors = [
+                    "button[type='submit']",
+                    "input[type='submit']",
+                    "button:contains('Sign In')",
+                    "button:contains('Log In')",
+                    ".btn-primary",
+                    "#signin-button",
+                    "form button"
+                ]
 
-                # Check success
-                current_url = self.driver.current_url.lower()
-                if "signin" not in current_url and "login" not in current_url:
-                    logger.info("Login successful!")
-
-                    # Extract cookies
+                for selector in submit_selectors:
                     try:
-                        self.auth_data = self.extract_complete_authentication_data()
-                        self.cookies = {cookie['name']: cookie['value'] for cookie in self.auth_data.get('cookies', [])}
+                        if ":contains" in selector:
+                            submit_button = self.driver.find_element(By.XPATH, "//button[contains(text(), 'Sign In') or contains(text(), 'Log In') or contains(text(), 'Submit')]")
+                        else:
+                            submit_button = self.driver.find_element(By.CSS_SELECTOR, selector)
 
-                        if self.cookies:
-                            logger.info(f"Extracted {len(self.cookies)} cookies")
-                            self.last_login = datetime.now()
-                            return True
+                        if submit_button and submit_button.is_enabled() and submit_button.is_displayed():
+                            # Scroll to button and click
+                            self.driver.execute_script("arguments[0].scrollIntoView(true);", submit_button)
+                            time.sleep(0.5)
+                            submit_button.click()
+                            logger.info(f"Clicked submit button with selector: {selector}")
+                            submit_success = True
+                            break
                     except Exception as e:
-                        logger.warning(f"Cookie extraction failed: {e}")
-                        return False
+                        logger.debug(f"Submit button selector {selector} failed: {e}")
+                        continue
 
-                logger.error("Login failed - still on login page")
-                return False
+                # Method 2: If button click failed, try Enter key
+                if not submit_success:
+                    try:
+                        password_field.send_keys(Keys.RETURN)
+                        logger.info("Pressed Enter in password field")
+                        submit_success = True
+                    except Exception as e:
+                        logger.debug(f"Enter key failed: {e}")
+
+                # Method 3: If Enter failed, try form submit
+                if not submit_success:
+                    try:
+                        form = self.driver.find_element(By.TAG_NAME, "form")
+                        self.driver.execute_script("arguments[0].submit();", form)
+                        logger.info("JavaScript form submit executed")
+                        submit_success = True
+                    except Exception as e:
+                        logger.debug(f"JavaScript submit failed: {e}")
+
+                if not submit_success:
+                    logger.error("All submission methods failed")
+                    return False
+
+                # Wait longer for redirect with more checking
+                logger.info("Waiting for login redirect...")
+                redirect_success = False
+
+                for attempt in range(10):  # Check every 2 seconds for 20 seconds
+                    time.sleep(2)
+                    current_url = self.driver.current_url.lower()
+                    page_title = self.driver.title.lower()
+
+                    # Check if we've been redirected away from login
+                    if "signin" not in current_url and "login" not in current_url:
+                        logger.info(f"Redirected to: {current_url}")
+                        redirect_success = True
+                        break
+
+                    # Also check for error messages
+                    try:
+                        error_elements = self.driver.find_elements(By.CSS_SELECTOR, ".error, .alert-danger, [class*='error']")
+                        if error_elements:
+                            error_text = " ".join([elem.text for elem in error_elements if elem.text.strip()])
+                            logger.error(f"Login error detected: {error_text}")
+                            return False
+                    except:
+                        pass
+
+                    logger.debug(f"Still on login page, attempt {attempt + 1}/10")
+
+                if not redirect_success:
+                    logger.error("Login redirect timeout - still on login page after 20 seconds")
+                    return False
+
+                logger.info("Login successful!")
+
+                # Extract cookies
+                try:
+                    self.auth_data = self.extract_complete_authentication_data()
+                    self.cookies = {cookie['name']: cookie['value'] for cookie in self.auth_data.get('cookies', [])}
+
+                    if self.cookies:
+                        logger.info(f"Extracted {len(self.cookies)} cookies")
+                        self.last_login = datetime.now()
+                        return True
+                    else:
+                        logger.warning("No cookies extracted after successful login")
+                        return False
+                except Exception as e:
+                    logger.warning(f"Cookie extraction failed: {e}")
+                    return False
 
             except Exception as e:
                 logger.error(f"Form interaction failed: {e}")
