@@ -101,10 +101,6 @@ class EnhancedSeleniumLoginManager:
             
             # Debug: Print page source to console in Replit
             if self.is_replit:
-                logger.info("=== REplit Debug: Page Source ===")
-                logger.info(self.driver.page_source)
-                logger.info("=== End Page Source ===")
-                
                 # Also try to find all input elements
                 logger.info("=== All Input Elements ===")
                 inputs = self.driver.find_elements(By.TAG_NAME, "input")
@@ -123,7 +119,7 @@ class EnhancedSeleniumLoginManager:
                 for selector in email_selectors:
                     try:
                         logger.info(f"Trying to find email field with selector: {selector}")
-                        email_field = WebDriverWait(self.driver, 10).until(
+                        email_field = WebDriverWait(self.driver, 20).until(
                             EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
                         )
                         logger.info(f"Found email field with selector: {selector}")
