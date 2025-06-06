@@ -1081,91 +1081,97 @@ class NewspapersComExtractor:
                 logger.error("Failed to refresh authentication cookies")
                 return {'success': False, 'error': "Authentication failed"}
             
-            # Fetch the article page
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
-            }
-            
-            logger.info("Fetching newspaper page...")
-            response = self.cookie_manager.session.get(url, headers=headers, timeout=30)
-            
-            # Check for paywall indicators
-            paywall_indicators = [
-                'you need a subscription',
-                'start a 7-day free trial',
-                'sign in to view this page',
-                'already have an account',
-                'subscribe',
-                'paywall',
-                'please sign in',
-                'log in to view'
-            ]
-            is_paywalled = any(ind in response.text.lower() for ind in paywall_indicators)
-
-            if response.status_code != 200 or is_paywalled:
-                logger.warning(f"Requests-based fetch returned paywall or error (status {response.status_code}, paywalled={is_paywalled}). Trying Selenium fallback.")
-                try:
-                    # Set up Chrome options
-                    chrome_options = Options()
-                    chrome_options.add_argument('--headless')
-                    chrome_options.add_argument('--no-sandbox')
-                    chrome_options.add_argument('--disable-dev-shm-usage')
-                    chrome_options.add_argument('--disable-gpu')
-                    chrome_options.add_argument('--window-size=1920,1080')
-                    chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
-                    
-                    # Initialize driver
-                    driver = webdriver.Chrome(options=chrome_options)
-                    
-                    # First visit the main site to set cookies
-                    logger.info("Loading main site to set cookies...")
-                    driver.get('https://www.newspapers.com/')
-                    
-                    # Add our extracted cookies
-                    for name, value in self.cookie_manager.cookies.items():
-                        try:
-                            driver.add_cookie({
-                                'name': name,
-                                'value': value,
-                                'domain': '.newspapers.com'
-                            })
-                            logger.debug(f"Added cookie: {name}")
-                        except Exception as e:
-                            logger.debug(f"Could not add cookie {name}: {e}")
-                    
-                    # Now load the target page
-                    logger.info(f"Loading target page: {url}")
-                    driver.get(url)
-                    
-                    # Wait for page to load
-                    WebDriverWait(driver, 15).until(
-                        EC.presence_of_element_located((By.TAG_NAME, "body"))
-                    )
-                    
-                    # Give extra time for JavaScript to load content
-                    time.sleep(3)
-                    
-                    # Check if we're still on a paywall page
-                    if any(ind in driver.page_source.lower() for ind in paywall_indicators):
-                        logger.error("Still encountering paywall after Selenium fallback")
-                        driver.quit()
-                        return {'success': False, 'error': "Paywall detected even after authentication"}
-                    
-                    html = driver.page_source
+            # First try to authenticate and get the page content using Selenium
+            logger.info("Attempting to fetch page with Selenium for better authentication...")
+            try:
+                # Set up Chrome options
+                chrome_options = Options()
+                chrome_options.add_argument('--headless')
+                chrome_options.add_argument('--no-sandbox')
+                chrome_options.add_argument('--disable-dev-shm-usage')
+                chrome_options.add_argument('--disable-gpu')
+                chrome_options.add_argument('--window-size=1920,1080')
+                chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+                
+                # Initialize driver
+                driver = webdriver.Chrome(options=chrome_options)
+                
+                # First visit the login page and perform login
+                logger.info("Performing login...")
+                driver.get('https://www.newspapers.com/signin/')
+                
+                # Wait for login form
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.ID, "email"))
+                )
+                
+                # Fill in login form
+                email_field = driver.find_element(By.ID, "email")
+                password_field = driver.find_element(By.ID, "password")
+                
+                # Clear fields first
+                email_field.clear()
+                password_field.clear()
+                
+                # Send keys with small delay
+                email_field.send_keys(self.cookie_manager.selenium_login.login_credentials['email'])
+                time.sleep(0.5)
+                password_field.send_keys(self.cookie_manager.selenium_login.login_credentials['password'])
+                time.sleep(0.5)
+                
+                # Submit form
+                password_field.submit()
+                
+                # Wait for login to complete
+                WebDriverWait(driver, 20).until(
+                    lambda driver: "login" not in driver.current_url.lower()
+                )
+                
+                # Give extra time for cookies to be set
+                time.sleep(3)
+                
+                # Now load the target page
+                logger.info(f"Loading target page: {url}")
+                driver.get(url)
+                
+                # Wait for page to load
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+                
+                # Give extra time for JavaScript to load content
+                time.sleep(5)
+                
+                # Check for paywall indicators
+                paywall_indicators = [
+                    'you need a subscription',
+                    'start a 7-day free trial',
+                    'sign in to view this page',
+                    'already have an account',
+                    'subscribe',
+                    'paywall',
+                    'please sign in',
+                    'log in to view'
+                ]
+                
+                page_source = driver.page_source.lower()
+                if any(ind in page_source for ind in paywall_indicators):
+                    logger.error("Still encountering paywall after authentication")
+                    # Save debug HTML to help diagnose the issue
+                    self._save_debug_html(driver, url)
                     driver.quit()
-                    logger.info("Fetched article page with Selenium fallback.")
-                    response_text = html
-                except Exception as e:
-                    logger.error(f"Selenium fallback failed: {e}")
-                    return {'success': False, 'error': f"Failed to fetch article (paywall): {e}"}
-            else:
-                response_text = response.text
+                    return {'success': False, 'error': "Paywall detected even after authentication"}
+                
+                # Get the page content
+                response_text = driver.page_source
+                driver.quit()
+                logger.info("Successfully fetched page with Selenium")
+                
+            except Exception as e:
+                logger.error(f"Selenium fetch failed: {e}")
+                if driver:
+                    driver.quit()
+                return {'success': False, 'error': f"Failed to fetch article: {e}"}
             
             logger.info(f"Successfully fetched page ({len(response_text)} bytes)")
             
