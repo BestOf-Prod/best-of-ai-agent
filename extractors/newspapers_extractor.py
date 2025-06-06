@@ -1224,10 +1224,53 @@ class NewspapersComExtractor:
                             continue
                         return {'success': False, 'error': f"Failed to fetch article: {e}"}
                 
-                # Successfully got response_text, return success
+                # Extract metadata from the response
+                metadata = self._extract_image_metadata(response_text)
+                metadata['url'] = url
+                if not metadata:
+                    logger.error("Failed to extract article metadata")
+                    return {'success': False, 'error': "Failed to extract article metadata"}
+                
+                # Download the newspaper image
+                image = self._download_newspaper_image(metadata)
+                if not image:
+                    logger.error("Failed to download article image")
+                    return {'success': False, 'error': "Failed to download article image"}
+                
+                # Process the image to find article regions
+                article_regions = self.image_processor.detect_article_regions(image)
+                if not article_regions:
+                    logger.error("No article regions found in image")
+                    return {'success': False, 'error': "No article regions found in image"}
+                
+                # Extract text from the first (largest) region
+                text, confidence = self.image_processor.extract_text_with_confidence(image, article_regions[0])
+                
+                # Analyze content if player name is provided
+                sentiment_score = 0.0
+                player_mentions = []
+                if player_name:
+                    is_relevant, analysis = self.content_analyzer.is_relevant_article(text, player_name)
+                    if is_relevant:
+                        sentiment_score = analysis.get('sentiment_score', 0.0)
+                        player_mentions = analysis.get('player_mentions', [])
+                
+                # Return the complete article data
                 return {
                     'success': True,
-                    'response_text': response_text
+                    'headline': metadata.get('title', 'Unknown Title'),
+                    'source': metadata.get('publication_title', 'Unknown Source'),
+                    'date': metadata.get('date', 'Unknown Date'),
+                    'image_data': image,
+                    'content': text,
+                    'metadata': {
+                        'sentiment_score': sentiment_score,
+                        'player_mentions': player_mentions,
+                        'confidence': confidence,
+                        'location': metadata.get('location', 'Unknown Location'),
+                        'image_id': metadata.get('image_id'),
+                        'url': url
+                    }
                 }
                 
             except Exception as e:
@@ -1295,50 +1338,99 @@ class NewspapersComExtractor:
         try:
             image_data = {}
             
-            image_match = re.search(r'"image":\s*\{.*?"imageId":(\d+).*?\}', page_content, re.DOTALL)
-            if not image_match:
-                logger.error("Could not find 'image' section with imageId")
-                return None
+            # First try to find the image data in the page's JavaScript
+            image_data_patterns = [
+                r'"image":\s*\{[^}]*"imageId":\s*(\d+)',
+                r'"imageId":\s*(\d+)',
+                r'data-image-id="(\d+)"',
+                r'data-imageid="(\d+)"'
+            ]
             
-            if match := re.search(r'"imageId":(\d+)', page_content):
-                image_data['image_id'] = int(match.group(1))
+            for pattern in image_data_patterns:
+                if match := re.search(pattern, page_content):
+                    image_data['image_id'] = int(match.group(1))
+                    logger.info(f"Found image ID: {image_data['image_id']}")
+                    break
             
-            if match := re.search(r'"date":"([^"]+)"', page_content):
-                image_data['date'] = match.group(1)
+            # Extract other metadata using more robust patterns
+            metadata_patterns = {
+                'date': r'"date":\s*"([^"]+)"',
+                'publication_title': r'"publicationTitle":\s*"([^"]+)"',
+                'location': r'"location":\s*"([^"]+)"',
+                'title': r'"title":\s*"([^"]+)"',
+                'width': r'"width":\s*(\d+)',
+                'height': r'"height":\s*(\d+)',
+                'wfm_image_path': r'"wfmImagePath":\s*"([^"]+)"'
+            }
             
-            if match := re.search(r'"publicationTitle":"([^"]+)"', page_content):
-                image_data['publication_title'] = match.group(1)
+            for key, pattern in metadata_patterns.items():
+                if match := re.search(pattern, page_content):
+                    value = match.group(1)
+                    if key in ['width', 'height']:
+                        value = int(value)
+                    image_data[key] = value
+                    logger.debug(f"Found {key}: {value}")
             
-            if match := re.search(r'"location":"([^"]+)"', page_content):
-                image_data['location'] = match.group(1)
+            # Try to find the base image URL
+            base_url_patterns = [
+                r'"image":"([^"]+)"',
+                r'data-image-url="([^"]+)"',
+                r'data-src="([^"]+)"'
+            ]
             
-            if match := re.search(r'"title":"([^"]+)"', page_content):
-                image_data['title'] = match.group(1)
-            
-            if match := re.search(r'"width":(\d+)', page_content):
-                image_data['width'] = int(match.group(1))
-            
-            if match := re.search(r'"height":(\d+)', page_content):
-                image_data['height'] = int(match.group(1))
-            
-            if match := re.search(r'"wfmImagePath":"([^"]+)"', page_content):
-                image_data['wfm_image_path'] = match.group(1)
-            
-            ncom_match = re.search(r'Object\.defineProperty\(window,\s*[\'"]ncom[\'"],\s*\{value:\s*Object\.freeze\(({.*?})\)', page_content, re.DOTALL)
-            if ncom_match:
-                ncom_content = ncom_match.group(1)
-                if match := re.search(r'"image":"([^"]+)"', ncom_content):
+            for pattern in base_url_patterns:
+                if match := re.search(pattern, page_content):
                     image_data['base_image_url'] = match.group(1)
-            else:
+                    logger.debug(f"Found base image URL: {image_data['base_image_url']}")
+                    break
+            
+            if 'base_image_url' not in image_data:
                 image_data['base_image_url'] = 'https://img.newspapers.com'
             
-            if match := re.search(r'<link\s+rel="canonical"\s+href="([^"]+)"', page_content):
-                image_data['url'] = match.group(1)
-            elif match := re.search(r'<meta\s*)property\s*"\s*og\s*:\s*url\s*"\s*content=\s*"([^"]+)"', page_content):
-                image_data['url'] = match.group(1)
+            # Extract canonical URL
+            url_patterns = [
+                r'<link\s+rel="canonical"\s+href="([^"]+)"',
+                r'<meta\s+property="og:url"\s+content="([^"]+)"',
+                r'data-canonical-url="([^"]+)"'
+            ]
+            
+            for pattern in url_patterns:
+                if match := re.search(pattern, page_content):
+                    image_data['url'] = match.group(1)
+                    logger.debug(f"Found canonical URL: {image_data['url']}")
+                    break
+            
+            # Validate required fields
+            required_fields = ['image_id', 'title', 'date', 'publication_title']
+            missing_fields = [field for field in required_fields if field not in image_data]
+            
+            if missing_fields:
+                logger.warning(f"Missing required fields: {missing_fields}")
+                # Try to extract missing fields from HTML elements as fallback
+                soup = BeautifulSoup(page_content, 'html.parser')
+                
+                if 'title' in missing_fields:
+                    title_elem = soup.find('h1') or soup.find(class_='headline')
+                    if title_elem:
+                        image_data['title'] = title_elem.get_text(strip=True)
+                
+                if 'date' in missing_fields:
+                    date_elem = soup.find(class_='date') or soup.find(class_='published')
+                    if date_elem:
+                        image_data['date'] = date_elem.get_text(strip=True)
+                
+                if 'publication_title' in missing_fields:
+                    pub_elem = soup.find(class_='newspaper') or soup.find(class_='publication')
+                    if pub_elem:
+                        image_data['publication_title'] = pub_elem.get_text(strip=True)
+            
+            # Final validation
+            if not all(field in image_data for field in required_fields):
+                logger.error("Missing required metadata fields after fallback")
+                return None
             
             logger.info(f"Successfully extracted image metadata: {image_data}")
-            return image_data if image_data else None
+            return image_data
             
         except Exception as e:
             logger.error(f"Error parsing image metadata: {e}")
@@ -1387,7 +1479,7 @@ class NewspapersComExtractor:
                         continue
                 
                 logger.info("Direct URL download failed, falling back to Selenium")
-                return self._extract_with_selenium_image(metadata)
+                return self._extract_with_selenium_high_quality_image(metadata)
                 
         except Exception as e:
             logger.error(f"Error downloading image: {e}")
@@ -1422,8 +1514,6 @@ class NewspapersComExtractor:
             )
             time.sleep(5)
             
-            self._save_debug_html(save_debug_html(driver), url)
-            
             high_quality_selectors = [
                 'img[src*="img.newspapers.com"][src*="quality=100"]',
                 'img[src*="img.newspapers.com"][src*="size=full"]',
@@ -1441,7 +1531,7 @@ class NewspapersComExtractor:
             best_quality_score = 0
             
             for selector in high_quality_selectors:
-                elements = driver.find_elements(By.CSS_SELECTOR, by=CSS_SELECTOR, value=selector)
+                elements = driver.find_elements(By.CSS_SELECTOR, selector)
                 for element in elements:
                     try:
                         width = element.get_attribute('width') or driver.execute_script("return arguments[0].naturalWidth;", element)
