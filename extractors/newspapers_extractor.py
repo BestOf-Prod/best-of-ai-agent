@@ -506,6 +506,7 @@ class EnhancedAutoCookieManager:
         self.last_extraction = None
         self.selenium_login = EnhancedSeleniumLoginManager()
         self.auth_headers = {}  # Store additional headers from storage
+        self.is_replit = 'REPL_ID' in os.environ or 'REPL_SLUG' in os.environ
         
     def set_login_credentials(self, email: str, password: str):
         """Set login credentials for Selenium authentication"""
