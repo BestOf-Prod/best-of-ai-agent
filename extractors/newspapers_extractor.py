@@ -28,6 +28,7 @@ from bs4 import BeautifulSoup
 import signal
 import threading
 import queue
+import random
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
