@@ -710,9 +710,14 @@ class EnhancedSeleniumLoginManager:
                     logger.info("Waiting for login completion...")
                     
                     # Wait for URL change
+                    # Wait for URL change
                     WebDriverWait(self.driver, 20).until(
-                        lambda driver: "signin" not in driver.current_url.lower()
+                        lambda driver: "login" not in driver.current_url.lower()
                     )
+                    
+                    # Print page content for verification
+                    logger.info("Page content after login:")
+                    logger.info(self.driver.page_source)
                     
                     # Additional wait for page load
                     time.sleep(3)  # Increased wait for Replit
