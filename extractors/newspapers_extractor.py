@@ -65,26 +65,6 @@ class EnhancedSeleniumLoginManager:
     def set_credentials(self, email: str, password: str):
         """Set login credentials"""
         self.login_credentials = {'email': email, 'password': password}
-    
-    def setup_enhanced_chrome_options(self):
-        from undetected_chromedriver import ChromeOptions
-        chrome_options = ChromeOptions()
-        
-        chrome_options.add_argument('--headless=new')
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_argument('--window-size=1920,1080')
-        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-        
-        if self.is_replit:
-            chrome_options.add_argument('--disable-setuid-sandbox')
-            chrome_options.add_argument('--single-process')
-            chrome_options.add_argument('--no-zygote')
-            chrome_options.add_argument('--disable-software-rasterizer')
-        
-        return chrome_options
 
     def perform_human_like_login(self, email: str, password: str) -> bool:
         """Perform enhanced human-like login sequence with robust verification"""
@@ -407,56 +387,326 @@ class EnhancedSeleniumLoginManager:
             logger.error(f"Error extracting authentication data: {str(e)}")
             return {}
 
+    def setup_enhanced_chrome_options(self):
+        """Chrome options specifically for Replit DevToolsActivePort fix"""
+        from selenium.webdriver.chrome.options import Options
+        chrome_options = Options()
+
+        # Set up Chrome options
+        chrome_options = Options()
+        chrome_options.add_argument('--headless=new')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--window-size=1920,1080')
+        chrome_options.add_argument('--disable-extensions')
+        chrome_options.add_argument('--disable-popup-blocking')
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+
+        # Add additional options for Replit environment
+        if self.is_replit:
+            chrome_options.binary_location = '/nix/store/zi4f80l169xlmivz8vja8wlphq74qqk0-chromium-125.0.6422.141/bin/chromium'
+
+            chrome_options.add_argument('--disable-setuid-sandbox')
+            chrome_options.add_argument('--single-process')
+            chrome_options.add_argument('--no-zygote')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('--disable-software-rasterizer')
+            chrome_options.add_argument('--disable-extensions')
+            chrome_options.add_argument('--disable-gpu-sandbox')
+            chrome_options.add_argument('--disable-accelerated-2d-canvas')
+            chrome_options.add_argument('--disable-accelerated-jpeg-decoding')
+            chrome_options.add_argument('--disable-accelerated-mjpeg-decode')
+            chrome_options.add_argument('--disable-accelerated-video-decode')
+            chrome_options.add_argument('--disable-accelerated-video')
+            chrome_options.add_argument('--disable-webgl')
+            chrome_options.add_argument('--disable-webgl2')
+            chrome_options.add_argument('--disable-features=site-per-process')
+            chrome_options.binary_location = '/usr/bin/google-chrome'
+        else:
+            # Add additional options for local environment
+            chrome_options.add_argument('--remote-debugging-port=9222')
+            chrome_options.add_argument('--disable-web-security')
+            chrome_options.add_argument('--allow-running-insecure-content')
+            chrome_options.add_argument('--disable-features=IsolateOrigins,site-per-process')
+
+        # Common settings
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+
+        return chrome_options
+
+    # ENHANCED LOGIN METHOD with better error handling and cleanup
+
     def login(self) -> bool:
+        """Enhanced login with Replit-specific startup handling"""
         if not self.login_credentials:
             logger.error("No login credentials set")
             return False
-            
+
+        # Clean up any existing processes first
+        self.cleanup_chrome_processes()
+
         try:
+            # Prepare temp directories for Chrome
+            if self.is_replit:
+                import os
+                import shutil
+
+                # Create/clean temp directories
+                temp_dirs = [
+                    '/tmp/chrome-user-data',
+                    '/tmp/chrome-data', 
+                    '/tmp/chrome-cache',
+                    '/tmp/chrome-crashes'
+                ]
+
+                for temp_dir in temp_dirs:
+                    try:
+                        if os.path.exists(temp_dir):
+                            shutil.rmtree(temp_dir)
+                        os.makedirs(temp_dir, mode=0o777)
+                        logger.debug(f"Created temp directory: {temp_dir}")
+                    except Exception as e:
+                        logger.warning(f"Could not create temp dir {temp_dir}: {e}")
+
+            # Initialize Chrome with enhanced options
             if not self.driver:
-                from undetected_chromedriver import Chrome
+                logger.info("Initializing Chrome with DevToolsActivePort fix...")
+
                 chrome_options = self.setup_enhanced_chrome_options()
-                
-                logger.info("Initializing Chrome with enhanced options...")
+
                 if self.is_replit:
+                    # Use standard webdriver with explicit service
                     from selenium.webdriver.chrome.service import Service
-                    service = Service('/nix/store/3qnxr5x6gw3k9a9i7d0akz0m6bksbwff-chromedriver-125.0.6422.141/bin/chromedriver')
+
+                    # Create service with explicit arguments
+                    service = Service(
+                        '/nix/store/3qnxr5x6gw3k9a9i7d0akz0m6bksbwff-chromedriver-125.0.6422.141/bin/chromedriver',
+                        log_path='/tmp/chromedriver.log'
+                    )
+
+                    # Add service arguments for stability
+                    service.creation_flags = 0
+
+                    logger.info("Starting Chrome with Replit-optimized service...")
+
+                    # Set environment variables for Chrome
+                    os.environ['DISPLAY'] = ':99'  # Virtual display
+                    os.environ['CHROME_DEVEL_SANDBOX'] = '/tmp/chrome_sandbox'
+
                     self.driver = webdriver.Chrome(service=service, options=chrome_options)
+
+                    # Set very long timeouts for Replit
+                    self.driver.set_page_load_timeout(300)  # 5 minutes
+                    self.driver.implicitly_wait(60)         # 1 minute
+
                 else:
+                    # Local environment
+                    from undetected_chromedriver import Chrome
                     self.driver = Chrome(options=chrome_options)
-                logger.info("Chrome initialization successful")
-                self.driver.set_page_load_timeout(30)
-            
-            login_success = self.perform_human_like_login(
+                    self.driver.set_page_load_timeout(30)
+                    self.driver.implicitly_wait(10)
+
+            # Test Chrome with minimal load
+            logger.info("Testing Chrome startup...")
+            try:
+                # Try the simplest possible operation
+                self.driver.execute_script("return 'Chrome is running';")
+                logger.info("Chrome startup test passed")
+
+                # Try loading a simple page
+                self.driver.get('data:text/html,<html><body>Test</body></html>')
+                logger.info("Chrome can load pages")
+
+            except Exception as e:
+                logger.error(f"Chrome startup test failed: {e}")
+                return False
+
+            # Proceed with login
+            logger.info("Chrome stable - starting login process...")
+            login_success = self.perform_minimal_login(
                 self.login_credentials['email'], 
                 self.login_credentials['password']
             )
-            
-            if login_success:
-                self.auth_data = self.extract_complete_authentication_data()
-                self.cookies = {cookie['name']: cookie['value'] for cookie in self.auth_data.get('cookies', [])}
-                
-                if self.cookies:
-                    logger.info(f"Extracted {len(self.cookies)} cookies")
-                    self.last_login = datetime.now()
-                    
-                    try:
-                        with open('enhanced_auth_data.json', 'w') as f:
-                            json.dump(self.auth_data, f, indent=2, default=str)
-                        logger.info("Saved enhanced authentication data")
-                    except Exception as e:
-                        logger.warning(f"Could not save auth data: {e}")
-                    
-                    return True
-                else:
-                    logger.error("No cookies extracted after login")
-                    return False
-            else:
-                logger.error("Login sequence failed")
-                return False
-                
+
+            return login_success
+
         except Exception as e:
-            logger.error(f"Login failed: {str(e)}")
+            logger.error(f"Login initialization failed: {str(e)}")
+            self.cleanup_chrome_processes()
+            return False
+
+    def cleanup_chrome_processes(self):
+        """Enhanced cleanup for Replit"""
+        try:
+            # Close driver
+            if hasattr(self, 'driver') and self.driver:
+                try:
+                    self.driver.quit()
+                except:
+                    pass
+                self.driver = None
+
+            # Kill Chrome processes in Replit
+            if self.is_replit:
+                import os
+                import time
+
+                # Kill Chrome and ChromeDriver processes
+                kill_commands = [
+                    "pkill -f chromium",
+                    "pkill -f chrome",
+                    "pkill -f chromedriver",
+                    "killall chromium",
+                    "killall chrome",
+                    "killall chromedriver"
+                ]
+
+                for cmd in kill_commands:
+                    try:
+                        os.system(f"{cmd} 2>/dev/null")
+                    except:
+                        pass
+
+                # Clean up temp directories
+                cleanup_commands = [
+                    "rm -rf /tmp/chrome-*",
+                    "rm -rf /tmp/.com.google.Chrome.*",
+                    "rm -f /tmp/chromedriver.log"
+                ]
+
+                for cmd in cleanup_commands:
+                    try:
+                        os.system(f"{cmd} 2>/dev/null")
+                    except:
+                        pass
+
+                time.sleep(2)  # Wait for cleanup
+
+            logger.info("Chrome cleanup completed")
+
+        except Exception as e:
+            logger.warning(f"Error during Chrome cleanup: {e}")
+
+    def perform_minimal_login(self, email: str, password: str) -> bool:
+        """Minimal login process for maximum stability"""
+        try:
+            logger.info("Starting minimal login process...")
+
+            # Step 1: Load newspapers.com main page
+            try:
+                logger.info("Loading newspapers.com...")
+                self.driver.get('https://www.newspapers.com/')
+
+                # Wait for basic page load
+                WebDriverWait(self.driver, 60).until(
+                    lambda driver: driver.execute_script("return document.readyState") == "complete"
+                )
+
+                logger.info("Main page loaded")
+                time.sleep(3)
+
+            except Exception as e:
+                logger.error(f"Failed to load main page: {e}")
+                return False
+
+            # Step 2: Navigate to login page
+            try:
+                logger.info("Navigating to login page...")
+                self.driver.get('https://www.newspapers.com/signin/')
+
+                # Wait for login page
+                WebDriverWait(self.driver, 60).until(
+                    lambda driver: driver.execute_script("return document.readyState") == "complete"
+                )
+
+                logger.info("Login page loaded")
+                time.sleep(3)
+
+            except Exception as e:
+                logger.error(f"Failed to load login page: {e}")
+                return False
+
+            # Step 3: Find and fill login form
+            try:
+                logger.info("Looking for login form...")
+
+                # Wait for email field with multiple selectors
+                email_field = None
+                selectors = ["#email", "input[name='email']", "input[type='email']"]
+
+                for selector in selectors:
+                    try:
+                        email_field = WebDriverWait(self.driver, 30).until(
+                            EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                        )
+                        logger.info(f"Found email field with selector: {selector}")
+                        break
+                    except:
+                        continue
+
+                if not email_field:
+                    logger.error("Could not find email field")
+                    return False
+
+                # Find password field
+                password_field = None
+                pass_selectors = ["input[type='password']", "input[name='password']", "#password"]
+
+                for selector in pass_selectors:
+                    try:
+                        password_field = self.driver.find_element(By.CSS_SELECTOR, selector)
+                        logger.info(f"Found password field with selector: {selector}")
+                        break
+                    except:
+                        continue
+
+                if not password_field:
+                    logger.error("Could not find password field")
+                    return False
+
+                # Fill form
+                logger.info("Filling login form...")
+                email_field.clear()
+                email_field.send_keys(email)
+
+                password_field.clear()
+                password_field.send_keys(password)
+
+                # Submit
+                password_field.submit()
+
+                # Wait for redirect
+                time.sleep(10)
+
+                # Check success
+                current_url = self.driver.current_url.lower()
+                if "signin" not in current_url and "login" not in current_url:
+                    logger.info("Login successful!")
+
+                    # Extract cookies
+                    try:
+                        self.auth_data = self.extract_complete_authentication_data()
+                        self.cookies = {cookie['name']: cookie['value'] for cookie in self.auth_data.get('cookies', [])}
+
+                        if self.cookies:
+                            logger.info(f"Extracted {len(self.cookies)} cookies")
+                            self.last_login = datetime.now()
+                            return True
+                    except Exception as e:
+                        logger.warning(f"Cookie extraction failed: {e}")
+                        return False
+
+                logger.error("Login failed - still on login page")
+                return False
+
+            except Exception as e:
+                logger.error(f"Form interaction failed: {e}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Minimal login process failed: {str(e)}")
             return False
             
     def cleanup(self):
@@ -569,14 +819,17 @@ class EnhancedAutoCookieManager:
     def _extract_browser_cookies(self, domain: str) -> bool:
         """Fallback to extract cookies from browser"""
         try:
-            cookies = browser_cookie3.chrome(domain_name=domain)
-            self.cookies = {cookie.name: cookie.value for cookie in cookies}
-            self.session.cookies.clear()
-            for name, value in self.cookies.items():
-                self.session.cookies.set(name, value)
-            self.last_extraction = datetime.now()
-            st.success(f"✅ Extracted {len(self.cookies)} cookies from browser")
-            return True
+            if not self.is_replit:
+                cookies = browser_cookie3.chrome(domain_name=domain)
+                self.cookies = {cookie.name: cookie.value for cookie in cookies}
+                self.session.cookies.clear()
+                for name, value in self.cookies.items():
+                    self.session.cookies.set(name, value)
+                self.last_extraction = datetime.now()
+                st.success(f"✅ Extracted {len(self.cookies)} cookies from browser")
+                return True
+            else:
+                return False
         except Exception as e:
             logger.error(f"Browser cookie extraction failed: {e}")
             st.error("❌ Could not extract cookies from browser")
