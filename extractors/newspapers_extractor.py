@@ -368,7 +368,12 @@ class EnhancedSeleniumLoginManager:
                 chrome_options = self.setup_enhanced_chrome_options()
                 
                 logger.info("Initializing Chrome with enhanced options...")
-                self.driver = Chrome(options=chrome_options)
+                if self.is_replit:
+                    from selenium.webdriver.chrome.service import Service
+                    service = Service('/nix/store/3qnxr5x6gw3k9a9i7d0akz0m6bksbwff-chromedriver-125.0.6422.141/bin/chromedriver')
+                    self.driver = webdriver.Chrome(service=service, options=chrome_options)
+                else:
+                    self.driver = Chrome(options=chrome_options)
                 logger.info("Chrome initialization successful")
                 self.driver.set_page_load_timeout(30)
             
