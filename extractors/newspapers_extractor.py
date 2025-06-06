@@ -604,7 +604,7 @@ class EnhancedSeleniumLoginManager:
                 )
                 
                 # Brief wait for dynamic content
-                time.sleep(1)
+                time.sleep(2)  # Increased wait for Replit
 
             except Exception as e:
                 logger.error(f"Failed to load login page: {e}")
@@ -625,6 +625,7 @@ class EnhancedSeleniumLoginManager:
                         email_field = WebDriverWait(self.driver, 10).until(
                             EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                         )
+                        logger.info(f"Found email field with selector: {selector}")
                         break
                     except:
                         continue
@@ -640,6 +641,7 @@ class EnhancedSeleniumLoginManager:
                         password_field = WebDriverWait(self.driver, 10).until(
                             EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                         )
+                        logger.info(f"Found password field with selector: {selector}")
                         break
                     except:
                         continue
@@ -648,32 +650,83 @@ class EnhancedSeleniumLoginManager:
                     logger.error("Could not find password field")
                     return False
 
-                # Fill form fields quickly
-                email_field.clear()
-                email_field.send_keys(email)
-                time.sleep(0.5)  # Brief pause between fields
+                # Fill form fields with explicit waits
+                try:
+                    # Clear and fill email
+                    email_field.clear()
+                    time.sleep(0.5)
+                    email_field.send_keys(email)
+                    time.sleep(1)  # Increased wait for Replit
+                    
+                    # Clear and fill password
+                    password_field.clear()
+                    time.sleep(0.5)
+                    password_field.send_keys(password)
+                    time.sleep(1)  # Increased wait for Replit
+                    
+                    logger.info("Form fields filled successfully")
+                except Exception as e:
+                    logger.error(f"Failed to fill form fields: {e}")
+                    return False
+
+                # Try multiple submission methods
+                submission_success = False
                 
-                password_field.clear()
-                password_field.send_keys(password)
-                time.sleep(0.5)  # Brief pause before submit
-
-                # Submit form
+                # Method 1: Try form submit
                 try:
+                    logger.info("Attempting form submit...")
                     password_field.submit()
-                except:
-                    try:
-                        password_field.send_keys(Keys.RETURN)
-                    except:
-                        logger.error("Could not submit form")
-                        return False
+                    submission_success = True
+                    logger.info("Form submitted successfully")
+                except Exception as e:
+                    logger.warning(f"Form submit failed: {e}")
 
-                # Wait for login completion with shorter timeout
+                # Method 2: Try Enter key
+                if not submission_success:
+                    try:
+                        logger.info("Attempting Enter key submit...")
+                        password_field.send_keys(Keys.RETURN)
+                        submission_success = True
+                        logger.info("Enter key submit successful")
+                    except Exception as e:
+                        logger.warning(f"Enter key submit failed: {e}")
+
+                # Method 3: Try JavaScript submit
+                if not submission_success:
+                    try:
+                        logger.info("Attempting JavaScript submit...")
+                        self.driver.execute_script("arguments[0].form.submit();", password_field)
+                        submission_success = True
+                        logger.info("JavaScript submit successful")
+                    except Exception as e:
+                        logger.warning(f"JavaScript submit failed: {e}")
+
+                if not submission_success:
+                    logger.error("All submission methods failed")
+                    return False
+
+                # Wait for login completion with multiple checks
                 try:
+                    logger.info("Waiting for login completion...")
+                    
+                    # Wait for URL change
                     WebDriverWait(self.driver, 20).until(
                         lambda driver: "signin" not in driver.current_url.lower()
                     )
-                except:
-                    logger.error("Login submission failed")
+                    
+                    # Additional wait for page load
+                    time.sleep(3)  # Increased wait for Replit
+                    
+                    # Check for error messages
+                    error_elements = self.driver.find_elements(By.CSS_SELECTOR, ".error, .alert-danger, [class*='error']")
+                    if error_elements:
+                        error_text = " ".join([elem.text for elem in error_elements if elem.text.strip()])
+                        logger.error(f"Login error detected: {error_text}")
+                        return False
+                    
+                    logger.info("Login redirect successful")
+                except Exception as e:
+                    logger.error(f"Login completion check failed: {e}")
                     return False
 
                 # Verify login success
