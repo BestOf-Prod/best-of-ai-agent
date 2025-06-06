@@ -549,8 +549,11 @@ class EnhancedAutoCookieManager:
                 st.success("✅ Successfully logged in with enhanced authentication")
                 return True
 
-            logger.warning("Selenium login failed, falling back to browser cookies")
-            return self._extract_browser_cookies(domain)
+            if not self.is_replit:
+                logger.warning("Selenium login failed")
+            else:
+                logger.warning("Selenium login failed, falling back to browser cookies")
+                return self._extract_browser_cookies(domain)
 
         except Exception as e:
             logger.error(f"Cookie extraction failed: {str(e)}")
