@@ -593,54 +593,38 @@ class EnhancedSeleniumLoginManager:
         try:
             logger.info("Starting minimal login process...")
 
-            # Step 1: Load newspapers.com main page
-            try:
-                logger.info("Loading newspapers.com...")
-                self.driver.get('https://www.newspapers.com/')
-
-                # Wait for basic page load
-                WebDriverWait(self.driver, 60).until(
-                    lambda driver: driver.execute_script("return document.readyState") == "complete"
-                )
-
-                logger.info("Main page loaded")
-                time.sleep(3)
-
-            except Exception as e:
-                logger.error(f"Failed to load main page: {e}")
-                return False
-
-            # Step 2: Navigate to login page
+            # Go directly to login page
             try:
                 logger.info("Navigating to login page...")
                 self.driver.get('https://www.newspapers.com/signin/')
-
-                # Wait for login page
-                WebDriverWait(self.driver, 60).until(
+                
+                # Wait for login form with shorter timeout
+                WebDriverWait(self.driver, 20).until(
                     lambda driver: driver.execute_script("return document.readyState") == "complete"
                 )
-
-                logger.info("Login page loaded")
-                time.sleep(3)
+                
+                # Brief wait for dynamic content
+                time.sleep(1)
 
             except Exception as e:
                 logger.error(f"Failed to load login page: {e}")
                 return False
 
-            # Step 3: Find and fill login form
+            # Find and fill login form with optimized selectors
             try:
                 logger.info("Looking for login form...")
 
-                # Wait for email field with multiple selectors
+                # Try most common selectors first
+                email_selectors = ["#email", "input[name='email']", "input[type='email']"]
+                password_selectors = ["#password", "input[name='password']", "input[type='password']"]
+                
+                # Find email field with shorter timeout
                 email_field = None
-                selectors = ["#email", "input[name='email']", "input[type='email']"]
-
-                for selector in selectors:
+                for selector in email_selectors:
                     try:
-                        email_field = WebDriverWait(self.driver, 30).until(
-                            EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                        email_field = WebDriverWait(self.driver, 10).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                         )
-                        logger.info(f"Found email field with selector: {selector}")
                         break
                     except:
                         continue
@@ -649,14 +633,13 @@ class EnhancedSeleniumLoginManager:
                     logger.error("Could not find email field")
                     return False
 
-                # Find password field
+                # Find password field with shorter timeout
                 password_field = None
-                pass_selectors = ["input[type='password']", "input[name='password']", "#password"]
-
-                for selector in pass_selectors:
+                for selector in password_selectors:
                     try:
-                        password_field = self.driver.find_element(By.CSS_SELECTOR, selector)
-                        logger.info(f"Found password field with selector: {selector}")
+                        password_field = WebDriverWait(self.driver, 10).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                        )
                         break
                     except:
                         continue
@@ -665,128 +648,66 @@ class EnhancedSeleniumLoginManager:
                     logger.error("Could not find password field")
                     return False
 
-                # Fill form
-                logger.info("Filling login form...")
+                # Fill form fields quickly
                 email_field.clear()
                 email_field.send_keys(email)
-                time.sleep(1)
-
+                time.sleep(0.5)  # Brief pause between fields
+                
                 password_field.clear()
                 password_field.send_keys(password)
-                time.sleep(1)
+                time.sleep(0.5)  # Brief pause before submit
 
-                # IMPROVED SUBMISSION LOGIC
-                logger.info("Attempting form submission...")
-
-                # Method 1: Try to find and click submit button
-                submit_success = False
-                submit_selectors = [
-                    "button[type='submit']",
-                    "input[type='submit']",
-                    "button:contains('Sign In')",
-                    "button:contains('Log In')",
-                    ".btn-primary",
-                    "#signin-button",
-                    "form button"
-                ]
-
-                for selector in submit_selectors:
-                    try:
-                        if ":contains" in selector:
-                            submit_button = self.driver.find_element(By.XPATH, "//button[contains(text(), 'Sign In') or contains(text(), 'Log In') or contains(text(), 'Submit')]")
-                        else:
-                            submit_button = self.driver.find_element(By.CSS_SELECTOR, selector)
-
-                        if submit_button and submit_button.is_enabled() and submit_button.is_displayed():
-                            # Scroll to button and click
-                            self.driver.execute_script("arguments[0].scrollIntoView(true);", submit_button)
-                            time.sleep(0.5)
-                            submit_button.click()
-                            logger.info(f"Clicked submit button with selector: {selector}")
-                            submit_success = True
-                            break
-                    except Exception as e:
-                        logger.debug(f"Submit button selector {selector} failed: {e}")
-                        continue
-
-                # Method 2: If button click failed, try Enter key
-                if not submit_success:
+                # Submit form
+                try:
+                    password_field.submit()
+                except:
                     try:
                         password_field.send_keys(Keys.RETURN)
-                        logger.info("Pressed Enter in password field")
-                        submit_success = True
-                    except Exception as e:
-                        logger.debug(f"Enter key failed: {e}")
-
-                # Method 3: If Enter failed, try form submit
-                if not submit_success:
-                    try:
-                        form = self.driver.find_element(By.TAG_NAME, "form")
-                        self.driver.execute_script("arguments[0].submit();", form)
-                        logger.info("JavaScript form submit executed")
-                        submit_success = True
-                    except Exception as e:
-                        logger.debug(f"JavaScript submit failed: {e}")
-
-                if not submit_success:
-                    logger.error("All submission methods failed")
-                    return False
-
-                # Wait longer for redirect with more checking
-                logger.info("Waiting for login redirect...")
-                redirect_success = False
-
-                for attempt in range(10):  # Check every 2 seconds for 20 seconds
-                    time.sleep(2)
-                    current_url = self.driver.current_url.lower()
-                    page_title = self.driver.title.lower()
-
-                    # Check if we've been redirected away from login
-                    if "signin" not in current_url and "login" not in current_url:
-                        logger.info(f"Redirected to: {current_url}")
-                        redirect_success = True
-                        break
-
-                    # Also check for error messages
-                    try:
-                        error_elements = self.driver.find_elements(By.CSS_SELECTOR, ".error, .alert-danger, [class*='error']")
-                        if error_elements:
-                            error_text = " ".join([elem.text for elem in error_elements if elem.text.strip()])
-                            logger.error(f"Login error detected: {error_text}")
-                            return False
                     except:
-                        pass
+                        logger.error("Could not submit form")
+                        return False
 
-                    logger.debug(f"Still on login page, attempt {attempt + 1}/10")
-
-                if not redirect_success:
-                    logger.error("Login redirect timeout - still on login page after 20 seconds")
+                # Wait for login completion with shorter timeout
+                try:
+                    WebDriverWait(self.driver, 20).until(
+                        lambda driver: "signin" not in driver.current_url.lower()
+                    )
+                except:
+                    logger.error("Login submission failed")
                     return False
 
-                logger.info("Login successful!")
-
-                # Extract cookies
+                # Verify login success
                 try:
-                    self.auth_data = self.extract_complete_authentication_data()
-                    self.cookies = {cookie['name']: cookie['value'] for cookie in self.auth_data.get('cookies', [])}
-
-                    if self.cookies:
-                        logger.info(f"Extracted {len(self.cookies)} cookies")
-                        self.last_login = datetime.now()
-                        return True
-                    else:
-                        logger.warning("No cookies extracted after successful login")
+                    # Check for premium access
+                    test_url = "https://www.newspapers.com/image/635076099/"
+                    self.driver.get(test_url)
+                    
+                    # Wait for page load with shorter timeout
+                    WebDriverWait(self.driver, 20).until(
+                        lambda driver: driver.execute_script("return document.readyState") == "complete"
+                    )
+                    
+                    # Check for paywall indicators
+                    page_content = self.driver.page_source.lower()
+                    paywall_indicators = ['you need a subscription', 'start a 7-day free trial', 'subscribe to view']
+                    
+                    if any(indicator in page_content for indicator in paywall_indicators):
+                        logger.error("Premium access not granted")
                         return False
+                        
+                    logger.info("Login successful")
+                    return True
+
                 except Exception as e:
-                    logger.warning(f"Cookie extraction failed: {e}")
+                    logger.error(f"Failed to verify login: {e}")
                     return False
 
             except Exception as e:
-                logger.error(f"Form interaction failed: {e}")
+                logger.error(f"Login form error: {e}")
                 return False
 
         except Exception as e:
-            logger.error(f"Minimal login process failed: {str(e)}")
+            logger.error(f"Login process failed: {e}")
             return False
             
     def cleanup(self):
