@@ -99,6 +99,22 @@ class EnhancedSeleniumLoginManager:
             self.driver.get('https://www.newspapers.com/signin/')
             time.sleep(random.uniform(2, 4))
             
+            # Debug: Print page source to console in Replit
+            if self.is_replit:
+                logger.info("=== REplit Debug: Page Source ===")
+                logger.info(self.driver.page_source)
+                logger.info("=== End Page Source ===")
+                
+                # Also try to find all input elements
+                logger.info("=== All Input Elements ===")
+                inputs = self.driver.find_elements(By.TAG_NAME, "input")
+                for input_elem in inputs:
+                    input_type = input_elem.get_attribute("type")
+                    input_id = input_elem.get_attribute("id")
+                    input_name = input_elem.get_attribute("name")
+                    logger.info(f"Input found - Type: {input_type}, ID: {input_id}, Name: {input_name}")
+                logger.info("=== End Input Elements ===")
+            
             # Wait for login form with multiple strategies
             try:
                 email_selectors = ["#email", "input[name='email']", "input[type='email']"]
@@ -106,18 +122,32 @@ class EnhancedSeleniumLoginManager:
                 
                 for selector in email_selectors:
                     try:
+                        logger.info(f"Trying to find email field with selector: {selector}")
                         email_field = WebDriverWait(self.driver, 10).until(
                             EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
                         )
                         logger.info(f"Found email field with selector: {selector}")
                         break
-                    except:
+                    except Exception as e:
+                        logger.warning(f"Failed to find email field with selector {selector}: {str(e)}")
                         continue
                 
                 if not email_field:
                     logger.error("Could not find email field with any selector")
-                    self._save_debug_html_simple()
-                    return False
+                    if self.is_replit:
+                        # In Replit, try to find any input field as fallback
+                        logger.info("Trying fallback: finding any input field")
+                        all_inputs = self.driver.find_elements(By.TAG_NAME, "input")
+                        for input_elem in all_inputs:
+                            input_type = input_elem.get_attribute("type")
+                            if input_type in ["email", "text"]:
+                                email_field = input_elem
+                                logger.info(f"Found fallback input field of type: {input_type}")
+                                break
+                    
+                    if not email_field:
+                        self._save_debug_html_simple()
+                        return False
                 
                 password_selectors = ["#password", "input[name='password']", "input[type='password']"]
                 password_field = None
@@ -127,13 +157,26 @@ class EnhancedSeleniumLoginManager:
                         password_field = self.driver.find_element(By.CSS_SELECTOR, selector)
                         logger.info(f"Found password field with selector: {selector}")
                         break
-                    except:
+                    except Exception as e:
+                        logger.warning(f"Failed to find password field with selector {selector}: {str(e)}")
                         continue
                 
                 if not password_field:
                     logger.error("Could not find password field")
-                    self._save_debug_html_simple()
-                    return False
+                    if self.is_replit:
+                        # In Replit, try to find any password input as fallback
+                        logger.info("Trying fallback: finding any password input")
+                        all_inputs = self.driver.find_elements(By.TAG_NAME, "input")
+                        for input_elem in all_inputs:
+                            input_type = input_elem.get_attribute("type")
+                            if input_type == "password":
+                                password_field = input_elem
+                                logger.info("Found fallback password field")
+                                break
+                    
+                    if not password_field:
+                        self._save_debug_html_simple()
+                        return False
                     
                 logger.info("Login form fields found successfully")
                 
