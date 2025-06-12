@@ -1416,7 +1416,7 @@ class NewspapersComExtractor:
             return None
     
     def _download_newspaper_image(self, metadata: Dict) -> Optional[Image.Image]:
-        logger.info("Downloading newspaper image with high quality priority...")
+        logger.info("Downloading newspaper article via screenshot...")
         
         try:
             # Always get a new driver for this specific task to ensure clean state and desired options
@@ -1442,131 +1442,94 @@ class NewspapersComExtractor:
             
             for name, value in self.cookie_manager.cookies.items():
                 try:
-                    # Selenium cookie domains are strict; ensure it matches the actual domain or is generic
                     cookie_domain = '.newspapers.com' if 'newspapers.com' in (metadata.get('url') or '').lower() else None
                     if cookie_domain:
                          driver.add_cookie({'name': name, 'value': value, 'domain': cookie_domain, 'path': '/'})
                     else:
-                        driver.add_cookie({'name': name, 'value': value, 'path': '/'}) # Try without domain for general case
+                        driver.add_cookie({'name': name, 'value': value, 'path': '/'})
                     logger.debug(f"Added cookie to driver for image extraction: {name}={value[:10]}...")
                 except Exception as e:
                     logger.warning(f"Could not add cookie {name} to driver for image extraction: {e}")
             
-            logger.info(f"Loading target page for high-quality image extraction: {metadata['url']}")
+            logger.info(f"Loading target page for article extraction: {metadata['url']}")
             driver.get(metadata['url'])
             
-            # Wait for main image to load or paywall to disappear
-            WebDriverWait(driver, 30).until_not(
-                EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'subscription') or contains(text(), 'sign in to view')]"))
-            ) or WebDriverWait(driver, 30).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, 'img[src*="img.newspapers.com"]'))
-            )
+            # Wait for any of these conditions to be true:
+            # 1. The subscription element is present (indicating logged in)
+            # 2. The newspaper image viewer is present
+            try:
+                WebDriverWait(driver, 30).until(
+                    EC.any_of(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "span.MemberNavigation_Subscription__RU0Cu")),
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "svg[id*='svg-viewer']")),
+                        EC.presence_of_element_located((By.CSS_SELECTOR, ".newspaper-image-viewer"))
+                    )
+                )
+            except TimeoutException:
+                logger.warning("Initial wait timed out, checking page state...")
+                # Check if we're actually on the right page
+                if "newspapers.com" not in driver.current_url:
+                    logger.error(f"Redirected to unexpected URL: {driver.current_url}")
+                    return None
+                
+                # Check for common error states
+                if any(text in driver.page_source.lower() for text in ["access denied", "blocked", "suspicious activity"]):
+                    logger.error("Access denied or blocked by Newspapers.com")
+                    return None
+                
+                # If we get here, try to proceed anyway - the page might be loaded but with different elements
+                logger.info("Proceeding with article extraction despite timeout...")
+            
             time.sleep(5) # Give more time for page to fully render after initial waits
             
-            # Look for the largest and highest quality image element
-            high_quality_selectors = [
-                'img[src*="img.newspapers.com"][src*="quality=100"]',
-                'img[src*="img.newspapers.com"][src*="size=full"]',
-                'img[src*="img.newspapers.com"][src*="w=4000"]',
-                'img[src*="img.newspapers.com"][src*="w=2000"]',
-                'img[src*="img.newspapers.com"]', # Generic newspapers.com image
-                'img[src*="newspapers.com/img"]', # Another common pattern
-                '.newspaper-image img',
-                '.image-viewer img',
-                'img[class*="newspaper"]',
+            # Try to find the main article content area
+            article_selectors = [
+                '#image-layers'
             ]
             
-            best_image_element = None
-            best_quality_score = 0
-            
-            for selector in high_quality_selectors:
+            article_element = None
+            for selector in article_selectors:
                 try:
                     elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                    for element in elements:
-                        try:
-                            # Try to get natural (original) dimensions first
-                            width = driver.execute_script("return arguments[0].naturalWidth;", element)
-                            height = driver.execute_script("return arguments[0].naturalHeight;", element)
-
-                            # Fallback to rendered dimensions if natural are not available
-                            if not width or not height:
-                                width = element.size['width']
-                                height = element.size['height']
-                            
-                            src = element.get_attribute('src') or ''
-                            
-                            if width and height:
-                                quality_score = width * height
-                                
-                                # Boost score for indicators of high quality
-                                if 'quality=100' in src:
-                                    quality_score *= 2
-                                elif 'size=full' in src:
-                                    quality_score *= 1.8
-                                elif 'w=4000' in src or 'w=6000' in src:
-                                    quality_score *= 1.5
-                                elif 'w=2000' in src:
-                                    quality_score *= 1.2
-                                
-                                if quality_score > best_quality_score and width > 800 and height > 600: # Minimum size for consideration
-                                    best_quality_score = quality_score
-                                    best_image_element = element
-                                    logger.info(f"Found better quality image element: {width}x{height}, score: {quality_score}, src: {src[:80]}...")
-                                    
-                        except Exception as e:
-                            logger.debug(f"Error evaluating image element properties: {e}")
-                            continue
-                            
+                    if elements:
+                        # Get the largest element that matches our criteria
+                        article_element = max(elements, key=lambda e: e.size['width'] * e.size['height'])
+                        logger.info(f"Found article element using selector '{selector}': {article_element.size}")
+                        break
                 except Exception as e:
                     logger.debug(f"Error with selector {selector}: {e}")
                     continue
             
-            if best_image_element:
-                logger.info(f"Attempting to download/screenshot the best image element found.")
-                try:
-                    img_src = best_image_element.get_attribute('src')
-                    if img_src and img_src.startswith('http'):
-                        logger.info(f"Trying to download image directly from its src: {img_src}")
-                        try:
-                            response = self.cookie_manager.session.get(img_src, timeout=30)
-                            if response.status_code == 200 and 'image' in response.headers.get('content-type', ''):
-                                image = Image.open(io.BytesIO(response.content))
-                                logger.info(f"Successfully downloaded high-quality image from element src: {image.size}.")
-                                return image
-                        except Exception as e:
-                            logger.debug(f"Failed to download image from element src {img_src}: {e}")
-
-                    # Fallback to screenshotting the element if direct download fails or src is not a direct image
-                    logger.info("Taking high-resolution screenshot of identified image element.")
-                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", best_image_element)
-                    time.sleep(1) # Allow scroll to complete
-                    
-                    screenshot_data = best_image_element.screenshot_as_png
-                    image = Image.open(io.BytesIO(screenshot_data))
-                    logger.info(f"High-res element screenshot captured: {image.size}.")
-                    return image
-                except Exception as e:
-                    logger.warning(f"Failed to screenshot the best image element: {e}. Trying full page screenshot.")
+            if article_element:
+                logger.info("Taking high-resolution screenshot of article content.")
+                # Scroll the element into view
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", article_element)
+                time.sleep(1) # Allow scroll to complete
+                
+                # Take screenshot of the element
+                screenshot_data = article_element.screenshot_as_png
+                image = Image.open(io.BytesIO(screenshot_data))
+                logger.info(f"Article screenshot captured: {image.size}")
+                return image
             
-            logger.info("No suitable image element found or element screenshot failed. Taking high-resolution full page screenshot as last resort...")
+            logger.info("No specific article element found. Taking high-resolution full page screenshot...")
             # Try to zoom out slightly to capture more if needed, then take full screenshot
-            # This is a fallback if the target image element can't be isolated.
-            driver.execute_script("document.body.style.zoom='150%'") # A bit less aggressive than 200%
+            driver.execute_script("document.body.style.zoom='75%'") # A bit less aggressive than 200%
             time.sleep(2)
             
             screenshot_data = driver.get_screenshot_as_png()
             full_screenshot = Image.open(io.BytesIO(screenshot_data))
             
-            logger.info(f"High-res full page screenshot captured: {full_screenshot.size}.")
+            logger.info(f"Full page screenshot captured: {full_screenshot.size}")
             return full_screenshot
             
         except Exception as e:
-            logger.error(f"High-quality Selenium image extraction failed: {e}", exc_info=True)
-            # Add debug info if driver is available
+            logger.error(f"Article extraction failed: {e}", exc_info=True)
             try:
                 if driver:
                     logger.info(f"Debug: Page source snippet: {driver.page_source[:500]}...")
                     logger.info(f"Debug: Page title: {driver.title}")
+                    logger.info(f"Debug: Current URL: {driver.current_url}")
             except Exception as debug_e:
                 logger.error(f"Failed to get debug info: {debug_e}")
             return None
