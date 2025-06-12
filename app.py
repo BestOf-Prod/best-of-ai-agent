@@ -9,6 +9,8 @@ import time
 import io
 import json
 import os
+import zipfile
+from pathlib import Path
 
 # Import existing modules
 from extractors.url_extractor import extract_from_url
@@ -18,9 +20,10 @@ from utils.processor import process_article
 from utils.document_processor import extract_urls_from_docx, validate_document_format
 from utils.storage_manager import StorageManager
 from utils.batch_processor import BatchProcessor
+from utils.icml_converter import convert_to_icml
 
 # Setup logging
-logger = setup_logging(__name__, log_level=logging.DEBUG)
+logger = setup_logging(__name__, log_level=logging.INFO)
 
 def main():
     """Enhanced main application entry point"""
@@ -51,7 +54,7 @@ def main():
     display_enhanced_workflow()
     
     # Main content area with tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📄 Document Processing", "🔬 Test Article", "🔍 Newspapers.com Search", "📊 Batch Results", "🖼️ Image Gallery"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📄 Document Processing", "🔬 Test Article", "🔍 Newspapers.com Search", "📊 Batch Results", "🖼️ Image Gallery", "📑 ICML Export"])
     
     with tab1:
         handle_document_upload(config)
@@ -69,6 +72,9 @@ def main():
     
     with tab5:
         display_images_gallery(config)
+        
+    with tab6:
+        handle_icml_conversion()
     
     # Footer
     display_enhanced_footer()
@@ -111,12 +117,19 @@ def enhanced_sidebar_config():
         type="password",
         help="Enter your Newspapers.com account password"
     )
+
+    # Add cookie file upload
+    uploaded_cookies = st.sidebar.file_uploader(
+        "Upload Cookies (Optional)",
+        type=['json'],
+        help="Upload a JSON file containing Newspapers.com cookies"
+    )
     
     # Initialize/refresh authentication
     col1, col2 = st.sidebar.columns(2)
     with col1:
         if st.sidebar.button("🔄 Initialize Auth"):
-            initialize_newspapers_authentication(email, password)
+            initialize_newspapers_authentication(email, password, uploaded_cookies)
     
     with col2:
         if st.sidebar.button("🧪 Test Auth"):
@@ -157,7 +170,7 @@ def enhanced_sidebar_config():
         'date_range': date_range
     }
 
-def initialize_newspapers_authentication(email: str, password: str):
+def initialize_newspapers_authentication(email: str, password: str, uploaded_cookies=None):
     """Initialize Newspapers.com authentication"""
     logger.info("Initializing Newspapers.com authentication")
     
@@ -171,6 +184,21 @@ def initialize_newspapers_authentication(email: str, password: str):
             
             # Set login credentials
             extractor.cookie_manager.set_login_credentials(email, password)
+            
+            # If cookies file is uploaded, load them
+            if uploaded_cookies is not None:
+                try:
+                    cookies_data = json.loads(uploaded_cookies.getvalue().decode())
+                    # Convert list of cookie dictionaries to a single dictionary of name-value pairs
+                    if isinstance(cookies_data, list):
+                        cookies_dict = {cookie['name']: cookie['value'] for cookie in cookies_data}
+                        extractor.cookie_manager.cookies = cookies_dict
+                    else:
+                        extractor.cookie_manager.cookies = cookies_data
+                    logger.info("Successfully loaded cookies from uploaded file")
+                except Exception as e:
+                    logger.error(f"Failed to load cookies from file: {str(e)}")
+                    st.warning("Failed to load cookies from file. Will proceed with standard authentication.")
             
             # Try to authenticate
             success = extractor.initialize(email=email, password=password)
@@ -618,18 +646,94 @@ def display_batch_results():
         
         with tab1:
             if results['results']:
+                # Debug: Print available results
+                logger.debug(f"Number of results: {len(results['results'])}")
+                for idx, r in enumerate(results['results']):
+                    logger.debug(f"Result {idx + 1}: {r.get('headline', 'Unknown')} - Markdown path: {r.get('markdown_path', 'Not available')}")
+                
+                # Create a DataFrame for the results table
                 success_df = pd.DataFrame([
                     {
                         'Headline': r.get('headline', 'Unknown')[:50] + ('...' if len(r.get('headline', '')) > 50 else ''),
                         'Source': r.get('source', 'Unknown'),
                         'URL': r['url'][:50] + ('...' if len(r['url']) > 50 else ''),
-                        'Upload Status': '✅ Uploaded' if r.get('upload_result', {}).get('success') else '❌ Upload Failed',
-                        'Processing Time': f"{r['processing_time_seconds']:.2f}s",
-                        'Auth Method': r.get('metadata', {}).get('extraction_method', 'Unknown')
+                        'Markdown': r.get('markdown_path', 'Not available'),
+                        'Image': '✅' if r.get('image_url') else '❌',
+                        'Processing Time': f"{r['processing_time_seconds']:.2f}s"
                     }
                     for r in results['results']
                 ])
+                
+                # Display the results table
                 st.dataframe(success_df, use_container_width=True)
+                
+                # Add preview functionality
+                st.write("### 📝 Article Previews")
+                
+                # Create a selectbox for choosing which article to preview
+                preview_options = [f"{i+1}. {r.get('headline', 'Unknown')}" for i, r in enumerate(results['results'])]
+                selected_preview = st.selectbox("Select an article to preview:", preview_options)
+                
+                if selected_preview:
+                    # Get the index of the selected article
+                    selected_idx = int(selected_preview.split('.')[0]) - 1
+                    selected_article = results['results'][selected_idx]
+                    
+                    # Debug: Print selected article details
+                    logger.debug(f"Selected article index: {selected_idx}")
+                    logger.debug(f"Selected article: {selected_article.get('headline', 'Unknown')}")
+                    logger.debug(f"Markdown path: {selected_article.get('markdown_path', 'Not available')}")
+                    
+                    # Create two columns for the preview
+                    preview_col1, preview_col2 = st.columns([2, 1])
+                    
+                    with preview_col1:
+                        st.write("#### Markdown Preview")
+                        markdown_path = selected_article.get('markdown_path')
+                        if markdown_path:
+                            logger.debug(f"Attempting to read markdown file: {markdown_path}")
+                            try:
+                                if os.path.exists(markdown_path):
+                                    with open(markdown_path, 'r', encoding='utf-8') as f:
+                                        markdown_content = f.read()
+                                    logger.debug(f"Successfully read markdown content, length: {len(markdown_content)}")
+                                    st.markdown(markdown_content)
+                                else:
+                                    logger.error(f"Markdown file not found: {markdown_path}")
+                                    st.error(f"Markdown file not found at: {markdown_path}")
+                            except Exception as e:
+                                logger.error(f"Error reading markdown file: {str(e)}")
+                                st.error(f"Error reading markdown file: {str(e)}")
+                        else:
+                            logger.warning("No markdown path available for selected article")
+                            st.warning("No markdown file available for preview")
+                    
+                    with preview_col2:
+                        st.write("#### Image Preview")
+                        if selected_article.get('image_url'):
+                            # Try to find the downloaded image
+                            image_path = None
+                            source = selected_article.get('source', 'unknown')
+                            image_dir = os.path.join('extracted_images', source)
+                            
+                            logger.debug(f"Looking for image in directory: {image_dir}")
+                            
+                            if os.path.exists(image_dir):
+                                # Find the most recent image file
+                                image_files = [f for f in os.listdir(image_dir) if f.endswith(('.jpg', '.jpeg', '.png'))]
+                                if image_files:
+                                    image_path = os.path.join(image_dir, image_files[-1])
+                                    logger.debug(f"Found image file: {image_path}")
+                            
+                            if image_path and os.path.exists(image_path):
+                                logger.debug(f"Displaying image from: {image_path}")
+                                st.image(image_path, caption="Extracted Article Image")
+                            else:
+                                logger.warning(f"No image found at path: {image_path}")
+                                st.warning("Image not found locally")
+                        else:
+                            logger.info("No image URL available for this article")
+                            st.info("No image available for this article")
             else:
                 st.info("No successful extractions in this batch.")
         
@@ -928,6 +1032,96 @@ def handle_article_test(config):
             except Exception as e:
                 logger.error(f"Article test failed: {str(e)}")
                 st.error(f"Article test failed: {str(e)}")
+
+def handle_icml_conversion():
+    """Handle ICML conversion of processed articles"""
+    st.write("## 📑 ICML Export for InDesign")
+    
+    if not st.session_state.batch_results or not st.session_state.batch_results.get('results'):
+        st.info("Process some articles first to enable ICML export")
+        return
+    
+    st.write("### Convert Processed Articles to ICML")
+    
+    # Create a temporary directory for ICML files
+    output_dir = Path("output")
+    output_dir.mkdir(exist_ok=True)
+    
+    # Get successful results
+    successful_results = st.session_state.batch_results.get('results', [])
+    
+    if not successful_results:
+        st.warning("No successfully processed articles found to convert")
+        return
+    
+    # Create markdown content for each article
+    markdown_files = []
+    for idx, result in enumerate(successful_results):
+        markdown_content = f"""# {result.get('headline', 'Untitled Article')}
+
+            Source: {result.get('source', 'Unknown Source')}
+            Date: {result.get('date', 'Unknown Date')}
+
+            {result.get('content', 'No content available')}
+            """
+        # Save markdown file
+        md_filename = f"article_{idx + 1}.md"
+        md_path = output_dir / md_filename
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(markdown_content)
+        markdown_files.append(md_path)
+    
+    # Convert to ICML
+    if st.button("🔄 Convert to ICML"):
+        with st.spinner("Converting articles to ICML format..."):
+            try:
+                icml_files = []
+                for md_file in markdown_files:
+                    icml_file = convert_to_icml(md_file, output_dir)
+                    icml_files.append(icml_file)
+                
+                st.success(f"✅ Successfully converted {len(icml_files)} articles to ICML format")
+                
+                # Create a zip file containing all ICML files
+                zip_path = output_dir / "articles_icml.zip"
+                with zipfile.ZipFile(zip_path, 'w') as zipf:
+                    for icml_file in icml_files:
+                        zipf.write(icml_file, icml_file.name)
+                
+                # Provide download button for the zip file
+                with open(zip_path, "rb") as f:
+                    st.download_button(
+                        label="📥 Download ICML Files",
+                        data=f,
+                        file_name="articles_icml.zip",
+                        mime="application/zip"
+                    )
+                
+                # Clean up temporary files
+                for md_file in markdown_files:
+                    md_file.unlink()
+                for icml_file in icml_files:
+                    icml_file.unlink()
+                zip_path.unlink()
+                
+            except Exception as e:
+                logger.error(f"ICML conversion error: {str(e)}")
+                st.error(f"Error converting to ICML: {str(e)}")
+    
+    # Display conversion instructions
+    with st.expander("📋 InDesign Import Instructions"):
+        st.write("""
+        ### How to Import ICML Files into InDesign
+        
+        1. Download the ICML files using the button above
+        2. Extract the ZIP file to a location on your computer
+        3. Open InDesign
+        4. Go to File > Place
+        5. Select the ICML files you want to import
+        6. Click Open
+        
+        The articles will be imported with their formatting preserved and ready for layout.
+        """)
 
 if __name__ == "__main__":
     try:

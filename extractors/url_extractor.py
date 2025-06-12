@@ -380,7 +380,83 @@ def wrap_text(text, font, max_width, draw):
     """Legacy function maintained for backward compatibility"""
     return layout_engine.wrap_text_to_width(text, font, max_width, draw)
 
-# Rest of the extraction code remains the same...
+def generate_markdown_content(article_data: dict, image_path: Optional[str] = None) -> str:
+    """
+    Generate markdown formatted content from article data
+    
+    Args:
+        article_data (dict): The extracted article data
+        image_path (str, optional): Path to the downloaded image if available
+        
+    Returns:
+        str: Markdown formatted content
+    """
+    markdown = []
+    
+    # Add headline
+    markdown.append(f"# {article_data.get('headline', 'Unknown Headline')}\n")
+    
+    # Add metadata
+    markdown.append(f"*By {article_data.get('author', 'Unknown Author')}*")
+    markdown.append(f"*{article_data.get('date', 'Unknown Date')}*\n")
+    
+    # Add image if available
+    if image_path:
+        # Convert absolute path to relative path for markdown
+        relative_image_path = os.path.relpath(image_path, os.path.dirname(article_data.get('markdown_path', '')))
+        markdown.append(f"![Article Image]({relative_image_path})\n")
+    
+    # Add content
+    content = article_data.get('text', '')
+    if content:
+        # Split content into paragraphs and add proper spacing
+        paragraphs = content.split('\n\n')
+        markdown.extend([p.strip() + '\n' for p in paragraphs if p.strip()])
+    
+    # Add source and URL
+    markdown.append(f"\n---\n*Source: {article_data.get('source', 'Unknown Source')}*")
+    markdown.append(f"*Original URL: {article_data.get('url', 'Unknown URL')}*")
+    
+    return '\n'.join(markdown)
+
+def download_image(image_url: str, output_dir: str) -> Optional[str]:
+    """
+    Download an image from URL and save it locally
+    
+    Args:
+        image_url (str): URL of the image to download
+        output_dir (str): Directory to save the image in
+        
+    Returns:
+        str: Path to the downloaded image, or None if download failed
+    """
+    try:
+        # Create output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Generate filename from URL
+        parsed_url = urlparse(image_url)
+        filename = os.path.basename(parsed_url.path)
+        if not filename:
+            filename = f"image_{int(time.time())}.jpg"
+        
+        # Download image
+        response = requests.get(image_url, stream=True, timeout=10)
+        response.raise_for_status()
+        
+        # Save image
+        output_path = os.path.join(output_dir, filename)
+        with open(output_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
+        logger.info(f"Successfully downloaded image to {output_path}")
+        return output_path
+        
+    except Exception as e:
+        logger.error(f"Failed to download image: {str(e)}")
+        return None
+
 def extract_from_url(url):
     """
     Extract article content from a given URL
@@ -625,7 +701,7 @@ def extract_from_url(url):
         
         logger.info("Article extraction completed successfully")
         
-        # After successful extraction, create the newspaper clipping
+        # Create the article data dictionary
         article_data = {
             "success": True,
             "headline": headline_text,
@@ -637,11 +713,44 @@ def extract_from_url(url):
             "image_url": image_url,
         }
         
-        # Generate the enhanced newspaper clipping
-        clipping_image = create_newspaper_clipping(article_data)
-        if clipping_image:
-            article_data["clipping_image"] = clipping_image
-            
+        # Create a more descriptive filename
+        # Format: YYYYMMDD_Source_Headline.md
+        date_str = datetime.now().strftime('%Y%m%d')
+        
+        # Clean and format the source
+        clean_source = source.replace('.', '_').replace('-', '_')
+        
+        # Clean and format the headline
+        safe_headline = re.sub(r'[^\w\s-]', '', headline_text)
+        safe_headline = re.sub(r'\s+', '_', safe_headline)
+        safe_headline = safe_headline[:50]  # Allow longer headlines but still limit length
+        
+        # Create the filename
+        markdown_filename = f"{date_str}_{clean_source}_{safe_headline}.md"
+        
+        # Create output directory if it doesn't exist
+        os.makedirs('extracted_articles', exist_ok=True)
+        markdown_path = os.path.join('extracted_articles', markdown_filename)
+        
+        # Add markdown path to article data before generating content
+        article_data["markdown_path"] = markdown_path
+        
+        # Download image if available
+        image_path = None
+        if image_url:
+            # Create a directory for images
+            image_dir = os.path.join('extracted_images', source)
+            image_path = download_image(image_url, image_dir)
+        
+        # Generate markdown content
+        markdown_content = generate_markdown_content(article_data, image_path)
+        
+        # Save the complete markdown content
+        with open(markdown_path, 'w', encoding='utf-8') as f:
+            f.write(markdown_content)
+        
+        logger.info(f"Saved complete article content to {markdown_path}")
+        
         return article_data
         
     except requests.RequestException as e:

@@ -254,6 +254,7 @@ class BatchProcessor:
                     self.content = ""
                     self.image_data = None
                     self.metadata = {}
+                    self.markdown_path = None
                     
             return SimpleResult(
                 success=False,
@@ -299,6 +300,7 @@ class BatchProcessor:
                 self.content = ""
                 self.image_data = None
                 self.metadata = {}
+                self.markdown_path = None
         
         try:
             # Use existing URL extractor for non-newspapers.com URLs
@@ -312,6 +314,8 @@ class BatchProcessor:
                 simple_result.date = result.get('date', datetime.now().strftime('%Y-%m-%d'))
                 simple_result.content = result.get('text', '')
                 simple_result.image_data = result.get('clipping_image')
+                logger.info(f"Markdown path in batch processor: {result.get('markdown_path')}")
+                simple_result.markdown_path = result.get('markdown_path')
                 simple_result.metadata = {
                     'url': url,
                     'extraction_method': 'general',

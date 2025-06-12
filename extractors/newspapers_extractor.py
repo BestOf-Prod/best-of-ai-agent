@@ -1,10 +1,13 @@
+# newspapers_extractor.py
+# Complete Newspaper.com Scraping Suite with Auto Cookie Extraction
+
 import streamlit as st
 import requests
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.support import expected_conditions as EC
 import cv2
 import pytesseract
@@ -28,10 +31,9 @@ from bs4 import BeautifulSoup
 import signal
 import threading
 import queue
-import random
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -51,348 +53,22 @@ class ClippingResult:
     filename: str
     bounding_box: Tuple[int, int, int, int]
 
-class EnhancedSeleniumLoginManager:
-    """Enhanced Selenium login manager with better authentication handling"""
+class SeleniumLoginManager:
+    """Handle direct login authentication using Selenium"""
     
     def __init__(self):
-        self.driver = None  # Keep driver instance for session reuse
+        self.driver = None
         self.cookies = {}
         self.last_login = None
         self.login_credentials = None
         self.is_replit = 'REPL_ID' in os.environ or 'REPL_SLUG' in os.environ
-        self.auth_data = {}  # Store complete authentication data
     
     def set_credentials(self, email: str, password: str):
         """Set login credentials"""
         self.login_credentials = {'email': email, 'password': password}
-
-    def perform_human_like_login(self, email: str, password: str) -> bool:
-        """Perform enhanced human-like login sequence with robust verification"""
-        try:
-            # Start from main page to establish session context
-            logger.info("Loading main page to establish session...")
-            self.driver.get('https://www.newspapers.com/')
-            time.sleep(random.uniform(2, 4))  # Random delay for human-like behavior
-            
-            # Navigate to login page directly
-            logger.info("Navigating directly to login page...")
-            self.driver.get('https://www.newspapers.com/signin/')
-            time.sleep(random.uniform(2, 4))
-            
-            # Debug: Print page source to console in Replit
-            if self.is_replit:
-                # Also try to find all input elements
-                logger.info("=== All Input Elements ===")
-                inputs = self.driver.find_elements(By.TAG_NAME, "input")
-                for input_elem in inputs:
-                    input_type = input_elem.get_attribute("type")
-                    input_id = input_elem.get_attribute("id")
-                    input_name = input_elem.get_attribute("name")
-                    logger.info(f"Input found - Type: {input_type}, ID: {input_id}, Name: {input_name}")
-                logger.info("=== End Input Elements ===")
-            
-            # Wait for login form with multiple strategies
-            try:
-                email_selectors = ["#email", "input[name='email']", "input[type='email']"]
-                email_field = None
-                
-                for selector in email_selectors:
-                    try:
-                        logger.info(f"Trying to find email field with selector: {selector}")
-                        email_field = WebDriverWait(self.driver, 20).until(
-                            EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                        )
-                        logger.info(f"Found email field with selector: {selector}")
-                        break
-                    except Exception as e:
-                        logger.warning(f"Failed to find email field with selector {selector}: {str(e)}")
-                        continue
-                
-                if not email_field:
-                    logger.error("Could not find email field with any selector")
-                    if self.is_replit:
-                        # In Replit, try to find any input field as fallback
-                        logger.info("Trying fallback: finding any input field")
-                        all_inputs = self.driver.find_elements(By.TAG_NAME, "input")
-                        for input_elem in all_inputs:
-                            input_type = input_elem.get_attribute("type")
-                            if input_type in ["email", "text"]:
-                                email_field = input_elem
-                                logger.info(f"Found fallback input field of type: {input_type}")
-                                break
-                    
-                    if not email_field:
-                        if not self.is_replit:
-                            self._save_debug_html_simple()
-                        return False
-                
-                password_selectors = ["#password", "input[name='password']", "input[type='password']"]
-                password_field = None
-                
-                for selector in password_selectors:
-                    try:
-                        password_field = self.driver.find_element(By.CSS_SELECTOR, selector)
-                        logger.info(f"Found password field with selector: {selector}")
-                        break
-                    except Exception as e:
-                        logger.warning(f"Failed to find password field with selector {selector}: {str(e)}")
-                        continue
-                
-                if not password_field:
-                    logger.error("Could not find password field")
-                    if self.is_replit:
-                        # In Replit, try to find any password input as fallback
-                        logger.info("Trying fallback: finding any password input")
-                        all_inputs = self.driver.find_elements(By.TAG_NAME, "input")
-                        for input_elem in all_inputs:
-                            input_type = input_elem.get_attribute("type")
-                            if input_type == "password":
-                                password_field = input_elem
-                                logger.info("Found fallback password field")
-                                break
-                    
-                    if not password_field:
-                        if not self.is_replit:
-                            self._save_debug_html_simple()
-                        return False
-                    
-                logger.info("Login form fields found successfully")
-                
-            except Exception as e:
-                logger.error(f"Failed to find login form: {str(e)}")
-                if not self.is_replit:
-                    self._save_debug_html_simple()
-                return False
-            
-            # Clear and fill form fields with human-like behavior
-            try:
-                email_field.click()
-                time.sleep(random.uniform(0.3, 0.7))
-                email_field.clear()
-                time.sleep(random.uniform(0.3, 0.7))
-                
-                # Type email slowly
-                for char in email:
-                    email_field.send_keys(char)
-                    time.sleep(random.uniform(0.05, 0.1))
-                
-                time.sleep(random.uniform(1, 2))
-                
-                password_field.click()
-                time.sleep(random.uniform(0.3, 0.7))
-                password_field.clear()
-                time.sleep(random.uniform(0.3, 0.7))
-                
-                # Type password slowly
-                for char in password:
-                    password_field.send_keys(char)
-                    time.sleep(random.uniform(0.05, 0.1))
-                
-                time.sleep(random.uniform(1.5, 2.5))
-                logger.info("Form filled successfully")
-                
-            except Exception as e:
-                logger.error(f"Failed to fill login form: {str(e)}")
-                if not self.is_replit:
-                    self._save_debug_html_simple()
-                return False
-            
-            # Submit form with multiple strategies
-            try:
-                submit_selectors = [
-                    "input[type='submit']",
-                    "button[type='submit']", 
-                    "button:contains('Sign In')",
-                    ".btn-primary",
-                    "#signin-button",
-                    "form button"
-                ]
-                
-                submit_clicked = False
-                for selector in submit_selectors:
-                    try:
-                        if ":contains" in selector:
-                            submit_button = self.driver.find_element(By.XPATH, "//button[contains(text(), 'Sign In') or contains(text(), 'Log In') or contains(text(), 'Submit')]")
-                        else:
-                            submit_button = self.driver.find_element(By.CSS_SELECTOR, selector)
-                        
-                        if submit_button and submit_button.is_enabled():
-                            submit_button.click()
-                            logger.info(f"Clicked submit button with selector: {selector}")
-                            submit_clicked = True
-                            break
-                    except:
-                        continue
-                
-                if not submit_clicked:
-                    try:
-                        password_field.submit()
-                        logger.info("Submitted form via password field")
-                        submit_clicked = True
-                    except:
-                        pass
-                
-                if not submit_clicked:
-                    try:
-                        password_field.send_keys(Keys.RETURN)
-                        logger.info("Pressed Enter in password field")
-                        submit_clicked = True
-                    except:
-                        pass
-                
-                if not submit_clicked:
-                    logger.error("Could not submit login form with any method")
-                    if not self.is_replit:
-                        self._save_debug_html_simple()
-                    return False
-                
-            except Exception as e:
-                logger.error(f"Failed to submit login form: {str(e)}")
-                if not self.is_replit:
-                    self._save_debug_html_simple()
-                return False
-            
-            # Wait for login to complete with enhanced verification
-            try:
-                time.sleep(random.uniform(2, 4))
-                
-                # Check if redirected away from login page
-                current_url = self.driver.current_url.lower()
-                if "login" in current_url or "signin" in current_url:
-                    logger.error("Still on login page after submission")
-                    if not self.is_replit:
-                        self._save_debug_html_simple()
-                    return False
-                
-                # Verify premium access by checking a known premium page
-                logger.info("Verifying premium access...")
-                test_premium_url = "https://www.newspapers.com/image/635076099/"
-                self.driver.get(test_premium_url)
-                time.sleep(random.uniform(3, 5))
-                
-                paywall_indicators = [
-                    'you need a subscription',
-                    'start a 7-day free trial', 
-                    'subscribe to view',
-                    'sign in to view this page',
-                    'subscription required'
-                ]
-                
-                page_content = self.driver.page_source.lower()
-                if any(indicator in page_content for indicator in paywall_indicators):
-                    logger.error("Premium access not granted - paywall detected")
-                    if not self.is_replit:
-                        self._save_debug_html_simple()
-                    return False
-                
-                # Check for premium content indicators
-                premium_indicators = ['image-viewer', 'newspaper-image', 'clip', 'print', 'download']
-                if not any(indicator in page_content for indicator in premium_indicators):
-                    logger.error("Premium content not found on test page")
-                    if not self.is_replit:
-                        self._save_debug_html_simple()
-                    return False
-                
-                logger.info("Premium access verified successfully")
-                
-                # After verifying premium access
-                logger.info("Capturing additional JavaScript tokens...")
-                try:
-                    js_tokens = self.driver.execute_script("""
-                        return {
-                            'ncom': window.ncom || {},
-                            'page': window.page || {},
-                            'csrf': document.querySelector('meta[name="csrf-token"]')?.content || null
-                        };
-                    """)
-                    self.auth_data['js_tokens'] = js_tokens
-                    logger.debug(f"Captured JS tokens: {js_tokens}")
-                except Exception as e:
-                    logger.warning(f"Failed to capture JS tokens: {e}")
-                
-            except Exception as e:
-                logger.error(f"Error verifying login status: {str(e)}")
-                if not self.is_replit:
-                    self._save_debug_html_simple()
-                return False
-            
-            # Additional wait for session setup
-            time.sleep(random.uniform(3, 5))
-            
-            # Verify user authentication
-            try:
-                user_data = self.driver.execute_script("return window.ncom ? window.ncom.user : null;")
-                if user_data and user_data != 'null' and user_data != 0:
-                    logger.info(f"Successfully authenticated as user: {user_data}")
-                    return True
-                else:
-                    logger.warning(f"User data not found: {user_data}")
-                    return True  # Proceed anyway, as premium access was verified
-                
-            except Exception as e:
-                logger.warning(f"Could not verify user authentication: {str(e)}")
-                return True
-                
-        except Exception as e:
-            logger.error(f"Enhanced login sequence failed: {str(e)}")
-            self._save_debug_html_simple()
-            return False
-
-    def extract_complete_authentication_data(self):
-        auth_data = {}
-        
-        try:
-            auth_data['cookies'] = self.driver.get_cookies()
-            auth_data['ncom'] = self.driver.execute_script("return window.ncom || {};")
-            auth_data['page'] = self.driver.execute_script("return window.page || {};")
-            
-            auth_data['localStorage'] = self.driver.execute_script("""
-                var ls = {};
-                for (var i = 0; i < localStorage.length; i++) {
-                    var key = localStorage.key(i);
-                    ls[key] = localStorage.getItem(key);
-                }
-                return ls;
-            """)
-            
-            auth_data['sessionStorage'] = self.driver.execute_script("""
-                var ss = {};
-                for (var i = 0; i < sessionStorage.length; i++) {
-                    var key = sessionStorage.key(i);
-                    ss[key] = sessionStorage.getItem(key);
-                }
-                return ss;
-            """)
-            
-            # Capture additional tokens
-            auth_data['js_tokens'] = self.driver.execute_script("""
-                return {
-                    'csrf': document.querySelector('meta[name="csrf-token"]')?.content || null,
-                    'session_id': window.sessionId || null,
-                    'auth_token': window.authToken || null
-                };
-            """)
-            
-            auth_data['timestamp'] = datetime.now().isoformat()
-            
-            # Log for debugging
-            logger.debug(f"Auth data: cookies={len(auth_data['cookies'])}, "
-                        f"localStorage={auth_data['localStorage']}, "
-                        f"sessionStorage={auth_data['sessionStorage']}, "
-                        f"js_tokens={auth_data['js_tokens']}")
-            
-            return auth_data
-            
-        except Exception as e:
-            logger.error(f"Error extracting authentication data: {str(e)}")
-            return {}
-
-    def setup_enhanced_chrome_options(self):
-        """Chrome options specifically for Replit DevToolsActivePort fix"""
-        from selenium.webdriver.chrome.options import Options
-        chrome_options = Options()
-
-        # Set up Chrome options
+    
+    def _initialize_chrome_driver(self):
+        """Initialize Chrome driver with standard settings."""
         chrome_options = Options()
         chrome_options.add_argument('--headless=new')
         chrome_options.add_argument('--no-sandbox')
@@ -402,633 +78,314 @@ class EnhancedSeleniumLoginManager:
         chrome_options.add_argument('--disable-extensions')
         chrome_options.add_argument('--disable-popup-blocking')
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-
-        # Add additional options for Replit environment
-        if self.is_replit:
-            chrome_options.binary_location = '/nix/store/zi4f80l169xlmivz8vja8wlphq74qqk0-chromium-125.0.6422.141/bin/chromium'
-
-            chrome_options.add_argument('--disable-setuid-sandbox')
-            chrome_options.add_argument('--single-process')
-            chrome_options.add_argument('--no-zygote')
-            chrome_options.add_argument('--disable-dev-shm-usage')
-            chrome_options.add_argument('--disable-software-rasterizer')
-            chrome_options.add_argument('--disable-extensions')
-            chrome_options.add_argument('--disable-gpu-sandbox')
-            chrome_options.add_argument('--disable-accelerated-2d-canvas')
-            chrome_options.add_argument('--disable-accelerated-jpeg-decoding')
-            chrome_options.add_argument('--disable-accelerated-mjpeg-decode')
-            chrome_options.add_argument('--disable-accelerated-video-decode')
-            chrome_options.add_argument('--disable-accelerated-video')
-            chrome_options.add_argument('--disable-webgl')
-            chrome_options.add_argument('--disable-webgl2')
-            chrome_options.add_argument('--disable-features=site-per-process')
-        else:
-            # Add additional options for local environment
-            chrome_options.add_argument('--remote-debugging-port=9222')
-            chrome_options.add_argument('--disable-web-security')
-            chrome_options.add_argument('--allow-running-insecure-content')
-            chrome_options.add_argument('--disable-features=IsolateOrigins,site-per-process')
-
-        # Common settings
-        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-
-        return chrome_options
-
-    # ENHANCED LOGIN METHOD with better error handling and cleanup
+        chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36')
+        chrome_options.add_argument('--lang=en-US')
+        
+        try:
+            self.driver = webdriver.Chrome(options=chrome_options)
+            self.driver.set_page_load_timeout(30)
+            return True
+        except WebDriverException as e:
+            logger.error(f"Failed to initialize Chrome driver: {str(e)}")
+            st.error(f"Failed to initialize web browser. Please ensure Chrome is installed and updated, or check Replit environment configuration: {str(e)}")
+            return False
 
     def login(self) -> bool:
-        """Enhanced login with Replit-specific startup handling"""
-        if not self.login_credentials:
-            logger.error("No login credentials set")
+        """Perform login using Selenium."""
+        if not self.login_credentials and not self.cookies:
+            logger.error("No login credentials or cookies set.")
             return False
 
-        # Clean up any existing processes first
-        self.cleanup_chrome_processes()
-
-        try:
-            # Prepare temp directories for Chrome
-            if self.is_replit:
-                import os
-                import shutil
-
-                # Create/clean temp directories
-                temp_dirs = [
-                    '/tmp/chrome-user-data',
-                    '/tmp/chrome-data', 
-                    '/tmp/chrome-cache',
-                    '/tmp/chrome-crashes'
-                ]
-
-                for temp_dir in temp_dirs:
-                    try:
-                        if os.path.exists(temp_dir):
-                            shutil.rmtree(temp_dir)
-                        os.makedirs(temp_dir, mode=0o777)
-                        logger.debug(f"Created temp directory: {temp_dir}")
-                    except Exception as e:
-                        logger.warning(f"Could not create temp dir {temp_dir}: {e}")
-
-            # Initialize Chrome with enhanced options
-            if not self.driver:
-                logger.info("Initializing Chrome with DevToolsActivePort fix...")
-
-                chrome_options = self.setup_enhanced_chrome_options()
-
-                if self.is_replit:
-                    # Use standard webdriver with explicit service
-                    from selenium.webdriver.chrome.service import Service
-
-                    # Create service with explicit arguments
-                    service = Service(
-                        '/nix/store/3qnxr5x6gw3k9a9i7d0akz0m6bksbwff-chromedriver-125.0.6422.141/bin/chromedriver',
-                        log_path='/tmp/chromedriver.log'
-                    )
-
-                    # Add service arguments for stability
-                    service.creation_flags = 0
-
-                    logger.info("Starting Chrome with Replit-optimized service...")
-
-                    # Set environment variables for Chrome
-                    os.environ['DISPLAY'] = ':99'  # Virtual display
-                    os.environ['CHROME_DEVEL_SANDBOX'] = '/tmp/chrome_sandbox'
-
-                    self.driver = webdriver.Chrome(service=service, options=chrome_options)
-
-                    # Set very long timeouts for Replit
-                    self.driver.set_page_load_timeout(300)  # 5 minutes
-                    self.driver.implicitly_wait(60)         # 1 minute
-
-                else:
-                    # Local environment
-                    from undetected_chromedriver import Chrome
-                    self.driver = Chrome(options=chrome_options)
-                    self.driver.set_page_load_timeout(30)
-                    self.driver.implicitly_wait(10)
-
-            # Test Chrome with minimal load
-            logger.info("Testing Chrome startup...")
-            try:
-                # Try the simplest possible operation
-                self.driver.execute_script("return 'Chrome is running';")
-                logger.info("Chrome startup test passed")
-
-                # Try loading a simple page
-                self.driver.get('data:text/html,<html><body>Test</body></html>')
-                logger.info("Chrome can load pages")
-
-            except Exception as e:
-                logger.error(f"Chrome startup test failed: {e}")
-                return False
-
-            # Proceed with login
-            logger.info("Chrome stable - starting login process...")
-            login_success = self.perform_minimal_login(
-                self.login_credentials['email'], 
-                self.login_credentials['password']
-            )
-
-            return login_success
-
-        except Exception as e:
-            logger.error(f"Login initialization failed: {str(e)}")
-            self.cleanup_chrome_processes()
-            return False
-
-    def cleanup_chrome_processes(self):
-        """Enhanced cleanup for Replit"""
-        try:
-            # Close driver
-            if hasattr(self, 'driver') and self.driver:
-                try:
-                    self.driver.quit()
-                except:
-                    pass
-                self.driver = None
-
-            # Kill Chrome processes in Replit
-            if self.is_replit:
-                import os
-                import time
-
-                # Kill Chrome and ChromeDriver processes
-                kill_commands = [
-                    "pkill -f chromium",
-                    "pkill -f chrome",
-                    "pkill -f chromedriver",
-                    "killall chromium",
-                    "killall chrome",
-                    "killall chromedriver"
-                ]
-
-                for cmd in kill_commands:
-                    try:
-                        os.system(f"{cmd} 2>/dev/null")
-                    except:
-                        pass
-
-                # Clean up temp directories
-                cleanup_commands = [
-                    "rm -rf /tmp/chrome-*",
-                    "rm -rf /tmp/.com.google.Chrome.*",
-                    "rm -f /tmp/chromedriver.log"
-                ]
-
-                for cmd in cleanup_commands:
-                    try:
-                        os.system(f"{cmd} 2>/dev/null")
-                    except:
-                        pass
-
-                time.sleep(2)  # Wait for cleanup
-
-            logger.info("Chrome cleanup completed")
-
-        except Exception as e:
-            logger.warning(f"Error during Chrome cleanup: {e}")
-
-    def perform_minimal_login(self, email: str, password: str) -> bool:
-        """Minimal login process for maximum stability"""
-        try:
-            logger.info("Starting minimal login process...")
-
-            # Go directly to login page
-            try:
-                logger.info("Navigating to login page...")
-                self.driver.get('https://www.newspapers.com/signin/')
-                
-                # Wait for login form with shorter timeout
-                WebDriverWait(self.driver, 20).until(
-                    lambda driver: driver.execute_script("return document.readyState") == "complete"
-                )
-                
-                # Brief wait for dynamic content
-                time.sleep(2)  # Increased wait for Replit
-
-            except Exception as e:
-                logger.error(f"Failed to load login page: {e}")
-                return False
-
-            # Find and fill login form with optimized selectors
-            try:
-                logger.info("Looking for login form...")
-
-                # Try most common selectors first
-                email_selectors = ["#email", "input[name='email']", "input[type='email']"]
-                password_selectors = ["#password", "input[name='password']", "input[type='password']"]
-                
-                # Find email field with shorter timeout
-                email_field = None
-                for selector in email_selectors:
-                    try:
-                        email_field = WebDriverWait(self.driver, 10).until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                        )
-                        logger.info(f"Found email field with selector: {selector}")
-                        break
-                    except:
-                        continue
-
-                if not email_field:
-                    logger.error("Could not find email field")
-                    return False
-
-                # Find password field with shorter timeout
-                password_field = None
-                for selector in password_selectors:
-                    try:
-                        password_field = WebDriverWait(self.driver, 10).until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                        )
-                        logger.info(f"Found password field with selector: {selector}")
-                        break
-                    except:
-                        continue
-
-                if not password_field:
-                    logger.error("Could not find password field")
-                    return False
-
-                # Fill form fields with explicit waits
-                try:
-                    # Clear and fill email
-                    email_field.clear()
-                    time.sleep(0.5)
-                    email_field.send_keys(email)
-                    time.sleep(1)  # Increased wait for Replit
-                    
-                    # Clear and fill password
-                    password_field.clear()
-                    time.sleep(0.5)
-                    password_field.send_keys(password)
-                    time.sleep(1)  # Increased wait for Replit
-                    
-                    logger.info("Form fields filled successfully")
-                except Exception as e:
-                    logger.error(f"Failed to fill form fields: {e}")
-                    return False
-
-                # Try multiple submission methods
-                submission_success = False
-                
-                # Method 1: Try form submit
-                try:
-                    logger.info("Attempting form submit...")
-                    password_field.submit()
-                    submission_success = True
-                    logger.info("Form submitted successfully")
-                except Exception as e:
-                    logger.warning(f"Form submit failed: {e}")
-
-                # Method 2: Try Enter key
-                if not submission_success:
-                    try:
-                        logger.info("Attempting Enter key submit...")
-                        password_field.send_keys(Keys.RETURN)
-                        submission_success = True
-                        logger.info("Enter key submit successful")
-                    except Exception as e:
-                        logger.warning(f"Enter key submit failed: {e}")
-
-                # Method 3: Try JavaScript submit
-                if not submission_success:
-                    try:
-                        logger.info("Attempting JavaScript submit...")
-                        self.driver.execute_script("arguments[0].form.submit();", password_field)
-                        submission_success = True
-                        logger.info("JavaScript submit successful")
-                    except Exception as e:
-                        logger.warning(f"JavaScript submit failed: {e}")
-
-                if not submission_success:
-                    logger.error("All submission methods failed")
-                    return False
-
-                # Wait for login completion with multiple checks
-                try:
-                    logger.info("Waiting for login completion...")
-                    
-                    # Wait for URL change
-                    # Wait for URL change
-                    WebDriverWait(self.driver, 20).until(
-                        lambda driver: "login" not in driver.current_url.lower()
-                    )
-                    
-                    # Print page content for verification
-                    logger.info("Page content after login:")
-                    logger.info(self.driver.page_source)
-                    
-                    # Additional wait for page load
-                    time.sleep(3)  # Increased wait for Replit
-                    
-                    # Check for error messages
-                    error_elements = self.driver.find_elements(By.CSS_SELECTOR, ".error, .alert-danger, [class*='error']")
-                    if error_elements:
-                        error_text = " ".join([elem.text for elem in error_elements if elem.text.strip()])
-                        logger.error(f"Login error detected: {error_text}")
-                        return False
-                    
-                    logger.info("Login redirect successful")
-                except Exception as e:
-                    logger.error(f"Login completion check failed: {e}")
-                    return False
-
-                # Verify login success
-                try:
-                    # Check for premium access
-                    test_url = "https://www.newspapers.com/image/635076099/"
-                    self.driver.get(test_url)
-                    
-                    # Wait for page load with shorter timeout
-                    WebDriverWait(self.driver, 20).until(
-                        lambda driver: driver.execute_script("return document.readyState") == "complete"
-                    )
-                    
-                    # Check for paywall indicators
-                    page_content = self.driver.page_source.lower()
-                    paywall_indicators = ['you need a subscription', 'start a 7-day free trial', 'subscribe to view']
-                    
-                    if any(indicator in page_content for indicator in paywall_indicators):
-                        logger.error("Premium access not granted")
-                        return False
-                        
-                    logger.info("Login successful")
-                    return True
-
-                except Exception as e:
-                    logger.error(f"Failed to verify login: {e}")
-                    return False
-
-            except Exception as e:
-                logger.error(f"Login form error: {e}")
-                return False
-
-        except Exception as e:
-            logger.error(f"Login process failed: {e}")
-            return False
-            
-    def cleanup(self):
-        """Clean up Selenium driver"""
         if self.driver:
             try:
                 self.driver.quit()
-            except:
-                pass
-            self.driver = None
+                self.driver = None
+            except Exception as e:
+                logger.warning(f"Failed to quit existing driver gracefully: {e}")
 
-    def refresh_if_needed(self) -> bool:
-        """Check if session needs refreshing"""
-        if not self.last_login or (datetime.now() - self.last_login > timedelta(hours=6)):
-            logger.info("Session expired or not initialized, refreshing login...")
-            return self.login()
-        return True
-    
-    def _save_debug_html_simple(self):
-        """Save debug HTML for troubleshooting"""
+        if not self._initialize_chrome_driver():
+            return False
+
         try:
-            debug_dir = "debug_html"
-            os.makedirs(debug_dir, exist_ok=True)
-            
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f"login_debug_{timestamp}.html"
-            filepath = os.path.join(debug_dir, filename)
-            
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(self.driver.page_source)
-            
-            logger.info(f"Saved login debug HTML to: {filepath}")
-            
-            # Also log current URL and title
-            logger.info(f"Current URL: {self.driver.current_url}")
-            logger.info(f"Page title: {self.driver.title}")
-            
-        except Exception as e:
-            logger.error(f"Failed to save debug HTML: {e}")
+            # If we have cookies, go directly to home page and verify authentication
+            if self.cookies:
+                logger.info("Cookies provided, verifying authentication from home page...")
+                self.driver.get('https://www.newspapers.com/')
+                
+                # Add cookies to the driver
+                for name, value in self.cookies.items():
+                    try:
+                        cookie_domain = '.newspapers.com'
+                        self.driver.add_cookie({'name': name, 'value': value, 'domain': cookie_domain, 'path': '/'})
+                    except Exception as e:
+                        logger.warning(f"Could not add cookie {name} to driver: {e}")
+                
+                # Refresh page to apply cookies
+                self.driver.refresh()
+                
+                # Wait for the 'ncom' object and its 'isloggedin' property to be accessible and true
+                try:
+                    WebDriverWait(self.driver, 30).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "span.MemberNavigation_Subscription__RU0Cu"))
+                    )
+                    logger.info("Authentication verified via cookies: Subscription element found.")
+                    return True
+                except TimeoutException:
+                    logger.warning("Cookie-based authentication verification timed out.")
+                    return False
+                
+            # If no cookies or cookie verification failed, proceed with standard login
+            logger.info("Navigating to login page...")
+            self.driver.get('https://www.newspapers.com/signin/')
 
-class EnhancedAutoCookieManager:
-    """Enhanced cookie manager with improved authentication"""
+            # Wait for either (1) email field to appear OR (2) Cloudflare CAPTCHA to appear
+            try:
+                WebDriverWait(self.driver, 20).until(
+                    EC.presence_of_element_located((By.ID, "email"))
+                )
+                logger.info("Login page loaded and email field found.")
+                # At this point, check for Cloudflare specific elements if they are present alongside the form
+                if self._is_cloudflare_captcha_present():
+                    logger.warning("Cloudflare CAPTCHA detected after page load.")
+                    st.error("Cloudflare CAPTCHA detected. Automated login is blocked. Manual intervention or anti-captcha service needed.")
+                    self._save_debug_html(self.driver, "cloudflare_captcha_present_on_load")
+                    return False
+
+            except TimeoutException:
+                # This could mean CAPTCHA immediately appeared and prevented form loading
+                logger.warning("Email field not found within timeout. Checking for immediate Cloudflare redirect/block.")
+                if self._is_cloudflare_captcha_present():
+                    logger.error("Cloudflare CAPTCHA immediately blocked page load. Cannot proceed.")
+                    st.error("Cloudflare CAPTCHA immediately blocked access. This is a hard block.")
+                    self._save_debug_html(self.driver, "cloudflare_captcha_immediate_block")
+                    return False
+                else:
+                    logger.error("Email field not found and no Cloudflare CAPTCHA. Page structure might have changed or unexpected error.")
+                    self._save_debug_html(self.driver, "email_field_not_found_no_captcha")
+                    return False
+
+            email_field = self.driver.find_element(By.ID, "email")
+            password_field = self.driver.find_element(By.ID, "password")
+
+            email_field.clear()
+            password_field.clear()
+
+            email_field.send_keys(self.login_credentials['email'])
+            time.sleep(1)
+            password_field.send_keys(self.login_credentials['password'])
+            time.sleep(1)
+            
+            # Check for Cloudflare "Verify you are human" checkbox BEFORE clicking submit
+            cloudflare_checkbox_selector = 'label.cf-turnstile-label' # Common selector for the label next to the checkbox
+            if self.driver.find_elements(By.CSS_SELECTOR, cloudflare_checkbox_selector):
+                logger.warning("Cloudflare 'Verify you are human' checkbox detected before submit. Automated login is blocked.")
+                st.error("Cloudflare 'Verify you are human' checkbox detected. Automated login is blocked.")
+                self._save_debug_html(self.driver, "cloudflare_captcha_before_submit")
+                return False
+
+            logger.info("Login form filled. Looking for Newspapers.com sign in button...")
+            submit_button = self.driver.find_element(By.CSS_SELECTOR, 'button[title="Sign in with Newspapers.com"]')
+            logger.info("Found Newspapers.com sign in button. Clicking...")
+            submit_button.click()
+
+            # Wait for login success
+            login_successful = False
+            try:
+                # Wait for either successful login indicators or error messages
+                WebDriverWait(self.driver, 30).until(
+                    lambda d: (
+                        d.execute_script("return window.ncom && window.ncom.statsiguser && window.ncom.statsiguser.custom && window.ncom.statsiguser.custom.isloggedin;") or
+                        "incorrect email or password" in d.page_source.lower() or
+                        "invalid login" in d.page_source.lower()
+                    )
+                )
+                
+                # Check if login was successful
+                login_successful = self.driver.execute_script("return window.ncom && window.ncom.statsiguser && window.ncom.statsiguser.custom && window.ncom.statsiguser.custom.isloggedin;")
+                
+                if login_successful:
+                    logger.info("Login successful: isloggedin flag is true.")
+                else:
+                    logger.warning("Login failed: isloggedin flag is false.")
+
+            except TimeoutException:
+                logger.warning("Login timed out during post-submission wait or 'isloggedin' check.")
+                # Attempt to check if an error message for incorrect credentials appeared
+                if "incorrect email or password" in self.driver.page_source.lower() or \
+                   "invalid login" in self.driver.page_source.lower():
+                    st.error("Login failed: Incorrect email or password. Please verify your credentials.")
+                elif self._is_cloudflare_captcha_present(): # Check for CAPTCHA after timeout
+                    logger.error("Cloudflare CAPTCHA detected after login attempt. This is the blocker.")
+                    st.error("Cloudflare CAPTCHA detected. Automated login is blocked after submission.")
+                else:
+                    st.error("Login timed out: Could not determine status after submission. The page might be loading slowly or encountering a dynamic challenge.")
+
+                self._save_debug_html(self.driver, "login_failure_timeout") # Save debug HTML on any login failure
+                return False
+
+            if not login_successful:
+                logger.error("Selenium auto-authentication failed: Login status inconclusive after wait.")
+                self._save_debug_html(self.driver, "login_inconclusive")
+                return False
+
+            time.sleep(7) # Keep this to allow all JS to settle
+
+            self.cookies = self.driver.get_cookies() # Retrieve all cookies *after* successful login and page load
+            # Convert to dictionary for easier use
+            self.cookies = {cookie['name']: cookie['value'] for cookie in self.cookies}
+
+            if not self.cookies:
+                logger.warning("No cookies found after successful login attempt via Selenium. This is unusual but might happen if cookies are HttpOnly.")
+                # If 'isloggedin' is true, and no cookies are found, it's a very rare edge case.
+                # For now, if 'isloggedin' is true, we consider it a success even without cookies, as the driver is authenticated.
+                if not self.driver.execute_script("return window.ncom && window.ncom.statsiguser && window.ncom.statsiguser.custom && window.ncom.statsiguser.custom.isloggedin;"):
+                     return False # If 'isloggedin' is false, it's definitely a failure
+                else:
+                     logger.info("Proceeding without explicit cookies, 'isloggedin' is true.")
+
+            self.last_login = datetime.now()
+            logger.info(f"Selenium login completed. Extracted {len(self.cookies)} cookies.")
+            return True
+
+        except Exception as e:
+            logger.error(f"Selenium login process failed unexpectedly: {str(e)}", exc_info=True)
+            st.error(f"An unexpected error occurred during Newspapers.com login: {str(e)}")
+            self._save_debug_html(self.driver, "login_unexpected_error")
+            return False
+        finally:
+            # The driver is kept open here and handled by the AutoCookieManager or subsequent calls.
+            pass
+
+    def _is_cloudflare_captcha_present(self) -> bool:
+        """Checks for common Cloudflare CAPTCHA elements."""
+        try:
+            # Check for the cf-turnstile iframe or its parent container
+            if self.driver.find_elements(By.CSS_SELECTOR, 'iframe[src*="challenges.cloudflare.com/turnstile"]'):
+                logger.debug("Cloudflare Turnstile iframe found.")
+                return True
+            if self.driver.find_elements(By.ID, 'cf-challenge-body') or \
+               self.driver.find_elements(By.CLASS_NAME, 'cf-turnstile'):
+                logger.debug("Cloudflare challenge body or turnstile element found.")
+                return True
+            # Check for the "Verify you are human" text
+            if "verify you are human" in self.driver.page_source.lower():
+                logger.debug("Cloudflare 'verify you are human' text found in page source.")
+                return True
+            return False
+        except Exception as e:
+            logger.warning(f"Error checking for Cloudflare CAPTCHA elements: {e}")
+            return False
+
+class AutoCookieManager:
+    """Automatically extract and manage cookies from user's browser, preferring Selenium login."""
     
     def __init__(self):
         self.cookies = {}
         self.session = requests.Session()
         self.last_extraction = None
-        self.selenium_login = EnhancedSeleniumLoginManager()
-        self.auth_headers = {}  # Store additional headers from storage
-        self.is_replit = 'REPL_ID' in os.environ or 'REPL_SLUG' in os.environ
+        self.selenium_login_manager = SeleniumLoginManager() # Renamed to avoid confusion
         
     def set_login_credentials(self, email: str, password: str):
         """Set login credentials for Selenium authentication"""
-        self.selenium_login.set_credentials(email, password)
+        self.selenium_login_manager.set_credentials(email, password)
         
-    def auto_extract_cookies(self, domain: str = "newspapers.com") -> bool:
-        try:
-            if self.selenium_login.login():
-                self.cookies = self.selenium_login.cookies
-                self.last_extraction = datetime.now()
+    def auto_authenticate(self) -> bool:
+        """Attempt to authenticate using Selenium login."""
+        logger.info("Attempting auto-authentication via Selenium login.")
+        
+        # If we have cookies, pass them to the SeleniumLoginManager
+        if self.cookies:
+            logger.info(f"Using provided cookies for authentication. Cookie count: {len(self.cookies)}")
+            logger.debug(f"Cookie names: {list(self.cookies.keys())}")
+            self.selenium_login_manager.cookies = self.cookies
+            
+        if self.selenium_login_manager.login():
+            self.cookies = self.selenium_login_manager.cookies
+            self.last_extraction = datetime.now()
 
-                self.session.cookies.clear()
-                auth_data = self.selenium_login.auth_data
-                
-                # Log auth data for debugging
-                logger.debug(f"Captured auth data: cookies={len(auth_data.get('cookies', []))}, "
-                            f"localStorage={auth_data.get('localStorage', {})}, "
-                            f"sessionStorage={auth_data.get('sessionStorage', {})}")
-                
-                # Set cookies
-                for cookie in auth_data.get('cookies', []):
-                    try:
-                        self.session.cookies.set(
-                            cookie['name'],
-                            cookie['value'],
-                            domain=cookie.get('domain', '.newspapers.com'),
-                            path=cookie.get('path', '/'),
-                            secure=cookie.get('secure', False)
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to set cookie {cookie['name']}: {e}")
-
-                # Use localStorage and sessionStorage for headers
-                for storage in [auth_data.get('localStorage', {}), auth_data.get('sessionStorage', {})]:
-                    for key, value in storage.items():
-                        self.auth_headers[f'X-{key}'] = value
-                
-                logger.info(f"Session cookies: {len(self.session.cookies.get_dict())}")
-                
-                try:
-                    with open('enhanced_auth_data.json', 'w') as f:
-                        json.dump(auth_data, f, indent=2, default=str)
-                    logger.info("Saved enhanced authentication data")
-                except Exception as e:
-                    logger.warning(f"Could not save auth data: {e}")
-
-                st.success("✅ Successfully logged in with enhanced authentication")
-                return True
-
-            if not self.is_replit:
-                logger.warning("Selenium login failed")
-            else:
-                logger.warning("Selenium login failed, falling back to browser cookies")
-                return self._extract_browser_cookies(domain)
-
-        except Exception as e:
-            logger.error(f"Cookie extraction failed: {str(e)}")
-            return self._extract_browser_cookies(domain)
-    
-    def _extract_browser_cookies(self, domain: str) -> bool:
-        """Fallback to extract cookies from browser"""
-        try:
-            if not self.is_replit:
-                cookies = browser_cookie3.chrome(domain_name=domain)
-                self.cookies = {cookie.name: cookie.value for cookie in cookies}
-                self.session.cookies.clear()
-                for name, value in self.cookies.items():
-                    self.session.cookies.set(name, value)
-                self.last_extraction = datetime.now()
-                st.success(f"✅ Extracted {len(self.cookies)} cookies from browser")
-                return True
-            else:
-                return False
-        except Exception as e:
-            logger.error(f"Browser cookie extraction failed: {e}")
-            st.error("❌ Could not extract cookies from browser")
-            return False
-    
-    def test_authentication(self, test_url: str = "https://www.newspapers.com/") -> bool:
-        """Test authentication with robust checks"""
-        try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                **self.auth_headers
-            }
-
+            # Transfer Selenium cookies to requests.Session
             self.session.cookies.clear()
             for name, value in self.cookies.items():
-                self.session.cookies.set(name, value)
-
-            logger.info(f"Testing authentication with {len(self.cookies)} cookies")
-            response = self.session.get(test_url, headers=headers, timeout=15)
-
-            if response.status_code == 200:
-                content = response.text.lower()
-                
-                auth_checks = {
-                    'has_logout': 'logout' in content,
-                    'has_account': 'account' in content or 'profile' in content,
-                    'has_subscription': 'subscription' in content or 'premium' in content,
-                    'not_login_page': 'sign-in' not in response.url and 'login' not in response.url,
-                    'no_login_form': 'id="email"' not in content or 'signin' not in content
-                }
-                
-                user_id = None
-                user_id_patterns = [
-                    r'"user":(\d+)',
-                    r'"userID":"(\d+)"',
-                    r'"userId":(\d+)',
-                    r'user_id["\']:\s*["\']?(\d+)'
-                ]
-                
-                for pattern in user_id_patterns:
-                    match = re.search(pattern, content)
-                    if match and match.group(1) != '0' and match.group(1) != 'null':
-                        user_id = match.group(1)
-                        break
-                
-                auth_checks['has_user_id'] = user_id is not None
-                positive_indicators = sum(1 for check, result in auth_checks.items() if result)
-                
-                logger.info(f"Authentication check results: {auth_checks}")
-                logger.info(f"Positive indicators: {positive_indicators}/6")
-                
-                if positive_indicators >= 4:
-                    st.success("🔓 Authentication verified - Premium access detected")
-                    return True
-                elif positive_indicators >= 2:
-                    st.warning("⚠️ Partial authentication detected")
-                    return True
-                else:
-                    st.error("❌ Authentication verification failed")
-                    return False
-            else:
-                st.error(f"❌ Authentication failed - HTTP {response.status_code}")
-                return False
-                
-        except Exception as e:
-            st.error(f"❌ Authentication test failed: {str(e)}")
-            return False
+                # Add domain and path for robustness, though requests usually handles it
+                self.session.cookies.set(name, value, domain=".newspapers.com", path="/")
+            logger.info(f"Transferred {len(self.cookies)} cookies to requests.Session.")
+            return True
+        logger.error("Selenium auto-authentication failed.")
+        return False
     
-    def test_premium_access(self, test_url: str = "https://www.newspapers.com/image/635076099/") -> bool:
-        try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': 'https://www.newspapers.com/',
-                **self.auth_headers
-            }
-
-            response = self.session.get(test_url, headers=headers, timeout=15)
+    def test_authentication(self, test_url: str = "https://www.newspapers.com/") -> bool:
+        """Test if extracted cookies provide valid authentication using Selenium."""
+        # Use the Selenium driver directly for robust authentication check, especially for JS state
+        if not self.selenium_login_manager.driver:
+            logger.warning("No active Selenium driver for authentication test. Attempting to re-initialize.")
+            if not self.selenium_login_manager._initialize_chrome_driver():
+                logger.error("Failed to initialize driver for authentication test.")
+                return False
+            # If a new driver is initialized, ensure cookies are loaded into it.
+            driver = self.selenium_login_manager.driver
+            driver.get('https://www.newspapers.com/') # Go to base domain to set cookies
             
-            if response.status_code == 200:
-                content = response.text.lower()
-                
-                paywall_indicators = [
-                    'you need a subscription',
-                    'start a 7-day free trial', 
-                    'subscribe to view',
-                    'sign in to view this page',
-                    'subscription required',
-                    'publisher extra'
-                ]
-                
-                has_paywall = any(indicator in content for indicator in paywall_indicators)
-                
-                # Stricter content check
-                required_indicators = [
-                    '"imageid":635076099',  # Confirm article ID
-                    'wfmimagepath'  # Confirm image metadata
-                ]
-                
-                has_content = all(indicator in content for indicator in required_indicators)
-                
-                if not has_paywall and has_content:
-                    logger.info("Premium page access confirmed with article content")
-                    return True
-                elif has_paywall:
-                    logger.warning(f"Premium page shows paywall: {paywall_indicators}")
-                    return False
-                else:
-                    logger.warning("Premium page lacks required article content")
-                    return False
-                    
-            else:
-                logger.error(f"Premium page returned HTTP {response.status_code}")
+            if not self.cookies:
+                logger.error("No cookies available for authentication test")
                 return False
                 
+            logger.info(f"Adding {len(self.cookies)} cookies to driver for authentication test")
+            for name, value in self.cookies.items():
+                try:
+                    cookie_domain = '.newspapers.com'
+                    driver.add_cookie({'name': name, 'value': value, 'domain': cookie_domain, 'path': '/'})
+                    logger.debug(f"Added cookie: {name}")
+                except Exception as e:
+                    logger.warning(f"Could not add cookie {name} to driver for test: {e}")
+            time.sleep(2) # Give browser a moment to apply cookies
+
+        driver = self.selenium_login_manager.driver
+
+        try:
+            logger.info(f"Testing authentication by accessing {test_url} with Selenium.")
+            driver.get(test_url)
+
+            # Wait for the 'ncom' object and its 'isloggedin' property to be accessible and true
+            WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "span.MemberNavigation_Subscription__RU0Cu"))
+            )
+            logger.info("Authentication verified: window.ncom.statsiguser.custom.isloggedin is true.")
+            return True
+
+        except TimeoutException:
+            logger.warning("Selenium authentication test timed out: 'isloggedin' flag not true.")
+            self.selenium_login_manager._save_debug_html(driver, "auth_test_failure_timeout")
+            return False
         except Exception as e:
-            logger.error(f"Premium access test failed: {str(e)}")
+            logger.error(f"Selenium authentication test failed due to exception: {str(e)}", exc_info=True)
+            self.selenium_login_manager._save_debug_html(driver, "auth_test_failure_exception")
             return False
     
     def refresh_cookies_if_needed(self) -> bool:
-        """Refresh cookies if needed"""
-        if not self.last_extraction or (datetime.now() - self.last_extraction > timedelta(hours=6)):
-            st.info("🔄 Refreshing cookies")
-            return self.auto_extract_cookies()
+        """Check if cookies need refreshing and do so automatically."""
+        if not self.last_extraction or datetime.now() - self.last_extraction > timedelta(hours=3): # Reduced refresh interval
+            logger.info("Cookies are old or not present, re-authenticating.")
+            if not self.auto_authenticate():
+                st.error("Failed to re-authenticate. Please check credentials in sidebar.")
+                return False
         
-        if not self.test_authentication() or not self.test_premium_access():
-            st.info("🔄 Refreshing expired cookies")
-            return self.auto_extract_cookies()
+        if not self.test_authentication():
+            logger.warning("Existing cookies failed authentication test, re-authenticating.")
+            if not self.auto_authenticate():
+                st.error("Failed to re-authenticate after test failure. Please check credentials in sidebar.")
+                return False
         
+        logger.info("Authentication is current and valid.")
         return True
-
-    def cleanup(self):
-        """Clean up resources"""
-        self.selenium_login.cleanup()
 
 class NewspaperImageProcessor:
     """Advanced image processing for newspaper clippings"""
     
     def __init__(self):
-        self.min_article_area = 30000
-        self.text_confidence_threshold = 30
+        self.min_article_area = 30000  # Minimum area for article detection
+        self.text_confidence_threshold = 30  # Minimum OCR confidence
     
     def enhance_image_quality(self, image: Image.Image) -> Image.Image:
         """Enhance image quality for better OCR"""
@@ -1042,7 +399,9 @@ class NewspaperImageProcessor:
         image = enhancer.enhance(1.2)
         
         img_array = np.array(image)
+        
         denoised = cv2.fastNlMeansDenoising(img_array)
+        
         binary = cv2.adaptiveThreshold(
             denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
         )
@@ -1057,6 +416,7 @@ class NewspaperImageProcessor:
         gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
         
         edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+        
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
         morphed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
         
@@ -1064,7 +424,7 @@ class NewspaperImageProcessor:
             morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
         
-        logger.info(f"Found {len(contours)} total contours")
+        logger.info(f"Found {len(contours)} total contours.")
         
         article_regions = []
         min_area = 5000
@@ -1074,6 +434,7 @@ class NewspaperImageProcessor:
             
             if area > min_area:
                 x, y, w, h = cv2.boundingRect(contour)
+                
                 padding = 10
                 x = max(0, x - padding)
                 y = max(0, y - padding)
@@ -1081,6 +442,7 @@ class NewspaperImageProcessor:
                 h = min(image.height - y, h + 2 * padding)
                 
                 aspect_ratio = h / w if w > 0 else 0
+                
                 if 0.1 < aspect_ratio < 10.0 and w > 100 and h > 100:
                     article_regions.append((x, y, w, h))
                     logger.debug(f"Contour {i}: area={area}, bbox=({x},{y},{w},{h}), aspect={aspect_ratio:.2f}")
@@ -1088,7 +450,8 @@ class NewspaperImageProcessor:
                     logger.debug(f"Rejected contour {i}: area={area}, bbox=({x},{y},{w},{h}), aspect={aspect_ratio:.2f}")
         
         if len(article_regions) < 3:
-            logger.info("Few regions found, trying grid approach")
+            logger.info("Few regions found with edge detection, trying simpler grid approach.")
+            
             grid_regions = []
             
             for rows, cols in [(2, 2), (3, 3), (4, 4)]:
@@ -1101,16 +464,17 @@ class NewspaperImageProcessor:
                         y = row * cell_height
                         w = cell_width
                         h = cell_height
+                        
                         if w > 200 and h > 200:
                             grid_regions.append((x, y, w, h))
             
-            logger.info(f"Generated {len(grid_regions)} grid regions")
+            logger.info(f"Generated {len(grid_regions)} grid regions.")
             article_regions.extend(grid_regions)
         
         article_regions.sort(key=lambda r: r[2] * r[3], reverse=True)
         final_regions = article_regions[:20]
         
-        logger.info(f"Returning {len(final_regions)} article regions")
+        logger.info(f"Returning {len(final_regions)} article regions for processing.")
         return final_regions
     
     def extract_text_with_confidence(self, image: Image.Image, region: Tuple[int, int, int, int]) -> Tuple[str, float]:
@@ -1121,6 +485,7 @@ class NewspaperImageProcessor:
         try:
             cropped = image.crop((x, y, x + w, y + h))
             logger.debug(f"Cropped region to size: {cropped.size}")
+            
             enhanced = self.enhance_image_quality(cropped)
             logger.debug(f"Enhanced image for OCR, mode: {enhanced.mode}")
             
@@ -1131,56 +496,67 @@ class NewspaperImageProcessor:
                 logger.error(f"Tesseract not available: {e}")
                 return "", 0.0
             
-            result_queue = queue.Queue()
-            exception_queue = queue.Queue()
-            
-            def ocr_worker():
-                try:
-                    data = pytesseract.image_to_data(
-                        enhanced, 
-                        output_type=pytesseract.Output.DICT,
-                        config='--psm 6'
-                    )
-                    result_queue.put(data)
-                except Exception as e:
-                    exception_queue.put(e)
-            
-            ocr_thread = threading.Thread(target=ocr_worker)
-            ocr_thread.daemon = True
-            ocr_thread.start()
-            ocr_thread.join(timeout=15.0)
-            
-            if ocr_thread.is_alive():
-                logger.warning(f"OCR timed out for region {region}")
+            try:
+                result_queue = queue.Queue()
+                exception_queue = queue.Queue()
+                
+                def ocr_worker():
+                    try:
+                        logger.debug("Starting OCR extraction...")
+                        data = pytesseract.image_to_data(
+                            enhanced, 
+                            output_type=pytesseract.Output.DICT,
+                            config='--psm 6'
+                        )
+                        logger.debug("OCR extraction completed successfully")
+                        result_queue.put(data)
+                    except Exception as e:
+                        exception_queue.put(e)
+                
+                ocr_thread = threading.Thread(target=ocr_worker)
+                ocr_thread.daemon = True
+                ocr_thread.start()
+                
+                ocr_thread.join(timeout=15.0)
+                
+                if ocr_thread.is_alive():
+                    logger.warning(f"OCR extraction timed out for region {region}")
+                    return "", 0.0
+                
+                if not exception_queue.empty():
+                    ocr_exception = exception_queue.get()
+                    logger.error(f"Error during OCR: {ocr_exception}")
+                    return "", 0.0
+                
+                if result_queue.empty():
+                    logger.error("OCR completed but no result available")
+                    return "", 0.0
+                
+                data = result_queue.get()
+                
+                confidences = [int(conf) for conf in data['conf'] if int(conf) > self.text_confidence_threshold]
+                words = [word for word, conf in zip(data['text'], data['conf']) if int(conf) > self.text_confidence_threshold]
+                
+                logger.debug(f"Found {len(words)} words above confidence threshold {self.text_confidence_threshold}")
+                
+                if not words:
+                    logger.debug("No words found above confidence threshold")
+                    return "", 0.0
+                
+                text = ' '.join(words)
+                avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+                
+                logger.debug(f"Extracted text preview: '{text[:100]}...' with confidence {avg_confidence:.1f}")
+                return text.strip(), avg_confidence
+                
+            except Exception as e:
+                logger.error(f"Unexpected error during OCR: {e}")
                 return "", 0.0
-            
-            if not exception_queue.empty():
-                ocr_exception = exception_queue.get()
-                logger.error(f"OCR error: {ocr_exception}")
-                return "", 0.0
-            
-            if result_queue.empty():
-                logger.error("OCR completed but no result")
-                return "", 0.0
-            
-            data = result_queue.get()
-            confidences = [int(conf) for conf in data['conf'] if int(conf) > self.text_confidence_threshold]
-            words = [word for word, conf in zip(data['text'], data['conf']) if int(conf) > self.text_confidence_threshold]
-            
-            logger.debug(f"Found {len(words)} words above confidence threshold")
-            if not words:
-                logger.debug("No words found above confidence threshold")
-                return "", 0.0
-            
-            text = ' '.join(words)
-            avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-            
-            logger.debug(f"Extracted text preview: '{text[:100]}...' with confidence {avg_confidence:.1f}")
-            return text.strip(), avg_confidence
-            
+                
         except Exception as e:
-            logger.error(f"OCR extraction failed: {e}")
+            logger.error(f"OCR extraction failed: {e}", exc_info=True)
             return "", 0.0
+
 
 class ContentAnalyzer:
     """Analyze article content for relevance and sentiment"""
@@ -1193,10 +569,11 @@ class ContentAnalyzer:
             'basketball': ['basketball', 'court', 'dunk', 'three-pointer', 'nba', 'playoffs'],
             'positive': ['victory', 'win', 'champion', 'success', 'triumph', 'achievement', 'record', 'award', 'outstanding', 'excellent']
         }
+        
         self.negative_indicators = ['loss', 'defeat', 'injury', 'suspension', 'scandal', 'controversy', 'arrest', 'fired', 'benched']
     
     def analyze_sports_relevance(self, text: str) -> Tuple[bool, float, List[str]]:
-        """Determine if text is sports-related"""
+        """Determine if text is sports-related and get relevance score"""
         text_lower = text.lower()
         words = re.findall(r'\b\w+\b', text_lower)
         
@@ -1209,15 +586,18 @@ class ContentAnalyzer:
             total_matches += len(matches)
         
         relevance_score = min(total_matches / max(len(words), 1) * 10, 1.0)
+        
         is_sports_related = relevance_score > 0.1 and total_matches >= 2
         
         return is_sports_related, relevance_score, sport_matches
     
     def check_player_mentions(self, text: str, player_name: str) -> Tuple[bool, List[str]]:
-        """Check for player name mentions"""
+        """Check for player name mentions and variations"""
         text_lower = text.lower()
         player_lower = player_name.lower()
+        
         name_parts = player_lower.split()
+        
         mentions = []
         
         if player_lower in text_lower:
@@ -1227,6 +607,8 @@ class ContentAnalyzer:
             last_name = name_parts[-1]
             if last_name in text_lower and len(last_name) > 2:
                 mentions.append(last_name)
+        
+        if len(name_parts) > 1:
             first_last_initial = f"{name_parts[0]} {name_parts[-1][0]}"
             if first_last_initial in text_lower:
                 mentions.append(first_last_initial)
@@ -1234,8 +616,9 @@ class ContentAnalyzer:
         return len(mentions) > 0, mentions
     
     def analyze_sentiment(self, text: str, player_name: str) -> Tuple[float, str]:
-        """Analyze sentiment of article"""
+        """Analyze sentiment of article regarding the player"""
         text_lower = text.lower()
+        
         positive_count = sum(1 for word in self.sports_keywords['positive'] if word in text_lower)
         negative_count = sum(1 for word in self.negative_indicators if word in text_lower)
         
@@ -1276,7 +659,9 @@ class ContentAnalyzer:
         }
         
         is_relevant = sentiment_score >= -0.1
+        
         return is_relevant, analysis
+
 
 class StorageManager:
     """Manage storage and retrieval of clipping results"""
@@ -1348,60 +733,79 @@ class StorageManager:
             logger.error(f"Failed to load clippings for {player_name}: {e}")
             return []
 
+
 class NewspapersComExtractor:
-    """Main scraper class"""
+    """Main scraper class that coordinates all components"""
     
     def __init__(self, auto_auth: bool = True):
-        self.cookie_manager = EnhancedAutoCookieManager()
+        self.cookie_manager = AutoCookieManager()
         self.image_processor = NewspaperImageProcessor()
         self.content_analyzer = ContentAnalyzer()
         self.results = []
         self.auto_auth = auto_auth
         
     def initialize(self, email: str = None, password: str = None) -> bool:
-        """Initialize the scraper"""
         st.info("🔍 Setting up Newspapers.com authentication...")
         
         if email and password:
             self.cookie_manager.set_login_credentials(email, password)
         
-        if not self.cookie_manager.auto_extract_cookies():
-            st.error("Failed to authenticate. Please check your credentials or browser login.")
+        # If we have cookies in the cookie manager, they should be used first
+        if self.cookie_manager.cookies:
+            logger.info("Using existing cookies for authentication")
+            if self.cookie_manager.test_authentication():
+                st.success("✅ Authentication successful using provided cookies!")
+                return True
+            else:
+                logger.warning("Cookie-based authentication failed, falling back to standard login")
+                st.warning("⚠️ Cookie-based authentication failed, attempting standard login...")
+        
+        # If no cookies or cookie authentication failed, try standard login
+        if not self.cookie_manager.auto_authenticate():
+            st.error("Failed to authenticate. Please check your login credentials.")
             return False
         
-        if not self.cookie_manager.test_premium_access():
-            st.error("Premium access not detected. Please ensure your account has premium access.")
+        # Test authentication right after auto_authenticate to confirm
+        if not self.cookie_manager.test_authentication():
+            st.error("Authentication test failed even after login. Please check credentials or try again.")
             return False
         
-        return self.cookie_manager.test_authentication()
+        return True
     
     def get_authentication_status(self) -> Dict:
-        """Get authentication status"""
         return {
             'initialized': bool(self.cookie_manager.cookies),
             'authenticated': self.cookie_manager.test_authentication(),
-            'premium_access': self.cookie_manager.test_premium_access(),
             'cookies_count': len(self.cookie_manager.cookies),
             'last_extraction': self.cookie_manager.last_extraction
         }
     
     def search_articles(self, query: str, date_range: Optional[str] = None, limit: int = 20) -> List[Dict]:
-        """Search for articles"""
         logger.info(f"Starting search for query: '{query}'")
+        logger.info(f"Date range: {date_range}")
+        logger.info(f"Result limit: {limit}")
+        
         try:
             if not self.cookie_manager.refresh_cookies_if_needed():
-                logger.error("Failed to refresh authentication cookies")
+                logger.error("Failed to refresh authentication cookies for search.")
                 return []
             
             encoded_query = query.replace(' ', '%20').replace('"', '%22')
             search_url = f"https://www.newspapers.com/search/"
-            params = {'query': query, 'sort': 'relevance'}
+            
+            params = {
+                'query': query,
+                'sort': 'relevance'
+            }
             
             if date_range and date_range != "Any":
                 if '-' in date_range:
                     start_year, end_year = date_range.split('-')
                     params['dr_year'] = f"{start_year}-01-01|{end_year}-12-31"
                     logger.info(f"Applied date filter: {params['dr_year']}")
+            
+            logger.info(f"Search URL: {search_url}")
+            logger.info(f"Search parameters: {params}")
             
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -1412,9 +816,9 @@ class NewspapersComExtractor:
                 'DNT': '1',
                 'Connection': 'keep-alive',
                 'Upgrade-Insecure-Requests': '1',
-                **self.cookie_manager.auth_headers
             }
             
+            logger.info("Sending search request...")
             response = self.cookie_manager.session.get(
                 search_url, 
                 params=params,
@@ -1426,19 +830,23 @@ class NewspapersComExtractor:
                 logger.error(f"Search request failed: HTTP {response.status_code}")
                 return []
             
+            logger.info(f"Search response received ({len(response.content)} bytes).")
+            
             articles = self._parse_search_results(response.text, limit)
-            logger.info(f"Parsed {len(articles)} articles")
+            logger.info(f"Parsed {len(articles)} articles from search results.")
+            
             return articles
             
         except Exception as e:
-            logger.error(f"Search failed: {str(e)}")
+            logger.error(f"Search failed: {str(e)}", exc_info=True)
             return []
     
     def _parse_search_results(self, html_content: str, limit: int) -> List[Dict]:
-        """Parse search results"""
-        logger.info("Parsing search results...")
+        logger.info("Parsing search results from HTML...")
+        
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
+            
             articles = []
             
             result_selectors = [
@@ -1453,7 +861,7 @@ class NewspapersComExtractor:
             for selector in result_selectors:
                 result_elements = soup.select(selector)
                 if result_elements:
-                    logger.info(f"Found {len(result_elements)} results using selector '{selector}'")
+                    logger.info(f"Found {len(result_elements)} results using selector '{selector}'.")
                     results_found = True
                     
                     for i, element in enumerate(result_elements[:limit]):
@@ -1461,18 +869,27 @@ class NewspapersComExtractor:
                             article = self._extract_article_from_element(element, i)
                             if article:
                                 articles.append(article)
+                                logger.debug(f"Extracted article {i+1}: {article.get('title', 'Unknown')[:50]}...")
                         except Exception as e:
                             logger.warning(f"Failed to extract article {i+1}: {e}")
+                            continue
                     break
             
             if not results_found:
-                logger.warning("No search results found")
+                logger.warning("No search results found with known selectors. Falling back to generic link parsing.")
                 article_links = soup.find_all('a', href=True)
+                logger.info(f"Fallback: found {len(article_links)} total links.")
+                
                 for i, link in enumerate(article_links[:limit]):
                     href = link.get('href', '')
                     if '/image/' in href or '/clip/' in href:
                         title = link.get_text(strip=True) or f"Article {i+1}"
-                        full_url = f"https://www.newspapers.com{href}" if href.startswith('/') else href
+                        
+                        if href.startswith('/'):
+                            full_url = f"https://www.newspapers.com{href}"
+                        else:
+                            full_url = href
+                        
                         article = {
                             'title': title,
                             'url': full_url,
@@ -1481,16 +898,19 @@ class NewspapersComExtractor:
                             'preview': title
                         }
                         articles.append(article)
+                        logger.debug(f"Fallback article {i+1}: {title[:50]}...")
+                        
+                        if len(articles) >= limit:
+                            break
             
-            logger.info(f"Parsed {len(articles)} articles")
+            logger.info(f"Successfully parsed {len(articles)} articles from search results.")
             return articles
             
         except Exception as e:
-            logger.error(f"Error parsing search results: {e}")
+            logger.error(f"Error parsing search results: {e}", exc_info=True)
             return []
     
     def _extract_article_from_element(self, element, index: int) -> Optional[Dict]:
-        """Extract article data from search result element"""
         try:
             title_selectors = ['h3', '.title', '.headline', 'a']
             title = "Unknown Title"
@@ -1504,7 +924,10 @@ class NewspapersComExtractor:
             link_elem = element.select_one('a[href]')
             if link_elem:
                 href = link_elem.get('href')
-                url = f"https://www.newspapers.com{href}" if href.startswith('/') else href
+                if href.startswith('/'):
+                    url = f"https://www.newspapers.com{href}"
+                else:
+                    url = href
             
             date_selectors = ['.date', '.published', '[data-date]']
             date = "Unknown"
@@ -1533,7 +956,7 @@ class NewspapersComExtractor:
                         break
             
             if not url:
-                logger.warning(f"No URL found for article {index+1}")
+                logger.warning(f"No URL found for article {index+1}.")
                 return None
             
             return {
@@ -1545,447 +968,624 @@ class NewspapersComExtractor:
             }
             
         except Exception as e:
-            logger.error(f"Error extracting article data: {e}")
+            logger.error(f"Error extracting article data from element: {e}")
             return None
     
     def extract_from_url(self, url: str, player_name: Optional[str] = None, extract_multi_page: bool = True) -> Dict:
-        max_retries = 2
-        for attempt in range(max_retries):
-            try:
-                if not self.cookie_manager.refresh_cookies_if_needed():
-                    logger.error("Failed to refresh authentication cookies")
-                    return {'success': False, 'error': "Authentication failed"}
-                
+        try:
+            if not self.cookie_manager.refresh_cookies_if_needed():
+                logger.error("Failed to refresh authentication cookies for article extraction.")
+                return {'success': False, 'error': "Authentication failed or expired. Please re-initialize."}
+            
+            # Determine if this is a Newspapers.com URL
+            is_newspapers_url = 'newspapers.com' in urlparse(url).netloc.lower()
+
+            response_text = None
+            if is_newspapers_url:
+                logger.info(f"Newspapers.com URL detected. Forcing content fetch via Selenium for URL: {url}")
+                html_content_from_selenium = self._get_page_content_with_selenium(url)
+                if not html_content_from_selenium:
+                    logger.error(f"Selenium failed to fetch content for Newspapers.com URL: {url} (paywall persistent or network issue).")
+                    return {'success': False, 'error': f"Failed to fetch Newspapers.com article content with Selenium: {url}"}
+                response_text = html_content_from_selenium
+            else:
+                # For non-Newspapers.com URLs, continue using requests.Session
                 headers = {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                     'Accept-Language': 'en-US,en;q=0.5',
                     'Accept-Encoding': 'gzip, deflate, br',
-                    'Referer': 'https://www.newspapers.com/',
                     'DNT': '1',
                     'Connection': 'keep-alive',
                     'Upgrade-Insecure-Requests': '1',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'same-origin',
-                    **self.cookie_manager.auth_headers
+                    'Referer': 'https://www.newspapers.com/'
                 }
                 
                 try:
+                    logger.info(f"Non-Newspapers.com URL detected. Attempting to fetch content using requests.Session for URL: {url}")
                     response = self.cookie_manager.session.get(url, headers=headers, timeout=30)
-                    if response.status_code == 200:
-                        logger.info("Fetched page using requests session")
-                        response_text = response.text
-                    else:
-                        logger.warning(f"Requests session hit paywall or redirect on attempt {attempt+1}")
-                        response_text = self._fetch_with_selenium(url)
-                        if not response_text:
-                            if attempt < max_retries - 1:
-                                logger.info("Retrying after Selenium failure...")
-                                self.cookie_manager.auto_extract_cookies()  # Force refresh
-                                continue
-                            return {'success': False, 'error': "Failed to fetch article with Selenium"}
-                except Exception as e:
-                    logger.warning(f"Requests session failed on attempt {attempt+1}: {e}")
-                    response_text = self._fetch_with_selenium(url)
-                    if not response_text:
-                        if attempt < max_retries - 1:
-                            logger.info("Retrying after Selenium failure...")
-                            self.cookie_manager.auto_extract_cookies()
+                    response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+                    response_text = response.text
+                    logger.info(f"Successfully fetched non-Newspapers.com page with requests ({len(response_text)} bytes).")
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"Failed to fetch non-Newspapers.com URL with requests: {str(e)}")
+                    return {'success': False, 'error': f"Failed to fetch non-Newspapers.com article: {str(e)}"}
+            
+            # Ensure response_text is available before proceeding
+            if response_text is None:
+                logger.error("No content fetched for URL, neither by Selenium nor Requests.")
+                return {'success': False, 'error': "Failed to fetch content for the given URL."}
+
+            # ... rest of the method (extract_image_metadata, all_images processing, etc.) remains the same ...
+
+            image_metadata = self._extract_image_metadata(response_text)
+            if not image_metadata:
+                logger.error("Failed to extract image metadata from page.")
+                return {'success': False, 'error': "Could not find image metadata in page."}
+            
+            image_metadata['url'] = url
+            logger.info(f"Extracted image metadata: {image_metadata}")
+            
+            all_images = []
+            base_image_id = image_metadata.get('image_id')
+            
+            if extract_multi_page and base_image_id:
+                logger.info("Searching for genuine multi-page article indicators...")
+                multi_page_data = self._find_multi_page_images(response_text, str(base_image_id))
+                
+                if multi_page_data:
+                    logger.info(f"Found {len(multi_page_data)} genuine additional pages.")
+                    
+                    for page_info in multi_page_data:
+                        additional_page_url = f"https://www.newspapers.com/image/{page_info['image_id']}/"
+                        page_metadata = image_metadata.copy()
+                        page_metadata['image_id'] = page_info['image_id']
+                        page_metadata['url'] = additional_page_url
+                        page_metadata['page_offset'] = page_info.get('page_offset', 0)
+                        page_metadata['source'] = page_info.get('source', 'multi-page detection')
+                        
+                        logger.info(f"Processing genuine additional page: image_id={page_info['image_id']}, URL={additional_page_url}")
+                        
+                        try:
+                            # IMPORTANT: Now, _download_newspaper_image MUST also use Selenium if fetching from newspapers.com
+                            # However, _download_newspaper_image already has a Selenium fallback, which is good.
+                            # We just need to ensure the _get_page_content_with_selenium is robust enough for metadata extraction.
+                            additional_image = self._download_newspaper_image(page_metadata)
+                            if additional_image:
+                                all_images.append({
+                                    'image': additional_image,
+                                    'metadata': page_metadata,
+                                    'page_number': len(all_images) + 2
+                                })
+                                logger.info(f"Successfully extracted additional page {len(all_images) + 1}: {additional_image.size}.")
+                            else:
+                                logger.warning(f"Failed to extract additional page with image_id {page_info['image_id']}.")
+                        except Exception as e:
+                            logger.warning(f"Error processing additional page {page_info['image_id']}: {e}")
                             continue
-                        return {'success': False, 'error': f"Failed to fetch article: {e}"}
-                
-                # Extract metadata from the response
-                metadata = self._extract_image_metadata(response_text)
-                metadata['url'] = url
-                if not metadata:
-                    logger.error("Failed to extract article metadata")
-                    return {'success': False, 'error': "Failed to extract article metadata"}
-                
-                # Download the newspaper image
-                image = self._download_newspaper_image(metadata)
-                if not image:
-                    logger.error("Failed to download article image")
-                    return {'success': False, 'error': "Failed to download article image"}
-                
-                # Process the image to find article regions
-                article_regions = self.image_processor.detect_article_regions(image)
-                if not article_regions:
-                    logger.error("No article regions found in image")
-                    return {'success': False, 'error': "No article regions found in image"}
-                
-                # Extract text from the first (largest) region
-                text, confidence = self.image_processor.extract_text_with_confidence(image, article_regions[0])
-                
-                # Analyze content if player name is provided
-                sentiment_score = 0.0
-                player_mentions = []
-                if player_name:
-                    is_relevant, analysis = self.content_analyzer.is_relevant_article(text, player_name)
-                    if is_relevant:
-                        sentiment_score = analysis.get('sentiment_score', 0.0)
-                        player_mentions = analysis.get('player_mentions', [])
-                
-                # Return the complete article data
-                return {
-                    'success': True,
-                    'headline': metadata.get('title', 'Unknown Title'),
-                    'source': metadata.get('publication_title', 'Unknown Source'),
-                    'date': metadata.get('date', 'Unknown Date'),
-                    'image_data': image,
-                    'content': text,
-                    'metadata': {
-                        'sentiment_score': sentiment_score,
-                        'player_mentions': player_mentions,
-                        'confidence': confidence,
-                        'location': metadata.get('location', 'Unknown Location'),
-                        'image_id': metadata.get('image_id'),
-                        'url': url
-                    }
-                }
-                
-            except Exception as e:
-                logger.error(f"Error processing article page on attempt {attempt+1}: {e}")
-                if attempt < max_retries - 1:
-                    logger.info("Retrying after error...")
-                    self.cookie_manager.auto_extract_cookies()
-                    continue
-                return {'success': False, 'error': str(e)}
-        return {'success': False, 'error': "Max retries exceeded"}
-    
-    def _fetch_with_selenium(self, url: str) -> Optional[str]:
-        logger.info(f"Fetching {url} with Selenium...")
-        try:
-            driver = self.cookie_manager.selenium_login.driver
+                else:
+                    logger.info("No genuine multi-page article found - processing as single page with multiple regions.")
             
-            # Apply cookies and storage
-            driver.get('https://www.newspapers.com/')
-            for name, value in self.cookie_manager.cookies.items():
+            logger.info("Downloading main newspaper image...")
+            # This call already correctly uses Selenium fallback in _download_newspaper_image
+            main_newspaper_image = self._download_newspaper_image(image_metadata)
+            if not main_newspaper_image:
+                logger.error("Failed to download main newspaper image.")
+                return {'success': False, 'error': "Failed to download newspaper image."}
+            
+            logger.info(f"Downloaded main newspaper image: {main_newspaper_image.size}")
+            
+            all_images.insert(0, {
+                'image': main_newspaper_image,
+                'metadata': image_metadata,
+                'page_number': 1
+            })
+            
+            if len(all_images) > 4:
+                logger.warning(f"Limiting image processing from {len(all_images)} to 4 images.")
+                all_images = all_images[:4]
+            
+            logger.info(f"Total images to process: {len(all_images)} (main + {len(all_images)-1} additional).")
+            
+            best_results = []
+            
+            for img_data in all_images:
+                img = img_data['image']
+                img_metadata = img_data['metadata']
+                page_num = img_data['page_number']
+                
+                logger.info(f"Processing page {page_num} of {len(all_images)}: {img.size}")
+                
                 try:
-                    driver.add_cookie({'name': name, 'value': value, 'domain': '.newspapers.com'})
+                    logger.info("Detecting article regions...")
+                    regions = self.image_processor.detect_article_regions(img)
+                    logger.info(f"Found {len(regions)} potential article regions on page {page_num}.")
+                    
+                    max_regions = 5 if len(all_images) == 1 else 3
+                    limited_regions = regions[:max_regions]
+                    if len(regions) > max_regions:
+                        logger.info(f"Limiting region processing from {len(regions)} to {max_regions} regions.")
+                    
+                    page_best_result = None
+                    page_best_score = 0
+                    
+                    for i, region in enumerate(limited_regions):
+                        logger.info(f"Processing page {page_num}, region {i+1}/{len(limited_regions)}: {region}")
+                        
+                        try:
+                            text, confidence = self.image_processor.extract_text_with_confidence(img, region)
+                            
+                            logger.info(f"Page {page_num}, region {i+1} OCR confidence: {confidence:.1f}%")
+                            
+                            if confidence < 30:
+                                logger.info(f"Skipping page {page_num}, region {i+1} due to low OCR confidence.")
+                                continue
+                            
+                            if player_name:
+                                is_relevant, analysis = self.content_analyzer.is_relevant_article(text, player_name)
+                                logger.info(f"Page {page_num}, region {i+1} relevance: relevant={is_relevant}.")
+                                
+                                if not is_relevant:
+                                    logger.info(f"Skipping page {page_num}, region {i+1} - not relevant to {player_name}.")
+                                    continue
+                                
+                                combined_score = analysis.get('sports_score', 0) + (confidence / 100)
+                                if combined_score > page_best_score:
+                                    page_best_score = combined_score
+                                    page_best_result = {
+                                        'region': region,
+                                        'text': text,
+                                        'confidence': confidence,
+                                        'analysis': analysis,
+                                        'page_number': page_num,
+                                        'image': img,
+                                        'metadata': img_metadata
+                                    }
+                                    logger.info(f"New best result for page {page_num} with score {combined_score:.3f}.")
+                            else:
+                                page_best_result = {
+                                    'region': region,
+                                    'text': text,
+                                    'confidence': confidence,
+                                    'analysis': {'sentiment_score': 0, 'player_mentions': []},
+                                    'page_number': page_num,
+                                    'image': img,
+                                    'metadata': img_metadata
+                                }
+                                logger.info(f"Using page {page_num}, region {i+1} as result (no player filter).")
+                                break # If no player name, first good OCR is enough
+                                
+                        except Exception as e:
+                            logger.warning(f"Error processing page {page_num}, region {i+1}: {e}")
+                            continue
+                    
+                    if page_best_result:
+                        best_results.append(page_best_result)
+                        logger.info(f"Added best result from page {page_num}.")
+                        
                 except Exception as e:
-                    logger.debug(f"Could not add cookie {name}: {e}")
+                    logger.error(f"Error processing page {page_num}: {e}")
+                    continue
             
-            # Apply localStorage and sessionStorage
-            auth_data = self.cookie_manager.selenium_login.auth_data
-            driver.execute_script("""
-                arguments[0].forEach(([key, value]) => localStorage.setItem(key, value));
-                arguments[1].forEach(([key, value]) => sessionStorage.setItem(key, value));
-            """, list(auth_data.get('localStorage', {}).items()), list(auth_data.get('sessionStorage', {}).items()))
+            if not best_results:
+                logger.warning("No relevant content found in any image/region.")
+                return {'success': False, 'error': "No relevant content found."}
             
-            driver.get(url)
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-            time.sleep(5)
+            # Select the overall best result
+            overall_best = max(best_results, key=lambda r: r['analysis'].get('sports_score', 0) + (r['confidence'] / 100))
+            logger.info(f"Selected overall best result from page {overall_best['page_number']}.")
             
-            paywall_indicators = [
-                'you need a subscription',
-                'start a 7-day free trial',
-                'sign in to view this page',
-                'already have an account',
-                'paywall',
-                'please sign in',
-                'log in to view',
-                'publisher extra'
-            ]
+            x, y, w, h = overall_best['region']
+            clipping = overall_best['image'].crop((x, y, x + w, y + h))
             
-            page_source = driver.page_source
-            if any(ind in page_source.lower() for ind in paywall_indicators):
-                logger.error(f"Paywall detected: {paywall_indicators}")
-                self._save_debug_html(driver, url)
-                return None
+            metadata = {
+                'title': image_metadata.get('title', 'Unknown Article'),
+                'date': image_metadata.get('date', datetime.now().strftime('%Y-%m-%d')),
+                'newspaper': image_metadata.get('publication_title', 'Unknown Newspaper'),
+                'location': image_metadata.get('location', 'Unknown Location'),
+                'url': url,
+                'sentiment_score': overall_best['analysis'].get('sentiment_score', 0),
+                'player_mentions': overall_best['analysis'].get('player_mentions', []),
+                'extraction_method': 'newspapers.com_enhanced',
+                'ocr_confidence': overall_best['confidence'],
+                'sports_score': overall_best['analysis'].get('sports_score', 0),
+                'word_count': len(overall_best['text'].split()),
+                'extraction_timestamp': datetime.now().isoformat(),
+                'total_pages_found': len(all_images),
+                'selected_page': overall_best['page_number'],
+                'all_pages_analyzed': len(best_results)
+            }
             
-            logger.info("Successfully fetched page with Selenium")
-            return page_source
+            logger.info(f"Successfully extracted content from {len(all_images)} pages, selected page {overall_best['page_number']}.")
+            
+            response = {
+                'success': True,
+                'headline': metadata['title'],
+                'source': metadata['newspaper'],
+                'date': metadata['date'],
+                'location': metadata['location'],
+                'content': overall_best['text'][:500] + "..." if len(overall_best['text']) > 500 else overall_best['text'],
+                'image_data': clipping,
+                'metadata': metadata,
+                'full_text': overall_best['text']
+            }
+            
+            if len(all_images) > 1:
+                response['multi_page_info'] = {
+                    'total_pages': len(all_images),
+                    'pages_with_content': len(best_results),
+                    'selected_page': overall_best['page_number'],
+                    'all_page_results': [
+                        {
+                            'page_number': r['page_number'],
+                            'confidence': r['confidence'],
+                            'text_preview': r['text'][:100] + "..." if len(r['text']) > 100 else r['text'],
+                            'sports_score': r['analysis'].get('sports_score', 0)
+                        }
+                        for r in best_results
+                    ]
+                }
+            
+            return response
             
         except Exception as e:
-            logger.error(f"Selenium fetch failed: {e}")
+            logger.error(f"Error processing article page: {e}", exc_info=True)
+            return {'success': False, 'error': str(e)}
+
+    def _get_page_content_with_selenium(self, url: str) -> Optional[str]:
+        """Fetches page HTML content using Selenium, leveraging existing authentication."""
+        driver = None
+        try:
+            # Re-use the driver from SeleniumLoginManager if it's still open, otherwise initialize a new one
+            if self.cookie_manager.selenium_login_manager.driver and \
+               self.cookie_manager.selenium_login_manager.driver.current_url != "data:,": # Check if driver is genuinely active
+                driver = self.cookie_manager.selenium_login_manager.driver
+                logger.info("Re-using existing Selenium driver for page content capture.")
+            else:
+                logger.info("Initializing new Selenium driver for page content capture and adding cookies.")
+                # Ensure the driver is initialized. If not, this call will initialize it.
+                if not self.cookie_manager.selenium_login_manager._initialize_chrome_driver():
+                    logger.error("Failed to initialize Chrome driver in _get_page_content_with_selenium.")
+                    return None
+                driver = self.cookie_manager.selenium_login_manager.driver
+                if not driver: return None
+
+                # Add stored cookies to the new driver BEFORE navigating to the target URL
+                driver.get('https://www.newspapers.com/') # Go to base domain to set cookies
+                for name, value in self.cookie_manager.cookies.items():
+                    try:
+                        # Selenium cookie domains are strict; ensure it matches the actual domain or is generic
+                        cookie_domain = '.newspapers.com' 
+                        driver.add_cookie({'name': name, 'value': value, 'domain': cookie_domain, 'path': '/'})
+                        logger.debug(f"Added cookie to new driver: {name}={value[:10]}...")
+                    except Exception as e:
+                        logger.warning(f"Could not add cookie {name} to new driver: {e}")
+                time.sleep(2) # Give browser a moment to apply cookies before navigation
+
+            logger.info(f"Loading target page with Selenium: {url}")
+            driver.get(url)
+            
+            # --- START REVISED WAIT CONDITIONS ---
+            # Wait for main page body to load, then for key elements of a logged-in page
+            WebDriverWait(driver, 60).until( # Increased to 60 seconds
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            
+            # Complex wait condition to ensure paywall is gone and content is loaded
+            WebDriverWait(driver, 60).until( # Increased to 60 seconds
+                EC.any_of(
+                    # Scenario 1: Paywall element becomes invisible
+                    EC.invisibility_of_element_located((By.XPATH, "//*[contains(text(), 'subscription') or contains(text(), 'sign in to view') or contains(text(), 'upgrade your access')]")),
+                    EC.invisibility_of_element_located((By.CSS_SELECTOR, '.paywall-modal, .subscription-overlay, .modal-dialog[aria-modal="true"]')),
+                    # Scenario 2: Article image/viewer is present and visible
+                    EC.visibility_of_element_located((By.CSS_SELECTOR, 'img[src*="img.newspapers.com"]')),
+                    EC.visibility_of_element_located((By.CSS_SELECTOR, '.newspaper-image-viewer')),
+                    # Scenario 3: Specific elements indicating logged-in state (e.g., account dropdown)
+                    EC.presence_of_element_located((By.CSS_SELECTOR, '.account-menu-link, .my-account-link, #user-tools-dropdown, .logout-button'))
+                )
+            )
+            time.sleep(10) # Final, longer wait for JS to render and paywall to truly vanish
+
+            # --- END REVISED WAIT CONDITIONS ---
+
+            # Check if an explicit paywall modal or overlay is still visible
+            # Added a stricter check for display: none style
+            if driver.find_elements(By.CSS_SELECTOR, '.paywall-modal[style*="display: block"], .subscription-overlay[style*="display: block"], .modal-dialog[aria-modal="true"][style*="display: block"]'):
+                 logger.warning("Selenium detected a persistent paywall modal/overlay after wait. Attempting to close it.")
+                 # Try to find and click a close button
+                 try:
+                     close_buttons = driver.find_elements(By.CSS_SELECTOR, '.close-button, .modal-close, [aria-label="Close"], .x-button, button[class*="close"]')
+                     for btn in close_buttons:
+                         if btn.is_displayed() and btn.is_enabled():
+                             btn.click()
+                             logger.info("Clicked a close button on paywall modal.")
+                             time.sleep(5) # Give more time for modal to disappear
+                             break
+                 except Exception as close_e:
+                     logger.warning(f"Failed to click close button: {close_e}")
+                 
+                 # Re-check for paywall indicators after attempting to close
+                 if any(ind in driver.page_source.lower() for ind in paywall_indicators) or \
+                    driver.find_elements(By.CSS_SELECTOR, '.paywall-modal[style*="display: block"], .subscription-overlay[style*="display: block"]'):
+                     logger.warning("Selenium still encountering paywall after attempting to close modal. This is a hard paywall.")
+                     self._save_debug_html(driver, url) # Save debug HTML if paywall persists
+                     return None # Indicate failure
+
+            page_html = driver.page_source
+            
+            # Final check for paywall indicators in the returned HTML (redundant but safe)
+            paywall_indicators_final = [
+                'you need a subscription', 'start a 7-day free trial', 'sign in to view this page',
+                'already have an account', 'paywall', 'please sign in', 'log in to view', 'upgrade your access',
+                'digital subscription', 'access to this content requires a subscription'
+            ]
+            is_paywalled_by_selenium = any(ind in page_html.lower() for ind in paywall_indicators_final)
+
+            if is_paywalled_by_selenium:
+                logger.warning("Selenium also encountered paywall after navigating to article and final checks.")
+                self._save_debug_html(driver, url) # Save debug HTML if paywall persists
+                return None # Indicate failure
+            
+            self._save_debug_html(driver, url) # Save debug HTML for inspection
+            logger.info(f"Selenium successfully captured HTML content: {len(page_html)} bytes.")
+            return page_html
+
+        except TimeoutException:
+            logger.error(f"Selenium page load/paywall disappearance timed out for URL: {url}. This indicates a persistent paywall or very slow loading.")
+            try:
+                if driver:
+                    self._save_debug_html(driver, url) # Save debug HTML on timeout
+            except Exception as debug_e:
+                logger.error(f"Failed to save debug HTML on timeout: {debug_e}")
             return None
-    
+        except Exception as e:
+            logger.error(f"Failed to capture page HTML with Selenium: {e}", exc_info=True)
+            # Add debug info if driver is available
+            try:
+                if driver:
+                    logger.info(f"Debug: Page source snippet: {driver.page_source[:500]}...")
+                    logger.info(f"Debug: Page title: {driver.title}")
+                    self._save_debug_html(driver, url) # Save debug HTML on unexpected error
+            except Exception as debug_e:
+                logger.error(f"Failed to get debug info: {debug_e}")
+            return None
+            
+        finally:
+            # We don't quit the driver here if it was reused from the login manager.
+            # The SeleniumLoginManager itself or a higher-level function in app.py should manage quitting the persistent driver.
+            # If a *new* driver was initialized within this method (which is the case if self.cookie_manager.selenium_login_manager.driver was not active), it should be quit.
+            if driver and driver is not self.cookie_manager.selenium_login_manager.driver:
+                try:
+                    driver.quit()
+                except:
+                    pass
+
     def _extract_image_metadata(self, page_content: str) -> Optional[Dict]:
-        """Extract image metadata"""
         logger.info("Parsing HTML for image metadata...")
+        
         try:
             image_data = {}
             
-            # First try to find the image data in the page's JavaScript
-            image_data_patterns = [
-                r'"image":\s*\{[^}]*"imageId":\s*(\d+)',
-                r'"imageId":\s*(\d+)',
-                r'data-image-id="(\d+)"',
-                r'data-imageid="(\d+)"'
-            ]
+            if match := re.search(r'"imageId":(\d+)', page_content):
+                image_data['image_id'] = int(match.group(1))
+                logger.info(f"Found image ID: {image_data['image_id']}")
             
-            for pattern in image_data_patterns:
-                if match := re.search(pattern, page_content):
-                    image_data['image_id'] = int(match.group(1))
-                    logger.info(f"Found image ID: {image_data['image_id']}")
-                    break
+            if match := re.search(r'"date":"([^"]+)"', page_content):
+                image_data['date'] = match.group(1)
             
-            # Extract other metadata using more robust patterns
-            metadata_patterns = {
-                'date': r'"date":\s*"([^"]+)"',
-                'publication_title': r'"publicationTitle":\s*"([^"]+)"',
-                'location': r'"location":\s*"([^"]+)"',
-                'title': r'"title":\s*"([^"]+)"',
-                'width': r'"width":\s*(\d+)',
-                'height': r'"height":\s*(\d+)',
-                'wfm_image_path': r'"wfmImagePath":\s*"([^"]+)"'
-            }
+            if match := re.search(r'"publicationTitle":"([^"]+)"', page_content):
+                image_data['publication_title'] = match.group(1)
             
-            for key, pattern in metadata_patterns.items():
-                if match := re.search(pattern, page_content):
-                    value = match.group(1)
-                    if key in ['width', 'height']:
-                        value = int(value)
-                    image_data[key] = value
-                    logger.debug(f"Found {key}: {value}")
+            if match := re.search(r'"location":"([^"]+)"', page_content):
+                image_data['location'] = match.group(1)
             
-            # Try to find the base image URL
-            base_url_patterns = [
-                r'"image":"([^"]+)"',
-                r'data-image-url="([^"]+)"',
-                r'data-src="([^"]+)"'
-            ]
+            if match := re.search(r'"title":"([^"]+)"', page_content):
+                image_data['title'] = match.group(1)
             
-            for pattern in base_url_patterns:
-                if match := re.search(pattern, page_content):
+            if match := re.search(r'"width":(\d+)', page_content):
+                image_data['width'] = int(match.group(1))
+            
+            if match := re.search(r'"height":(\d+)', page_content):
+                image_data['height'] = int(match.group(1))
+            
+            if match := re.search(r'"wfmImagePath":"([^"]+)"', page_content):
+                image_data['wfm_image_path'] = match.group(1)
+            
+            ncom_match = re.search(r'Object\.defineProperty\(window,\s*[\'"]ncom[\'"],\s*\{value:\s*Object\.freeze\(({.*?})\)', page_content, re.DOTALL)
+            if ncom_match:
+                ncom_content = ncom_match.group(1)
+                if match := re.search(r'"image":"([^"]+)"', ncom_content):
                     image_data['base_image_url'] = match.group(1)
-                    logger.debug(f"Found base image URL: {image_data['base_image_url']}")
-                    break
-            
-            if 'base_image_url' not in image_data:
+                    logger.info(f"Found base image URL: {image_data['base_image_url']}")
+            else:
                 image_data['base_image_url'] = 'https://img.newspapers.com'
+                logger.info("Using default base image URL.")
             
-            # Extract canonical URL
-            url_patterns = [
-                r'<link\s+rel="canonical"\s+href="([^"]+)"',
-                r'<meta\s+property="og:url"\s+content="([^"]+)"',
-                r'data-canonical-url="([^"]+)"'
-            ]
-            
-            for pattern in url_patterns:
-                if match := re.search(pattern, page_content):
-                    image_data['url'] = match.group(1)
-                    logger.debug(f"Found canonical URL: {image_data['url']}")
-                    break
-            
-            # Validate required fields
-            required_fields = ['image_id', 'title', 'date', 'publication_title']
-            missing_fields = [field for field in required_fields if field not in image_data]
-            
-            if missing_fields:
-                logger.warning(f"Missing required fields: {missing_fields}")
-                # Try to extract missing fields from HTML elements as fallback
-                soup = BeautifulSoup(page_content, 'html.parser')
-                
-                if 'title' in missing_fields:
-                    title_elem = soup.find('h1') or soup.find(class_='headline')
-                    if title_elem:
-                        image_data['title'] = title_elem.get_text(strip=True)
-                
-                if 'date' in missing_fields:
-                    date_elem = soup.find(class_='date') or soup.find(class_='published')
-                    if date_elem:
-                        image_data['date'] = date_elem.get_text(strip=True)
-                
-                if 'publication_title' in missing_fields:
-                    pub_elem = soup.find(class_='newspaper') or soup.find(class_='publication')
-                    if pub_elem:
-                        image_data['publication_title'] = pub_elem.get_text(strip=True)
-            
-            # Final validation
-            if not all(field in image_data for field in required_fields):
-                logger.error("Missing required metadata fields after fallback")
-                return None
+            if match := re.search(r'<link\s+rel="canonical"\s+href="([^"]+)"', page_content):
+                image_data['url'] = match.group(1)
+                logger.info(f"Found original URL: {image_data['url']}")
+            elif match := re.search(r'<meta\s+property="og:url"\s+content="([^"]+)"', page_content):
+                image_data['url'] = match.group(1)
+                logger.info(f"Found original URL from og:url: {image_data['url']}")
             
             logger.info(f"Successfully extracted image metadata: {image_data}")
-            return image_data
+            return image_data if image_data else None
             
         except Exception as e:
-            logger.error(f"Error parsing image metadata: {e}")
+            logger.error(f"Error parsing image metadata: {e}", exc_info=True)
             return None
     
     def _download_newspaper_image(self, metadata: Dict) -> Optional[Image.Image]:
-        """Download newspaper image"""
-        logger.info("Downloading newspaper image...")
+        logger.info("Downloading newspaper image with high quality priority...")
         
         try:
-            possible_urls = self._get_possible_image_urls(metadata)
-            if possible_urls:
-                limited_urls = possible_urls[:5]  # Reduced to 5 for speed
-                headers = {
-                    'User-Agent': 'Mozilla/5.0',
-                    'Accept': 'image/webp,image/jpeg,*/*;q=0.8',
-                    'Referer': 'https://www.newspapers.com/',
-                    **self.cookie_manager.auth_headers
-                }
-                
-                try:
-                    self.cookie_manager.session.get('https://www.newspapers.com/', headers=headers, timeout=10)
-                except Exception as e:
-                    logger.debug(f"Failed to access main site: {e}")
-                
-                for i, image_url in enumerate(limited_urls):
-                    logger.info(f"Trying URL {i+1}/{len(limited_urls)}: {image_url}")
-                    try:
-                        response = self.cookie_manager.session.get(
-                            image_url, 
-                            headers=headers,
-                            timeout=15,
-                            allow_redirects=True
-                        )
-                        if response.status_code == 200 and 'image' in response.headers.get('content-type', '').lower():
-                            image = Image.open(io.BytesIO(response.content))
-                            if image.size[0] > 1000 and image.size[1] > 1000:
-                                logger.info(f"High-quality image downloaded: {image.size()} from {i+1}")
-                                return image
-                            else:
-                                logger.info("Low quality image found, continuing...")
-                        else:
-                            logger.debug(f"URL {i+1} failed: HTTP {response.status_code}")
-                    except Exception as e:
-                        logger.debug(f"Error trying URL {i+1}: {e}")
-                        continue
-                
-                logger.info("Direct URL download failed, falling back to Selenium")
-                return self._extract_with_selenium_high_quality_image(metadata)
-                
-        except Exception as e:
-            logger.error(f"Error downloading image: {e}")
-            return None
-    
-    def _extract_with_selenium_high_quality_image(self, metadata: Dict) -> Optional[Image.Image]:
-        """Extract high-quality image with Selenium"""
-        logger.info("Starting Selenium image extraction...")
-        original_url = metadata.get('url')
-        if not original_url:
-            logger.error("No URL available for Selenium extraction")
-            return None
-        
-        try:
-            if not self.cookie_manager.selenium_login.driver:
-                if not self.cookie_manager.selenium_login.login():
-                    logger.error("Failed to authenticate for Selenium extraction")
-                    return None
+            # Always get a new driver for this specific task to ensure clean state and desired options
+            chrome_options = Options()
+            chrome_options.add_argument('--headless=new')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--window-size=2560,1440') # High resolution window
+            chrome_options.add_argument('--force-device-scale-factor=2') # Scale up for higher quality elements
+            chrome_options.add_argument('--high-dpi-support=1')
+            chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+            chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
+            chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36')
             
-            driver = self.cookie_manager.selenium_login.driver
+            driver = webdriver.Chrome(options=chrome_options)
+            
+            driver.set_page_load_timeout(30)
+            
+            logger.info("Loading main site to set cookies for Selenium image download...")
             driver.get('https://www.newspapers.com/')
             
             for name, value in self.cookie_manager.cookies.items():
                 try:
-                    driver.add_cookie({'name': name, 'value': value, 'domain': '.newspapers.com'})
+                    # Selenium cookie domains are strict; ensure it matches the actual domain or is generic
+                    cookie_domain = '.newspapers.com' if 'newspapers.com' in (metadata.get('url') or '').lower() else None
+                    if cookie_domain:
+                         driver.add_cookie({'name': name, 'value': value, 'domain': cookie_domain, 'path': '/'})
+                    else:
+                        driver.add_cookie({'name': name, 'value': value, 'path': '/'}) # Try without domain for general case
+                    logger.debug(f"Added cookie to driver for image extraction: {name}={value[:10]}...")
                 except Exception as e:
-                    logger.debug(f"Could not add cookie {name}: {e}")
+                    logger.warning(f"Could not add cookie {name} to driver for image extraction: {e}")
             
-            driver.get(original_url)
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.TAG_NAME, 'body'))
+            logger.info(f"Loading target page for high-quality image extraction: {metadata['url']}")
+            driver.get(metadata['url'])
+            
+            # Wait for main image to load or paywall to disappear
+            WebDriverWait(driver, 30).until_not(
+                EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'subscription') or contains(text(), 'sign in to view')]"))
+            ) or WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, 'img[src*="img.newspapers.com"]'))
             )
-            time.sleep(5)
+            time.sleep(5) # Give more time for page to fully render after initial waits
             
+            # Look for the largest and highest quality image element
             high_quality_selectors = [
                 'img[src*="img.newspapers.com"][src*="quality=100"]',
                 'img[src*="img.newspapers.com"][src*="size=full"]',
                 'img[src*="img.newspapers.com"][src*="w=4000"]',
                 'img[src*="img.newspapers.com"][src*="w=2000"]',
-                'img[src*="img.newspapers.com"]',
-                'img[src*="newspapers.com/img"]',
+                'img[src*="img.newspapers.com"]', # Generic newspapers.com image
+                'img[src*="newspapers.com/img"]', # Another common pattern
                 '.newspaper-image img',
                 '.image-viewer img',
                 'img[class*="newspaper"]',
-                'canvas'
             ]
             
             best_image_element = None
             best_quality_score = 0
             
             for selector in high_quality_selectors:
-                elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                for element in elements:
-                    try:
-                        width = element.get_attribute('width') or driver.execute_script("return arguments[0].naturalWidth;", element)
-                        height = element.get_attribute('height') or driver.execute_script("return arguments[0].naturalHeight;", element)
-                        src = element.get_attribute('src') or ''
-                        
-                        if width and height:
-                            width, height = int(width), int(height)
-                            quality_score = width * height
+                try:
+                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    for element in elements:
+                        try:
+                            # Try to get natural (original) dimensions first
+                            width = driver.execute_script("return arguments[0].naturalWidth;", element)
+                            height = driver.execute_script("return arguments[0].naturalHeight;", element)
+
+                            # Fallback to rendered dimensions if natural are not available
+                            if not width or not height:
+                                width = element.size['width']
+                                height = element.size['height']
                             
-                            if 'quality=100' in src:
-                                quality_score *= 2
-                            elif 'size=full' in src:
-                                quality_score *= 1.8
-                            elif 'w=4000' in src or 'w=6000' in src:
-                                quality_score *= 1.5
-                            elif 'w=2000' in src:
-                                quality_score *= 1.2
+                            src = element.get_attribute('src') or ''
                             
-                            if quality_score > best_quality_score and width > 800 and height > 600:
-                                best_quality_score = quality_score
-                                best_image_element = element
-                                logger.info(f"Better quality image: {width}x{height}, score: {quality_score}")
+                            if width and height:
+                                quality_score = width * height
+                                
+                                # Boost score for indicators of high quality
+                                if 'quality=100' in src:
+                                    quality_score *= 2
+                                elif 'size=full' in src:
+                                    quality_score *= 1.8
+                                elif 'w=4000' in src or 'w=6000' in src:
+                                    quality_score *= 1.5
+                                elif 'w=2000' in src:
+                                    quality_score *= 1.2
+                                
+                                if quality_score > best_quality_score and width > 800 and height > 600: # Minimum size for consideration
+                                    best_quality_score = quality_score
+                                    best_image_element = element
+                                    logger.info(f"Found better quality image element: {width}x{height}, score: {quality_score}, src: {src[:80]}...")
                                     
-                    except Exception as e:
-                        logger.debug(f"Error evaluating image element: {e}")
+                        except Exception as e:
+                            logger.debug(f"Error evaluating image element properties: {e}")
+                            continue
                             
+                except Exception as e:
+                    logger.debug(f"Error with selector {selector}: {e}")
+                    continue
+            
             if best_image_element:
+                logger.info(f"Attempting to download/screenshot the best image element found.")
                 try:
                     img_src = best_image_element.get_attribute('src')
                     if img_src and img_src.startswith('http'):
-                        high_quality_urls = [img_src]
-                        if '?' in img_src:
-                            base_url = img_src.split('?')[0]
-                            high_quality_urls.extend([
-                                f"{base_url}?quality=100&w=4000",
-                                f"{base_url}?size=full&quality=100",
-                                f"{base_url}?w=6000&q=100",
-                                f"{base_url}?w=4000&q=100",
-                                img_src
-                            ])
-                        
-                        for url in high_quality_urls:
-                            try:
-                                response = self.cookie_manager.session.get(url, timeout=30)
-                                if response.status_code == 200 and 'image' in response.headers.get('content-type', ''):
-                                    image = Image.open(io.BytesIO(response.content))
-                                    logger.info(f"Downloaded high-quality image: {image.size}")
-                                    return image
-                            except Exception as e:
-                                logger.debug(f"Failed to download {url}: {e}")
-                        
-                except Exception as e:
-                    logger.debug(f"Failed to download via src: {e}")
-                
-                try:
-                    logger.info("Taking screenshot of image element...")
-                    driver.execute_script("arguments[0].scrollIntoView(true);", best_image_element)
-                    time.sleep(1)
+                        logger.info(f"Trying to download image directly from its src: {img_src}")
+                        try:
+                            response = self.cookie_manager.session.get(img_src, timeout=30)
+                            if response.status_code == 200 and 'image' in response.headers.get('content-type', ''):
+                                image = Image.open(io.BytesIO(response.content))
+                                logger.info(f"Successfully downloaded high-quality image from element src: {image.size}.")
+                                return image
+                        except Exception as e:
+                            logger.debug(f"Failed to download image from element src {img_src}: {e}")
+
+                    # Fallback to screenshotting the element if direct download fails or src is not a direct image
+                    logger.info("Taking high-resolution screenshot of identified image element.")
+                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", best_image_element)
+                    time.sleep(1) # Allow scroll to complete
+                    
                     screenshot_data = best_image_element.screenshot_as_png
                     image = Image.open(io.BytesIO(screenshot_data))
-                    logger.info(f"Element screenshot: {image.size}")
+                    logger.info(f"High-res element screenshot captured: {image.size}.")
                     return image
                 except Exception as e:
-                    logger.debug(f"Failed to screenshot element: {e}")
+                    logger.warning(f"Failed to screenshot the best image element: {e}. Trying full page screenshot.")
             
-            logger.info("Taking full page screenshot...")
-            driver.execute_script("document.body.style.zoom='200%'")
+            logger.info("No suitable image element found or element screenshot failed. Taking high-resolution full page screenshot as last resort...")
+            # Try to zoom out slightly to capture more if needed, then take full screenshot
+            # This is a fallback if the target image element can't be isolated.
+            driver.execute_script("document.body.style.zoom='150%'") # A bit less aggressive than 200%
             time.sleep(2)
+            
             screenshot_data = driver.get_screenshot_as_png()
             full_screenshot = Image.open(io.BytesIO(screenshot_data))
-            logger.info(f"Full page screenshot: {full_screenshot.size}")
+            
+            logger.info(f"High-res full page screenshot captured: {full_screenshot.size}.")
             return full_screenshot
             
         except Exception as e:
-            logger.error(f"Selenium extraction failed: {e}")
+            logger.error(f"High-quality Selenium image extraction failed: {e}", exc_info=True)
+            # Add debug info if driver is available
+            try:
+                if driver:
+                    logger.info(f"Debug: Page source snippet: {driver.page_source[:500]}...")
+                    logger.info(f"Debug: Page title: {driver.title}")
+            except Exception as debug_e:
+                logger.error(f"Failed to get debug info: {debug_e}")
             return None
+            
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                except:
+                    pass
     
     def _save_debug_html(self, driver, url: str) -> None:
+        """Saves debug HTML and a summary of the page."""
         try:
             debug_dir = "debug_html"
             os.makedirs(debug_dir, exist_ok=True)
+            
             page_html = driver.page_source
+            
             url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f"debug_page_{timestamp}_{url_hash}.html"
@@ -1999,43 +1599,12 @@ class NewspapersComExtractor:
             summary_filename = f"debug_summary_{timestamp}_{url_hash}.json"
             summary_filepath = os.path.join(debug_dir, summary_filename)
             
-            # Capture client-side state
-            try:
-                local_storage = driver.execute_script("""
-                    var ls = {};
-                    for (var i = 0; i < localStorage.length; i++) {
-                        ls[localStorage.key(i)] = localStorage.getItem(localStorage.key(i));
-                    }
-                    return ls;
-                """)
-                session_storage = driver.execute_script("""
-                    var ss = {};
-                    for (var i = 0; i < sessionStorage.length; i++) {
-                        ss[sessionStorage.key(i)] = sessionStorage.getItem(sessionStorage.key(i));
-                    }
-                    return ss;
-                """)
-                js_tokens = driver.execute_script("""
-                    return {
-                        'ncom': window.ncom || {},
-                        'page': window.page || {},
-                        'csrf': document.querySelector('meta[name="csrf-token"]')?.content || null
-                    };
-                """)
-            except Exception as e:
-                logger.warning(f"Failed to capture client-side state: {e}")
-                local_storage, session_storage, js_tokens = {}, {}, {}
-            
             summary_data = {
                 'url': url,
                 'timestamp': datetime.now().isoformat(),
                 'html_file': filename,
                 'page_title': driver.title,
                 'cookies_count': len(self.cookie_manager.cookies),
-                'cookies': list(self.cookie_manager.cookies.keys()),
-                'local_storage': local_storage,
-                'session_storage': session_storage,
-                'js_tokens': js_tokens,
                 'page_size_bytes': len(page_html),
                 'user_agent': driver.execute_script("return navigator.userAgent;"),
                 'viewport_size': driver.get_window_size(),
@@ -2048,202 +1617,162 @@ class NewspapersComExtractor:
             }
             
             with open(summary_filepath, 'w', encoding='utf-8') as f:
-                json.dump(summary_data, f, indent=2, default=str)
+                json.dump(summary_data, f, indent=2, ensure_ascii=False)
             
             logger.info(f"Saved debug summary to: {summary_filepath}")
             
         except Exception as e:
             logger.error(f"Failed to save debug HTML: {e}")
-        
-    def capture_page_html(self, url: str, save_debug: bool = True) -> Dict:
-        """Capture HTML content"""
-        logger.info(f"Capturing HTML from: {url}")
-        try:
-            if not self.cookie_manager.refresh_cookies_if_needed():
-                return {'success': False, 'error': "Authentication failed"}
-            
-            if not self.cookie_manager.selenium_login.driver:
-                if not self.cookie_manager.selenium_login.login():
-                    return {'success': False, 'error': "Failed to authenticate"}
-            
-            driver = self.cookie_manager.selenium_login.driver
-            driver.get('https://www.newspapers.com/')
-            
-            for name, value in self.cookie_manager.cookies.items():
-                try:
-                    driver.add_cookie({'name': name, 'value': value, 'domain': '.newspapers.com'})
-                except Exception as e:
-                    logger.debug(f"Could not add cookie {name}: {e}")
-            
-            driver.get(url)
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-            time.sleep(3)
-            
-            page_html = driver.page_source
-            page_title = driver.title
-            
-            if save_debug:
-                self._save_debug_html(driver, url)
-            
-            elements_info = {
-                'images': len(driver.find_elements(By.TAG_NAME, 'img')),
-                'scripts': len(driver.find_elements(By.TAG_NAME, 'script')),
-                'divs': len(driver.find_elements(By.TAG_NAME, 'div')),
-                'forms': len(driver.find_elements(By.TAG_NAME, 'form')),
-                'links': len(driver.find_elements(By.TAG_NAME, 'a')),
-                'total_elements': len(driver.find_elements(By.XPATH, '//*'))
-            }
-            
-            newspaper_elements = {
-                'newspaper_images': len(driver.find_elements(By.CSS_SELECTOR, 'img[src*="img.newspapers.com"]')),
-                'image_viewers': len(driver.find_elements(By.CSS_SELECTOR, '.image-viewer')),
-                'article_containers': len(driver.find_elements(By.CSS_SELECTOR, '[class*="article"]')),
-                'search_results': len(driver.find_elements(By.CSS_SELECTOR, '[class*="search"]')),
-            }
-            
-            return {
-                'success': True,
-                'html_content': page_html,
-                'page_title': page_title,
-                'url': url,
-                'elements_info': elements_info,
-                'newspaper_elements': newspaper_elements,
-                'html_size': len(page_html),
-                'capture_timestamp': datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            logger.error(f"Failed to capture HTML: {e}")
-            return {'success': False, 'error': str(e)}
-    
+
     def _get_possible_image_urls(self, metadata: Dict) -> List[str]:
-        """Generate possible image URLs"""
-        logger.info("Generating URLs...")
+        logger.info("Generating possible image URLs with focus on high resolution...")
+        
         urls = []
         image_id = metadata.get('image_id')
-        wfm_path = metadata.get('wfm_image_path')
+        wfm_path_original = metadata.get('wfm_image_path')
         base_url = metadata.get('base_image_url', 'https://img.newspapers.com')
         
+        # Prioritize larger sizes and quality parameters first
         if image_id:
             urls.extend([
-                f"{base_url}/{image_id}/image.jpg",
+                f"{base_url}/{image_id}?w=6000&q=100",
+                f"{base_url}/{image_id}?w=4000&q=100",
+                f"{base_url}/{image_id}?quality=100&w=2000",
+                f"{base_url}/{image_id}?size=full&quality=100",
                 f"{base_url}/{image_id}/full.jpg",
                 f"{base_url}/{image_id}/large.jpg",
                 f"{base_url}/{image_id}/original.jpg",
-                f"{base_url}/{image_id}?size=full",
-                f"{base_url}/{image_id}?quality=100",
-                f"{base_url}/{image_id}?w=2000&q=100",
-                f"{base_url}/{image_id}?w=4000&q=100",
+                f"{base_url}/{image_id}/image.jpg",
                 f"{base_url}/{image_id}.jpg",
+                f"https://www.newspapers.com/img/{image_id}/full.jpg",
                 f"https://www.newspapers.com/image/{image_id}/full.jpg",
-                f"https://www.newspapers.com/image/{image_id}.jpg",
+                f"{base_url}/image/{image_id}.jpg",
+                f"https://www.newspapers.com/img/{image_id}.jpg",
             ])
         
-        if wfm_path:
-            processed_wfm_path = wfm_path
-            if ':' in processed_wfm_path:
-                path_part, suffix_part = processed_wfm_path.split(':', 1)
-                for path_to_try in [path_part, suffix_part]:
-                    if path_to_try.upper().endswith('.PDF'):
-                        path_to_try = path_to_try[:-4]
-                    for ext in ['.jpg', '.jpeg', '.png', '']:
-                        clean_path = f"{path_to_try}{ext}".lstrip('/')
-                        urls.extend([
-                            f"{base_url}/{clean_path}?quality=100",
-                            f"{base_url}/{clean_path}?size=full",
-                            f"{base_url}/{clean_path}",
-                            f"https://www.newspapers.com/image/{clean_path}",
-                        ])
-            else:
-                if processed_wfm_path.upper().endswith('.PDF'):
-                    processed_wfm_path = processed_wfm_path[:-4]
-                for ext in ['.jpg', '.jpeg', '.png', '']:
-                    clean_path = f"{processed_wfm_path}{ext}".lstrip('/')
+        if wfm_path_original:
+            processed_wfm_path = wfm_path_original
+            
+            # Clean path from potential leading slashes or PDF extensions for URL construction
+            if processed_wfm_path.upper().endswith('.PDF'):
+                processed_wfm_path = processed_wfm_path[:-4]
+            
+            # Handle paths that might contain ':', potentially from internal identifiers
+            path_segments = processed_wfm_path.split(':')
+            clean_path_candidates = [seg for seg in path_segments if '/' in seg or '.' in seg]
+            if not clean_path_candidates and path_segments: # Fallback to last segment if no slashes/dots
+                clean_path_candidates.append(path_segments[-1])
+
+            for clean_path_base in clean_path_candidates:
+                clean_path_base = clean_path_base.lstrip('/')
+                for ext in ['.jpg', '.jpeg', '.png', '']: # Try common image extensions
                     urls.extend([
-                        f"{base_url}/{clean_path}?quality=100",
-                        f"{base_url}/{clean_path}?size=full",
-                        f"{base_url}/{clean_path}",
-                        f"https://www.newspapers.com/image/{clean_path}",
+                        f"{base_url}/{clean_path_base}{ext}?quality=100",
+                        f"{base_url}/{clean_path_base}{ext}?size=full", 
+                        f"{base_url}/{clean_path_base}{ext}?w=4000&q=100",
+                        f"{base_url}/{clean_path_base}{ext}", # Generic form
+                        f"https://www.newspapers.com/img/{clean_path_base}{ext}",
+                        f"https://www.newspapers.com/image/{clean_path_base}{ext}",
                     ])
         
-        unique_urls = list(dict.fromkeys(urls))
-        logger.info(f"Generated {len(unique_urls)} unique URLs")
+        unique_urls = []
+        seen = set()
+        for url in urls:
+            if url not in seen:
+                unique_urls.append(url)
+                seen.add(url)
+        
+        logger.info(f"Generated {len(unique_urls)} unique URL patterns, prioritizing high resolution.")
         return unique_urls
 
     def _find_multi_page_images(self, html_content: str, base_image_id: str) -> List[Dict]:
-        """Find multi-page images"""
-        logger.info(f"Searching for multi-page images for {base_image_id}")
+        logger.info(f"Searching for multi-page images related to base image {base_image_id}.")
+        
         multi_page_images = []
+        
         try:
             start_time = time.time()
-            MAX_SEARCH_TIME = 5
+            MAX_SEARCH_TIME = 5 # Limit search time to avoid delays
             
+            # Patterns for explicit navigation links (next/prev page)
             nav_link_patterns = [
                 r'data-next-image="(\d+)"',
                 r'data-prev-image="(\d+)"',
-                r'href="[^"]*image/(\d+)[^"]*"[^>]*(?:next\s+page|previous\s+page|continue|continued)',
+                r'href="[^"]*image/(\d+)[^"]*"[^>]*(?:next\s+page|previous\s+page|continue|continued|page\s+\d+)',
                 r'class="[^"]*next[^"]*"[^>]*href="[^"]*image/(\d+)',
                 r'class="[^"]*prev[^"]*"[^>]*href="[^"]*image/(\d+)'
             ]
             
-            found_ids = {base_image_id}
-            for pattern in nav_link_patterns:
-                if time.time() - start_time > MAX_SEARCH_TIME:
-                    break
-                try:
-                    matches = re.findall(pattern, html_content, re.IGNORECASE)
-                    for match in matches[:2]:
-                        if match not in found_ids and len(found_ids) < 4:
-                            found_ids.add(match)
-                            multi_page_images.append({
-                                'image_id': match,
-                                'page_offset': 0,
-                                'source': 'navigation_link'
-                            })
-                        if len(multi_page_images) >= 3:
-                            break
-                    if len(multi_page_images) >= 3:
-                        break
-                except re.error as e:
-                    logger.debug(f"Regex error with nav pattern {pattern}: {e}")
-            
+            # Patterns for article continuation indicators (e.g., "continued on page X")
             continuation_patterns = [
                 r'"continued"[^>]*image/(\d+)',
                 r'"continuation"[^>]*image/(\d+)',
                 r'data-article-continues="(\d+)"',
-                r'data-article-page="(\d+)"'
+                r'data-article-page="(\d+)"',
+                r'page=(\d+)' # More generic page parameter
             ]
             
-            for pattern in continuation_patterns:
+            found_ids = set()
+            found_ids.add(base_image_id)
+            
+            # Combine all patterns and search
+            all_patterns = nav_link_patterns + continuation_patterns
+            for pattern in all_patterns:
                 if time.time() - start_time > MAX_SEARCH_TIME or len(multi_page_images) >= 3:
                     break
+                    
                 try:
                     matches = re.findall(pattern, html_content, re.IGNORECASE)
-                    for match in matches[:2]:
-                        if match not in found_ids:
+                    for match in matches[:3]: # Limit matches per pattern to speed up
+                        if match != base_image_id and match not in found_ids:
                             found_ids.add(match)
                             multi_page_images.append({
                                 'image_id': match,
-                                'page_offset': 0,
-                                'source': 'article_continuation'
+                                'page_offset': 0, # Placeholder, actual offset might need more logic
+                                'source': 'dynamic_pattern_match'
                             })
+                            logger.info(f"Found potential multi-page link to image {match} via pattern '{pattern}'.")
+                            
                         if len(multi_page_images) >= 3:
-                            break
+                            break # Limit to max 3 additional pages
+                            
                 except re.error as e:
-                    logger.debug(f"Regex error with continuation pattern {pattern}: {e}")
+                    logger.debug(f"Regex error with pattern {pattern}: {e}")
+                    continue
             
-            multi_page_images = multi_page_images[:3]
-            logger.info(f"Found {len(multi_page_images)} multi-page indicators")
+            # Sort by image_id (assuming sequential IDs for pages) or order of discovery
+            multi_page_images.sort(key=lambda x: x['image_id'])
+            
+            if not multi_page_images:
+                logger.info("No genuine multi-page article indicators found - treating as single page.")
+            else:
+                logger.info(f"Found {len(multi_page_images)} genuine multi-page indicators.")
+            
             return multi_page_images
             
         except Exception as e:
             logger.error(f"Error finding multi-page images: {e}")
             return []
 
+
+# The main() function in newspapers_extractor.py is for standalone testing of the scraper.
+# It's not directly used by app.py's normal flow.
+# Removed the main() function from here to avoid confusion and focus on module functionality.
+
+# Keeping the direct extraction function for external use (e.g., batch_processor)
 def extract_from_newspapers_com(url: str, cookies: str = "", player_name: Optional[str] = None) -> Dict:
-    """Legacy function for backward compatibility"""
     extractor = NewspapersComExtractor(auto_auth=False)
     if cookies:
-        extractor.cookie_manager.cookies = json
+        # In this enhanced version, the `cookies` argument for direct extraction is less relevant
+        # as the extractor now manages its own authentication state via SeleniumLoginManager.
+        # However, for backward compatibility or specific use cases, we can log it.
+        logger.warning("Direct 'cookies' argument is provided but primary authentication is now managed internally by Selenium.")
+        # If you still want to try to use external cookies, you would update extractor.cookie_manager.cookies here
+        # But this might conflict with the Selenium-managed session.
+        # For this setup, it's best to rely on the extractor's internal authentication.
+
+    # Ensure the extractor is initialized and authenticated before extraction
+    if not extractor.initialize():
+        return {'success': False, 'error': "Newspapers.com extractor could not initialize or authenticate."}
+    
+    return extractor.extract_from_url(url, player_name)
