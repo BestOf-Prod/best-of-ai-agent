@@ -1043,7 +1043,7 @@ def handle_icml_conversion():
     
     st.write("### Convert Processed Articles to ICML")
     
-    # Create a temporary directory for ICML files
+    # Create a temporary directory for markdown files
     output_dir = Path("output")
     output_dir.mkdir(exist_ok=True)
     
@@ -1059,69 +1059,58 @@ def handle_icml_conversion():
     for idx, result in enumerate(successful_results):
         markdown_content = f"""# {result.get('headline', 'Untitled Article')}
 
-            Source: {result.get('source', 'Unknown Source')}
-            Date: {result.get('date', 'Unknown Date')}
+Source: {result.get('source', 'Unknown Source')}
+Date: {result.get('date', 'Unknown Date')}
 
-            {result.get('content', 'No content available')}
-            """
+{result.get('content', 'No content available')}
+"""
         # Save markdown file
         md_filename = f"article_{idx + 1}.md"
         md_path = output_dir / md_filename
         with open(md_path, "w", encoding="utf-8") as f:
             f.write(markdown_content)
-        markdown_files.append(md_path)
+        markdown_files.append(str(md_path))  # Convert Path to string
     
     # Convert to ICML
     if st.button("🔄 Convert to ICML"):
         with st.spinner("Converting articles to ICML format..."):
             try:
-                icml_files = []
-                for md_file in markdown_files:
-                    icml_file = convert_to_icml(md_file, output_dir)
-                    icml_files.append(icml_file)
+                # Convert all markdown files to a single ICML
+                icml_content = convert_to_icml(markdown_files)
                 
-                st.success(f"✅ Successfully converted {len(icml_files)} articles to ICML format")
+                # Generate output filename
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_filename = f"combined_articles_{timestamp}.icml"
                 
-                # Create a zip file containing all ICML files
-                zip_path = output_dir / "articles_icml.zip"
-                with zipfile.ZipFile(zip_path, 'w') as zipf:
-                    for icml_file in icml_files:
-                        zipf.write(icml_file, icml_file.name)
+                # Create download button for the ICML file
+                st.download_button(
+                    label=f"📥 Download {output_filename}",
+                    data=icml_content,
+                    file_name=output_filename,
+                    mime="application/x-indesign"
+                )
                 
-                # Provide download button for the zip file
-                with open(zip_path, "rb") as f:
-                    st.download_button(
-                        label="📥 Download ICML Files",
-                        data=f,
-                        file_name="articles_icml.zip",
-                        mime="application/zip"
-                    )
+                st.success(f"✅ Successfully converted {len(markdown_files)} articles to a single ICML file")
+                
+                # Show summary
+                with st.expander("Conversion Summary"):
+                    st.write(f"**Input files:** {len(markdown_files)} markdown files")
+                    file_list = ", ".join([os.path.basename(f) for f in markdown_files])
+                    st.write(f"**Files combined:** {file_list}")
+                    st.write(f"**Output:** {output_filename}")
                 
                 # Clean up temporary files
                 for md_file in markdown_files:
-                    md_file.unlink()
-                for icml_file in icml_files:
-                    icml_file.unlink()
-                zip_path.unlink()
-                
+                    if os.path.exists(md_file):
+                        os.unlink(md_file)
+                    
             except Exception as e:
+                st.error(f"ICML conversion error: {str(e)}")
                 logger.error(f"ICML conversion error: {str(e)}")
-                st.error(f"Error converting to ICML: {str(e)}")
-    
-    # Display conversion instructions
-    with st.expander("📋 InDesign Import Instructions"):
-        st.write("""
-        ### How to Import ICML Files into InDesign
-        
-        1. Download the ICML files using the button above
-        2. Extract the ZIP file to a location on your computer
-        3. Open InDesign
-        4. Go to File > Place
-        5. Select the ICML files you want to import
-        6. Click Open
-        
-        The articles will be imported with their formatting preserved and ready for layout.
-        """)
+                # Clean up temporary files even if there's an error
+                for md_file in markdown_files:
+                    if os.path.exists(md_file):
+                        os.unlink(md_file)
 
 if __name__ == "__main__":
     try:
