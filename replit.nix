@@ -1,5 +1,6 @@
 {pkgs}: {
   deps = [
+    pkgs.pandoc
     pkgs.tesseract
     pkgs.libGLU
     pkgs.libGL
