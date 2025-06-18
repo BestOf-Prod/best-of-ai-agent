@@ -9,6 +9,7 @@ dependencies = [
     "docx==0.2.4",
     "opencv-python==4.10.0.84",
     "pandas==2.2.3",
+    "pandoc==2.4",
     "pytesseract==0.3.13",
     "python-docx-replace==0.4.4",
     "replit-object-storage==1.0.2",
