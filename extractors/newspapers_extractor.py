@@ -12,7 +12,13 @@ from selenium.webdriver.support import expected_conditions as EC
 import cv2
 import pytesseract
 from PIL import Image, ImageEnhance
-import numpy as np
+# Optional numpy import with fallback
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    logger.warning("NumPy not available. Advanced image processing features will be disabled.")
 import browser_cookie3
 import json
 import pickle
@@ -398,6 +404,10 @@ class NewspaperImageProcessor:
         enhancer = ImageEnhance.Sharpness(image)
         image = enhancer.enhance(1.2)
         
+        if not NUMPY_AVAILABLE:
+            logger.warning("NumPy not available, using basic image enhancement")
+            return image
+            
         img_array = np.array(image)
         
         denoised = cv2.fastNlMeansDenoising(img_array)
@@ -412,6 +422,11 @@ class NewspaperImageProcessor:
         """Detect individual article regions in newspaper page"""
         logger.info(f"Detecting article regions in image of size: {image.size}")
         
+        if not NUMPY_AVAILABLE:
+            logger.warning("NumPy not available, using simple article region detection")
+            # Return full image as single region
+            return [(0, 0, image.width, image.height)]
+            
         img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
         gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
         
