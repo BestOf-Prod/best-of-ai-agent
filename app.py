@@ -21,6 +21,7 @@ from utils.document_processor import extract_urls_from_docx, validate_document_f
 from utils.storage_manager import StorageManager
 from utils.batch_processor import BatchProcessor
 from utils.icml_converter import convert_to_icml
+from utils.modular_icml_converter import create_modular_icml_package
 
 # Setup logging
 logger = setup_logging(__name__, log_level=logging.INFO)
@@ -1044,7 +1045,33 @@ def handle_icml_conversion():
         st.info("Process some articles first to enable ICML export")
         return
     
-    st.write("### Convert Processed Articles to ICML")
+    # Conversion type selection
+    st.write("### Choose Conversion Type")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.info("""
+        **📄 Single File ICML**
+        - All articles combined into one ICML file
+        - Easy to import as a complete document
+        - Traditional workflow
+        """)
+    
+    with col2:
+        st.info("""
+        **📁 Modular ICML Package**
+        - Individual ICML files for each article element
+        - Separate files for title, author/date, and body
+        - Images downloaded and organized
+        - Precise InDesign placement control
+        """)
+    
+    conversion_type = st.radio(
+        "Select conversion type:",
+        ["Single File ICML", "Modular ICML Package"],
+        help="Choose how you want to structure the ICML output"
+    )
     
     # Create a temporary directory for markdown files
     output_dir = Path("output")
@@ -1060,13 +1087,48 @@ def handle_icml_conversion():
     # Create markdown content for each article
     markdown_files = []
     for idx, result in enumerate(successful_results):
-        markdown_content = f"""# {result.get('headline', 'Untitled Article')}
+        # Get full content - optimized for Replit environment
+        article_content = 'No content available'
+        
+        # Primary: try to get full_content from result (works in Replit)
+        if result.get('full_content'):
+            article_content = result.get('full_content')
+            if icml_debug_mode:
+                st.write(f"📝 Using full_content for article {idx + 1}: {len(article_content)} characters")
+        
+        # Fallback: use the truncated content and warn user
+        else:
+            article_content = result.get('content', 'No content available')
+            if icml_debug_mode:
+                st.warning(f"⚠️ Using truncated content for article {idx + 1}: {len(article_content)} characters")
+                st.write("💡 **Note**: If content appears truncated, there may be an issue with the batch processing results.")
+        
+        # Create enhanced markdown content with proper formatting for modular converter
+        author_line = f"*By {result.get('source', 'Unknown Source')}*"
+        date_line = f"*{result.get('date', 'Unknown Date')}*"
+        
+        if conversion_type == "Modular ICML Package":
+            # Format for modular converter (matches expected structure)
+            markdown_content = f"""# {result.get('headline', 'Untitled Article')}
+
+{author_line}
+{date_line}
+
+{article_content}
+
+---
+*Source: {result.get('source', 'Unknown Source')}*
+"""
+        else:
+            # Original format for single file
+            markdown_content = f"""# {result.get('headline', 'Untitled Article')}
 
 Source: {result.get('source', 'Unknown Source')}
 Date: {result.get('date', 'Unknown Date')}
 
-{result.get('content', 'No content available')}
+{article_content}
 """
+        
         # Save markdown file
         md_filename = f"article_{idx + 1}.md"
         md_path = output_dir / md_filename
@@ -1090,46 +1152,102 @@ Date: {result.get('date', 'Unknown Date')}
                 st.error(f"Error reading {md_file}: {str(e)}")
     
     # Convert to ICML
-    if st.button("🔄 Convert to ICML"):
-        with st.spinner("Converting articles to ICML format..."):
-            try:
-                # Convert all markdown files to a single ICML with debug mode
-                icml_content = convert_to_icml(markdown_files, debug_mode=icml_debug_mode)
-                
-                # Generate output filename
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_filename = f"combined_articles_{timestamp}.icml"
-                
-                # Create download button for the ICML file
-                st.download_button(
-                    label=f"📥 Download {output_filename}",
-                    data=icml_content,
-                    file_name=output_filename,
-                    mime="application/x-indesign"
-                )
-                
-                st.success(f"✅ Successfully converted {len(markdown_files)} articles to a single ICML file")
-                
-                # Show summary
-                with st.expander("Conversion Summary"):
-                    st.write(f"**Input files:** {len(markdown_files)} markdown files")
-                    file_list = ", ".join([os.path.basename(f) for f in markdown_files])
-                    st.write(f"**Files combined:** {file_list}")
-                    st.write(f"**Output:** {output_filename}")
-                    st.write("**Debug mode:** " + ("Enabled" if icml_debug_mode else "Disabled"))
-                
-                # Clean up temporary files
-                for md_file in markdown_files:
-                    if os.path.exists(md_file):
-                        os.unlink(md_file)
+    button_text = "🔄 Create Single ICML File" if conversion_type == "Single File ICML" else "📁 Create Modular ICML Package"
+    
+    if st.button(button_text):
+        conversion_status = st.empty()
+        
+        if conversion_type == "Single File ICML":
+            conversion_status.write("Converting articles to single ICML file...")
+            
+            with st.spinner("Converting articles to ICML format..."):
+                try:
+                    # Convert all markdown files to a single ICML with debug mode
+                    icml_content = convert_to_icml(markdown_files, debug_mode=icml_debug_mode)
                     
-            except Exception as e:
-                st.error(f"ICML conversion error: {str(e)}")
-                logger.error(f"ICML conversion error: {str(e)}")
-                # Clean up temporary files even if there's an error
-                for md_file in markdown_files:
-                    if os.path.exists(md_file):
-                        os.unlink(md_file)
+                    # Generate output filename
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    output_filename = f"combined_articles_{timestamp}.icml"
+                    
+                    # Create download button for the ICML file
+                    st.download_button(
+                        label=f"📥 Download {output_filename}",
+                        data=icml_content,
+                        file_name=output_filename,
+                        mime="application/x-indesign"
+                    )
+                    
+                    st.success(f"✅ Successfully converted {len(markdown_files)} articles to a single ICML file")
+                    
+                    # Show summary
+                    with st.expander("📋 Single File Conversion Summary"):
+                        st.write(f"**Input files:** {len(markdown_files)} markdown files")
+                        file_list = ", ".join([os.path.basename(f) for f in markdown_files])
+                        st.write(f"**Files combined:** {file_list}")
+                        st.write(f"**Output:** {output_filename}")
+                        st.write("**Debug mode:** " + ("Enabled" if icml_debug_mode else "Disabled"))
+                        st.write("**Format:** Single ICML file with all articles combined")
+                    
+                except Exception as e:
+                    st.error(f"ICML conversion error: {str(e)}")
+                    logger.error(f"ICML conversion error: {str(e)}")
+        
+        else:  # Modular ICML Package
+            conversion_status.write("Creating modular ICML package...")
+            
+            with st.spinner("Creating modular ICML package with individual files..."):
+                try:
+                    # Create modular ICML package
+                    zip_content, zip_filename = create_modular_icml_package(markdown_files, debug_mode=icml_debug_mode)
+                    
+                    # Create download button for the zip file
+                    st.download_button(
+                        label=f"📥 Download {zip_filename}",
+                        data=zip_content,
+                        file_name=zip_filename,
+                        mime="application/zip"
+                    )
+                    
+                    st.success(f"✅ Successfully created modular ICML package from {len(markdown_files)} articles!")
+                    
+                    # Show summary
+                    with st.expander("📁 Modular Package Summary"):
+                        st.write(f"**Input files:** {len(markdown_files)} markdown files")
+                        file_list = ", ".join([os.path.basename(f) for f in markdown_files])
+                        st.write(f"**Files processed:** {file_list}")
+                        st.write(f"**Output:** {zip_filename}")
+                        st.write("**Structure:** Individual ICML files for title, author/date, and body")
+                        st.write("**Debug mode:** " + ("Enabled" if icml_debug_mode else "Disabled"))
+                        st.write("**Format:** Zip package with subdirectories for each article")
+                        
+                        # Show expected structure
+                        st.write("**Package Structure:**")
+                        st.code(f"""
+{zip_filename.replace('.zip', '')}
+├── article_1/
+│   ├── article_1_title.icml
+│   ├── article_1_author.icml
+│   ├── article_1_body.icml
+│   └── images/ (if any)
+├── article_2/
+│   ├── article_2_title.icml
+│   ├── article_2_author.icml
+│   ├── article_2_body.icml
+│   └── images/ (if any)
+└── ...
+                        """)
+                
+                except Exception as e:
+                    st.error(f"Modular ICML package creation error: {str(e)}")
+                    logger.error(f"Modular ICML package creation error: {str(e)}")
+        
+        # Clean up temporary files
+        try:
+            for md_file in markdown_files:
+                if os.path.exists(md_file):
+                    os.unlink(md_file)
+        except Exception as e:
+            logger.warning(f"Error cleaning up temporary files: {str(e)}")
 
 if __name__ == "__main__":
     try:

@@ -130,13 +130,22 @@ class BatchProcessor:
                     if is_success:
                         # Upload to storage if successful
                         upload_result = self._upload_to_storage(result, url)
+                        # Get full content and truncated preview - handle both 'content' and 'text' fields
+                        if isinstance(result, dict):
+                            full_content = result.get('content', '') or result.get('text', '')
+                        else:
+                            full_content = getattr(result, 'content', '') or getattr(result, 'text', '')
+                        content_preview = full_content[:200] + '...' if len(full_content) > 200 else full_content
+                        
                         result_dict = {
                             'url': url,
                             'success': True,
                             'headline': result.get('headline', '') if isinstance(result, dict) else getattr(result, 'headline', ''),
                             'source': result.get('source', '') if isinstance(result, dict) else getattr(result, 'source', ''),
                             'date': result.get('date', '') if isinstance(result, dict) else getattr(result, 'date', ''),
-                            'content': (result.get('content', '') if isinstance(result, dict) else getattr(result, 'content', ''))[:200] + '...',
+                            'content': content_preview,  # Keep truncated for display
+                            'full_content': full_content,  # Add full content for ICML conversion
+                            'markdown_path': result.get('markdown_path', '') if isinstance(result, dict) else getattr(result, 'markdown_path', ''),
                             'processing_time_seconds': result.get('processing_time_seconds', 0.0) if isinstance(result, dict) else getattr(result, 'processing_time_seconds', 0.0),
                             'upload_result': upload_result,
                             'metadata': result.get('metadata', {}) if isinstance(result, dict) else getattr(result, 'metadata', {})
