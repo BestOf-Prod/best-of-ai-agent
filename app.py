@@ -1037,6 +1037,9 @@ def handle_icml_conversion():
     """Handle ICML conversion of processed articles"""
     st.write("## 📑 ICML Export for InDesign")
     
+    # Debug toggle for ICML conversion
+    icml_debug_mode = st.checkbox("🔍 Enable ICML Debug Mode", help="Show detailed ICML conversion process and content analysis")
+    
     if not st.session_state.batch_results or not st.session_state.batch_results.get('results'):
         st.info("Process some articles first to enable ICML export")
         return
@@ -1071,12 +1074,27 @@ Date: {result.get('date', 'Unknown Date')}
             f.write(markdown_content)
         markdown_files.append(str(md_path))  # Convert Path to string
     
+    # Show markdown files info
+    if icml_debug_mode:
+        st.write("### 📋 Debug: Markdown Files Created")
+        for i, md_file in enumerate(markdown_files):
+            try:
+                with open(md_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                st.write(f"**File {i+1}:** {os.path.basename(md_file)} ({len(content)} characters)")
+                if len(content) > 200:
+                    st.write(f"**Preview:** {content[:200]}...")
+                else:
+                    st.write(f"**Content:** {content}")
+            except Exception as e:
+                st.error(f"Error reading {md_file}: {str(e)}")
+    
     # Convert to ICML
     if st.button("🔄 Convert to ICML"):
         with st.spinner("Converting articles to ICML format..."):
             try:
-                # Convert all markdown files to a single ICML
-                icml_content = convert_to_icml(markdown_files)
+                # Convert all markdown files to a single ICML with debug mode
+                icml_content = convert_to_icml(markdown_files, debug_mode=icml_debug_mode)
                 
                 # Generate output filename
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1098,6 +1116,7 @@ Date: {result.get('date', 'Unknown Date')}
                     file_list = ", ".join([os.path.basename(f) for f in markdown_files])
                     st.write(f"**Files combined:** {file_list}")
                     st.write(f"**Output:** {output_filename}")
+                    st.write("**Debug mode:** " + ("Enabled" if icml_debug_mode else "Disabled"))
                 
                 # Clean up temporary files
                 for md_file in markdown_files:
