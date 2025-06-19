@@ -1341,7 +1341,7 @@ requires-dist = [
     { name = "browser-cookie3", specifier = "==0.19.1" },
     { name = "docx", specifier = "==0.2.4" },
     { name = "opencv-python", specifier = "==4.10.0.84" },
-    { name = "pandas", specifier = "==2.2.3" },
+    { name = "pandas", specifier = ">=2.2.3" },
     { name = "pandoc", specifier = "==2.4" },
     { name = "pytesseract", specifier = "==0.3.13" },
     { name = "python-docx-replace", specifier = "==0.4.4" },
