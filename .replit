@@ -14,3 +14,15 @@ externalPort = 80
 
 [objectStorage]
 defaultBucketID = "replit-objstore-57e42b1e-e51d-430d-837c-ce676128b474"
+
+[workflows]
+runButton = "Run App"
+
+[[workflows.workflow]]
+name = "Run App"
+author = 17702630
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "streamlit run app.py --server.address 0.0.0.0 --server.port 8501"
