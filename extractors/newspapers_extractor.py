@@ -37,6 +37,8 @@ from bs4 import BeautifulSoup
 import signal
 import threading
 import queue
+import tempfile
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
@@ -58,6 +60,8 @@ class ClippingResult:
     metadata: ArticleMetadata
     filename: str
     bounding_box: Tuple[int, int, int, int]
+    stitched_images: Optional[List[Image.Image]] = None
+    article_boundaries: Optional[List[Tuple[int, int, int, int]]] = None
 
 class SeleniumLoginManager:
     """Handle direct login authentication using Selenium"""
@@ -491,6 +495,486 @@ class NewspaperImageProcessor:
         
         logger.info(f"Returning {len(final_regions)} article regions for processing.")
         return final_regions
+    
+    def detect_article_boundaries_across_images(self, images: List[Image.Image], article_text: str) -> List[Tuple[int, int, int, int]]:
+        """Enhanced article boundary detection that captures complete content including wrapped text"""
+        logger.info(f"Detecting enhanced article boundaries across {len(images)} images")
+        
+        if not images:
+            return []
+        
+        # Extract key phrases from article text for boundary detection
+        key_phrases = self._extract_key_phrases(article_text)
+        logger.info(f"Extracted {len(key_phrases)} key phrases for boundary detection")
+        
+        # First pass: Find all relevant text regions
+        all_relevant_regions = []
+        
+        for i, image in enumerate(images):
+            logger.info(f"Analyzing image {i+1}/{len(images)} for article content")
+            
+            # Get all text regions for this image (more comprehensive)
+            regions = self.detect_article_regions(image)
+            
+            # Expand search to include more regions for better coverage
+            expanded_regions = self._detect_expanded_text_regions(image)
+            regions.extend(expanded_regions)
+            
+            # Score each region based on how well it matches our article content
+            for region in regions[:15]:  # Check more regions per image
+                try:
+                    region_text, confidence = self.extract_text_with_confidence(image, region)
+                    
+                    if len(region_text.strip()) < 10:  # Skip very short text regions
+                        continue
+                    
+                    # Calculate content match score
+                    content_score = self._calculate_content_match_score(region_text, key_phrases)
+                    
+                    # Enhanced scoring that considers text continuation patterns
+                    continuation_score = self._detect_text_continuation_score(region_text, article_text)
+                    
+                    # Combined score with emphasis on content matching and continuation
+                    final_score = (confidence * 0.2) + (content_score * 0.5) + (continuation_score * 0.3)
+                    
+                    # Lower threshold but better filtering
+                    if final_score > 0.15:  # More permissive threshold
+                        # Adjust coordinates to include image offset
+                        x, y, w, h = region
+                        adjusted_region = {
+                            'region': (x, y + (i * image.height), w, h),
+                            'text': region_text,
+                            'confidence': confidence,
+                            'content_score': content_score,
+                            'continuation_score': continuation_score,
+                            'final_score': final_score,
+                            'image_index': i,
+                            'original_region': region
+                        }
+                        all_relevant_regions.append(adjusted_region)
+                        logger.debug(f"Found relevant region in image {i} with score {final_score:.3f}")
+                        
+                except Exception as e:
+                    logger.warning(f"Error processing region {region} in image {i}: {str(e)}")
+                    continue
+        
+        logger.info(f"Found {len(all_relevant_regions)} potentially relevant regions")
+        
+        # Second pass: Group and merge adjacent/related regions
+        merged_boundaries = self._merge_related_text_regions(all_relevant_regions, images)
+        
+        # Third pass: Ensure complete article coverage using text flow analysis
+        complete_boundaries = self._ensure_complete_article_coverage(merged_boundaries, all_relevant_regions, images)
+        
+        logger.info(f"Final enhanced boundaries: {len(complete_boundaries)} regions covering complete article")
+        return complete_boundaries
+    
+    def _extract_key_phrases(self, text: str) -> List[str]:
+        """Extract key phrases from article text for boundary detection"""
+        if not text:
+            return []
+        
+        # Clean and tokenize text
+        import string
+        cleaned_text = text.translate(str.maketrans('', '', string.punctuation)).lower()
+        words = cleaned_text.split()
+        
+        # Extract phrases of different lengths
+        phrases = []
+        
+        # Single important words (longer than 3 characters)
+        important_words = [word for word in words if len(word) > 3]
+        phrases.extend(important_words[:20])  # Top 20 words
+        
+        # Bigrams (2-word phrases)
+        bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words)-1)]
+        phrases.extend(bigrams[:15])  # Top 15 bigrams
+        
+        # Trigrams (3-word phrases)
+        trigrams = [f"{words[i]} {words[i+1]} {words[i+2]}" for i in range(len(words)-2)]
+        phrases.extend(trigrams[:10])  # Top 10 trigrams
+        
+        return phrases
+    
+    def _calculate_content_match_score(self, region_text: str, key_phrases: List[str]) -> float:
+        """Calculate how well a text region matches the expected article content"""
+        if not region_text or not key_phrases:
+            return 0.0
+        
+        region_text_lower = region_text.lower()
+        matches = 0
+        total_phrases = len(key_phrases)
+        
+        for phrase in key_phrases:
+            if phrase.lower() in region_text_lower:
+                matches += 1
+        
+        # Calculate match ratio with bonus for longer matches
+        match_ratio = matches / total_phrases if total_phrases > 0 else 0.0
+        
+        # Bonus for text length (longer regions are often more significant)
+        length_bonus = min(len(region_text) / 500, 0.3)  # Up to 0.3 bonus for length
+        
+        return min(match_ratio + length_bonus, 1.0)
+    
+    def _detect_expanded_text_regions(self, image: Image.Image) -> List[Tuple[int, int, int, int]]:
+        """Detect additional text regions using alternative methods for better coverage"""
+        expanded_regions = []
+        
+        try:
+            # Use a finer grid for detecting smaller text blocks
+            width, height = image.size
+            
+            # Create overlapping grid regions for better text capture
+            grid_sizes = [
+                (width // 6, height // 8),  # Smaller grid for detailed text
+                (width // 4, height // 6),  # Medium grid for paragraphs
+                (width // 3, height // 4),  # Larger grid for columns
+            ]
+            
+            for grid_w, grid_h in grid_sizes:
+                # Create overlapping regions (50% overlap)
+                step_x = grid_w // 2
+                step_y = grid_h // 2
+                
+                for y in range(0, height - grid_h + 1, step_y):
+                    for x in range(0, width - grid_w + 1, step_x):
+                        region = (x, y, grid_w, grid_h)
+                        expanded_regions.append(region)
+            
+            # Add column-based regions (for multi-column articles)
+            column_width = width // 3
+            for i in range(3):  # Assume max 3 columns
+                x = i * column_width
+                region = (x, 0, column_width, height)
+                expanded_regions.append(region)
+            
+            # Add horizontal strips (for headlines and captions)
+            strip_height = height // 10
+            for i in range(10):
+                y = i * strip_height
+                region = (0, y, width, strip_height)
+                expanded_regions.append(region)
+            
+            logger.debug(f"Generated {len(expanded_regions)} expanded text regions")
+            return expanded_regions
+            
+        except Exception as e:
+            logger.warning(f"Error generating expanded regions: {str(e)}")
+            return []
+    
+    def _detect_text_continuation_score(self, region_text: str, article_text: str) -> float:
+        """Detect if text region appears to be continuation of the main article"""
+        if not region_text or not article_text:
+            return 0.0
+        
+        region_words = region_text.lower().split()
+        article_words = article_text.lower().split()
+        
+        if len(region_words) < 3:
+            return 0.0
+        
+        # Look for sequential word patterns that suggest continuation
+        continuation_score = 0.0
+        
+        # Check for common continuation patterns
+        continuation_indicators = [
+            'continued from', 'continued on', 'see page', 'turn to page',
+            'story continues', 'more on page', 'concluded on'
+        ]
+        
+        region_text_lower = region_text.lower()
+        for indicator in continuation_indicators:
+            if indicator in region_text_lower:
+                continuation_score += 0.5
+        
+        # Check for sentence fragments that might indicate wrapped text
+        if not region_text.strip().endswith(('.', '!', '?', '"')):
+            continuation_score += 0.2
+        
+        if not region_text.strip()[0].isupper():
+            continuation_score += 0.2
+        
+        # Look for word sequence matches with the main article
+        sequence_matches = 0
+        for i in range(len(region_words) - 2):
+            trigram = ' '.join(region_words[i:i+3])
+            if trigram in article_text.lower():
+                sequence_matches += 1
+        
+        if len(region_words) > 5:
+            sequence_score = min(sequence_matches / (len(region_words) - 2), 0.4)
+            continuation_score += sequence_score
+        
+        return min(continuation_score, 1.0)
+    
+    def _merge_related_text_regions(self, regions: List[Dict], images: List[Image.Image]) -> List[Tuple[int, int, int, int]]:
+        """Merge adjacent and related text regions to form coherent article boundaries"""
+        if not regions:
+            return []
+        
+        # Sort regions by score (highest first)
+        regions.sort(key=lambda r: r['final_score'], reverse=True)
+        
+        merged_boundaries = []
+        processed_regions = set()
+        
+        for i, region in enumerate(regions):
+            if i in processed_regions:
+                continue
+            
+            # Start with this region
+            x1, y1, w1, h1 = region['region']
+            x2, y2 = x1 + w1, y1 + h1
+            related_regions = [i]
+            
+            # Find nearby regions that should be merged
+            for j, other_region in enumerate(regions):
+                if j == i or j in processed_regions:
+                    continue
+                
+                ox1, oy1, ow1, oh1 = other_region['region']
+                ox2, oy2 = ox1 + ow1, oy1 + oh1
+                
+                # Check if regions are close enough to merge
+                horizontal_overlap = max(0, min(x2, ox2) - max(x1, ox1))
+                vertical_overlap = max(0, min(y2, oy2) - max(y1, oy1))
+                
+                # Calculate distances
+                horizontal_gap = max(0, max(x1, ox1) - min(x2, ox2))
+                vertical_gap = max(0, max(y1, oy1) - min(y2, oy2))
+                
+                # Merge if regions are close or overlapping
+                should_merge = False
+                
+                # Overlapping regions
+                if horizontal_overlap > 0 and vertical_overlap > 0:
+                    should_merge = True
+                
+                # Horizontally adjacent (same column/row)
+                elif vertical_overlap > min(h1, oh1) * 0.3 and horizontal_gap < 50:
+                    should_merge = True
+                
+                # Vertically adjacent (text continuation)
+                elif horizontal_overlap > min(w1, ow1) * 0.3 and vertical_gap < 30:
+                    should_merge = True
+                
+                # Similar text content (likely same article)
+                elif (other_region['content_score'] > 0.3 and 
+                      region['content_score'] > 0.3 and
+                      abs(region['final_score'] - other_region['final_score']) < 0.2):
+                    should_merge = True
+                
+                if should_merge:
+                    # Expand bounding box to include this region
+                    x1 = min(x1, ox1)
+                    y1 = min(y1, oy1)
+                    x2 = max(x2, ox2)
+                    y2 = max(y2, oy2)
+                    related_regions.append(j)
+            
+            # Add merged boundary
+            merged_boundary = (x1, y1, x2 - x1, y2 - y1)
+            merged_boundaries.append(merged_boundary)
+            
+            # Mark regions as processed
+            for region_idx in related_regions:
+                processed_regions.add(region_idx)
+            
+            logger.debug(f"Merged {len(related_regions)} regions into boundary: {merged_boundary}")
+        
+        logger.info(f"Merged {len(regions)} regions into {len(merged_boundaries)} coherent boundaries")
+        return merged_boundaries
+    
+    def _ensure_complete_article_coverage(self, boundaries: List[Tuple[int, int, int, int]], 
+                                        all_regions: List[Dict], 
+                                        images: List[Image.Image]) -> List[Tuple[int, int, int, int]]:
+        """Ensure boundaries capture the complete article including missed content"""
+        if not boundaries:
+            return boundaries
+        
+        # Calculate the overall article bounding box
+        min_x = min(b[0] for b in boundaries)
+        min_y = min(b[1] for b in boundaries)
+        max_x = max(b[0] + b[2] for b in boundaries)
+        max_y = max(b[1] + b[3] for b in boundaries)
+        
+        # Check if we're missing significant regions
+        total_image_height = sum(img.height for img in images)
+        coverage_ratio = (max_y - min_y) / total_image_height
+        
+        logger.info(f"Current coverage ratio: {coverage_ratio:.2f}")
+        
+        # If coverage is too low, expand to include more content
+        if coverage_ratio < 0.6:  # Less than 60% coverage suggests missing content
+            logger.info("Expanding boundaries to ensure complete article coverage")
+            
+            # Find high-scoring regions that weren't included
+            missed_regions = []
+            for region_data in all_regions:
+                region = region_data['region']
+                x, y, w, h = region
+                
+                # Check if this region is already covered by existing boundaries
+                covered = False
+                for bx, by, bw, bh in boundaries:
+                    if (x >= bx and y >= by and 
+                        x + w <= bx + bw and y + h <= by + bh):
+                        covered = True
+                        break
+                
+                if not covered and region_data['final_score'] > 0.2:
+                    missed_regions.append(region)
+            
+            # Add missed regions to boundaries
+            if missed_regions:
+                logger.info(f"Adding {len(missed_regions)} missed regions for complete coverage")
+                boundaries.extend(missed_regions)
+                
+                # Recalculate overall bounds
+                min_x = min(b[0] for b in boundaries)
+                min_y = min(b[1] for b in boundaries)
+                max_x = max(b[0] + b[2] for b in boundaries)
+                max_y = max(b[1] + b[3] for b in boundaries)
+        
+        # Create final oblong boundary that encompasses all content
+        padding = 30  # Generous padding to ensure we don't cut off text
+        final_boundary = (
+            max(0, min_x - padding),
+            max(0, min_y - padding),
+            max_x - min_x + (2 * padding),
+            max_y - min_y + (2 * padding)
+        )
+        
+        # Ensure boundary doesn't exceed image dimensions
+        if images:
+            total_width = max(img.width for img in images)
+            total_height = sum(img.height for img in images)
+            
+            x, y, w, h = final_boundary
+            final_boundary = (
+                max(0, x),
+                max(0, y),
+                min(w, total_width - x),
+                min(h, total_height - y)
+            )
+        
+        logger.info(f"Final comprehensive boundary: {final_boundary}")
+        return [final_boundary]  # Return single comprehensive boundary
+    
+    def stitch_newspaper_images(self, images: List[Image.Image], vertical_offset: int = 0) -> Image.Image:
+        """Stitch multiple newspaper images together vertically"""
+        if not images:
+            raise ValueError("No images provided for stitching")
+        
+        if len(images) == 1:
+            return images[0]
+        
+        logger.info(f"Stitching {len(images)} newspaper images together")
+        
+        # Calculate dimensions for stitched image
+        max_width = max(img.width for img in images)
+        total_height = sum(img.height for img in images) + (vertical_offset * (len(images) - 1))
+        
+        # Create new image
+        stitched = Image.new('RGB', (max_width, total_height), color='white')
+        
+        # Paste images vertically
+        current_y = 0
+        for i, img in enumerate(images):
+            # Center the image horizontally if it's narrower than max_width
+            x_offset = (max_width - img.width) // 2
+            stitched.paste(img, (x_offset, current_y))
+            current_y += img.height + vertical_offset
+            logger.info(f"Pasted image {i+1} at position ({x_offset}, {current_y - img.height - vertical_offset})")
+        
+        logger.info(f"Created stitched image with dimensions: {stitched.size}")
+        return stitched
+    
+    def crop_article_from_stitched_image(self, stitched_image: Image.Image, boundaries: List[Tuple[int, int, int, int]]) -> Image.Image:
+        """Enhanced cropping that captures complete article content in oblong format"""
+        if not boundaries:
+            logger.warning("No boundaries provided, returning original image")
+            return stitched_image
+        
+        # The enhanced boundary detection now returns a single comprehensive boundary
+        if len(boundaries) == 1:
+            # Use the comprehensive boundary directly
+            x, y, w, h = boundaries[0]
+            crop_box = (x, y, x + w, y + h)
+            logger.info(f"Using comprehensive boundary for cropping: {crop_box}")
+        else:
+            # Fallback: Calculate encompassing box if multiple boundaries
+            min_x = min(boundary[0] for boundary in boundaries)
+            min_y = min(boundary[1] for boundary in boundaries)
+            max_x = max(boundary[0] + boundary[2] for boundary in boundaries)
+            max_y = max(boundary[1] + boundary[3] for boundary in boundaries)
+            
+            # Minimal padding since comprehensive detection already includes padding
+            padding = 10
+            crop_box = (
+                max(0, min_x - padding),
+                max(0, min_y - padding),
+                min(stitched_image.width, max_x + padding),
+                min(stitched_image.height, max_y + padding)
+            )
+            logger.info(f"Using multiple boundaries for cropping: {crop_box}")
+        
+        # Ensure crop box is valid
+        crop_box = (
+            max(0, crop_box[0]),
+            max(0, crop_box[1]),
+            min(stitched_image.width, crop_box[2]),
+            min(stitched_image.height, crop_box[3])
+        )
+        
+        # Ensure minimum dimensions
+        if crop_box[2] - crop_box[0] < 100 or crop_box[3] - crop_box[1] < 100:
+            logger.warning("Crop box too small, using full image")
+            return stitched_image
+        
+        logger.info(f"Final crop box: {crop_box}")
+        cropped_image = stitched_image.crop(crop_box)
+        
+        # Calculate aspect ratio and log information
+        aspect_ratio = cropped_image.width / cropped_image.height
+        logger.info(f"Cropped oblong article image: {cropped_image.size}, aspect ratio: {aspect_ratio:.2f}")
+        
+        # If the result is very wide or very tall, it might indicate good article capture
+        if aspect_ratio > 2.0:
+            logger.info("Wide oblong crop - likely captured multi-column article layout")
+        elif aspect_ratio < 0.5:
+            logger.info("Tall oblong crop - likely captured full article with wrapped text")
+        else:
+            logger.info("Balanced crop - captured complete article content")
+        
+        return cropped_image
+    
+    def save_png_to_storage(self, image: Image.Image, filename: str, storage_manager) -> bool:
+        """Save image as PNG to Replit storage"""
+        try:
+            # Convert image to PNG bytes
+            png_buffer = io.BytesIO()
+            image.save(png_buffer, format='PNG', optimize=True)
+            png_data = png_buffer.getvalue()
+            
+            # Ensure filename has .png extension
+            if not filename.lower().endswith('.png'):
+                filename = f"{filename}.png"
+            
+            # Upload to storage
+            result = storage_manager.upload_image(png_data, filename, 'image/png')
+            
+            if result.get('success'):
+                logger.info(f"Successfully uploaded PNG to storage: {filename}")
+                return True
+            else:
+                logger.error(f"Failed to upload PNG to storage: {result.get('error', 'Unknown error')}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error saving PNG to storage: {str(e)}")
+            return False
     
     def extract_text_with_confidence(self, image: Image.Image, region: Tuple[int, int, int, int]) -> Tuple[str, float]:
         """Extract text with confidence scores"""
@@ -1190,8 +1674,48 @@ class NewspapersComExtractor:
             overall_best = max(best_results, key=lambda r: r['analysis'].get('sports_score', 0) + (r['confidence'] / 100))
             logger.info(f"Selected overall best result from page {overall_best['page_number']}.")
             
-            x, y, w, h = overall_best['region']
-            clipping = overall_best['image'].crop((x, y, x + w, y + h))
+            # NEW: Multi-image processing for better article boundary detection
+            clipping = None
+            stitched_image = None
+            article_boundaries = []
+            
+            if len(all_images) > 1:
+                logger.info("Multiple images detected - attempting multi-image processing")
+                
+                try:
+                    # Extract just the images for stitching
+                    images_to_stitch = [img_data['image'] for img_data in all_images]
+                    
+                    # Stitch images together
+                    stitched_image = self.image_processor.stitch_newspaper_images(images_to_stitch)
+                    logger.info(f"Successfully stitched {len(images_to_stitch)} images into {stitched_image.size}")
+                    
+                    # Get the best article text for boundary detection
+                    article_text = overall_best['text']
+                    
+                    # Detect article boundaries across the stitched image
+                    article_boundaries = self.image_processor.detect_article_boundaries_across_images(
+                        images_to_stitch, article_text
+                    )
+                    
+                    if article_boundaries:
+                        # Crop the article from the stitched image using detected boundaries
+                        clipping = self.image_processor.crop_article_from_stitched_image(
+                            stitched_image, article_boundaries
+                        )
+                        logger.info(f"Successfully created article clipping from stitched image: {clipping.size}")
+                    else:
+                        logger.warning("No article boundaries detected, falling back to single image processing")
+                        
+                except Exception as e:
+                    logger.error(f"Multi-image processing failed: {str(e)}")
+                    logger.info("Falling back to single image processing")
+            
+            # Fallback to single image processing if multi-image failed or only one image
+            if clipping is None:
+                x, y, w, h = overall_best['region']
+                clipping = overall_best['image'].crop((x, y, x + w, y + h))
+                logger.info(f"Using single image clipping: {clipping.size}")
             
             metadata = {
                 'title': image_metadata.get('title', 'Unknown Article'),
@@ -1222,7 +1746,10 @@ class NewspapersComExtractor:
                 'content': overall_best['text'][:500] + "..." if len(overall_best['text']) > 500 else overall_best['text'],
                 'image_data': clipping,
                 'metadata': metadata,
-                'full_text': overall_best['text']
+                'full_text': overall_best['text'],
+                'stitched_image': stitched_image,
+                'article_boundaries': article_boundaries,
+                'processing_method': 'multi_image' if len(all_images) > 1 and stitched_image else 'single_image'
             }
             
             if len(all_images) > 1:

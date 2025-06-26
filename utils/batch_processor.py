@@ -4,6 +4,7 @@
 import concurrent.futures
 import time
 import logging
+import io
 from datetime import datetime
 from typing import List, Dict, Callable, Optional
 import requests
@@ -148,7 +149,9 @@ class BatchProcessor:
                             'markdown_path': result.get('markdown_path', '') if isinstance(result, dict) else getattr(result, 'markdown_path', ''),
                             'processing_time_seconds': result.get('processing_time_seconds', 0.0) if isinstance(result, dict) else getattr(result, 'processing_time_seconds', 0.0),
                             'upload_result': upload_result,
-                            'metadata': result.get('metadata', {}) if isinstance(result, dict) else getattr(result, 'metadata', {})
+                            'metadata': result.get('metadata', {}) if isinstance(result, dict) else getattr(result, 'metadata', {}),
+                            'image_data': result.get('image_data') if isinstance(result, dict) else getattr(result, 'image_data', None),  # Preserve newspaper clipping images
+                            'stitched_image': result.get('stitched_image') if isinstance(result, dict) else getattr(result, 'stitched_image', None)  # Preserve stitched images
                         }
                         results.append(result_dict)
                         self.total_successful += 1
@@ -361,7 +364,9 @@ class BatchProcessor:
             # Generate filename
             filename = self._generate_filename(result, url)
             
-            # Upload to storage
+            upload_results = []
+            
+            # Upload main clipping image
             upload_result = self.storage_manager.upload_image(
                 image_data=result.image_data,
                 filename=filename,
@@ -371,16 +376,93 @@ class BatchProcessor:
                     'source': result.source,
                     'date': result.date,
                     'processing_method': result.metadata.get('extraction_method', 'unknown') if result.metadata else 'unknown',
-                    'upload_timestamp': datetime.now().isoformat()
+                    'upload_timestamp': datetime.now().isoformat(),
+                    'image_type': 'article_clipping'
                 }
             )
+            upload_results.append(upload_result)
             
-            if upload_result.get('success'):
+            # NEW: Upload stitched image as PNG if available (for multi-page articles)
+            if hasattr(result, 'stitched_image') and result.stitched_image:
+                logger.info(f"Uploading stitched newspaper image as PNG for {url}")
+                
+                # Generate PNG filename
+                base_name = filename.rsplit('.', 1)[0] if '.' in filename else filename
+                png_filename = f"{base_name}_stitched.png"
+                
+                # Use the newspapers_extractor PNG upload functionality
+                if self.newspapers_extractor:
+                    png_uploaded = self.newspapers_extractor.image_processor.save_png_to_storage(
+                        result.stitched_image, 
+                        png_filename, 
+                        self.storage_manager
+                    )
+                    
+                    if png_uploaded:
+                        logger.info(f"Successfully uploaded stitched PNG for {url}")
+                        upload_results.append({
+                            'success': True,
+                            'filename': png_filename,
+                            'type': 'stitched_png',
+                            'size': f"{result.stitched_image.width}x{result.stitched_image.height}"
+                        })
+                    else:
+                        logger.warning(f"Failed to upload stitched PNG for {url}")
+                        upload_results.append({
+                            'success': False,
+                            'error': 'PNG upload failed',
+                            'type': 'stitched_png'
+                        })
+                else:
+                    # Fallback: Convert to PNG bytes and upload directly
+                    try:
+                        png_buffer = io.BytesIO()
+                        result.stitched_image.save(png_buffer, format='PNG', optimize=True)
+                        png_data = png_buffer.getvalue()
+                        
+                        png_upload_result = self.storage_manager.upload_image(
+                            image_data=png_data,
+                            filename=png_filename,
+                            content_type='image/png',
+                            metadata={
+                                'url': url,
+                                'headline': result.headline,
+                                'source': result.source,
+                                'date': result.date,
+                                'processing_method': 'multi_image_stitched',
+                                'upload_timestamp': datetime.now().isoformat(),
+                                'image_type': 'stitched_full_article',
+                                'dimensions': f"{result.stitched_image.width}x{result.stitched_image.height}"
+                            }
+                        )
+                        upload_results.append(png_upload_result)
+                        
+                        if png_upload_result.get('success'):
+                            logger.info(f"Successfully uploaded stitched PNG via fallback method for {url}")
+                        else:
+                            logger.warning(f"Failed to upload stitched PNG via fallback for {url}")
+                            
+                    except Exception as e:
+                        logger.error(f"Error in PNG fallback upload for {url}: {str(e)}")
+                        upload_results.append({
+                            'success': False,
+                            'error': f"PNG fallback failed: {str(e)}",
+                            'type': 'stitched_png_fallback'
+                        })
+            
+            # Return the main upload result with additional info about PNG uploads
+            main_result = upload_results[0]
+            if len(upload_results) > 1:
+                main_result['additional_uploads'] = upload_results[1:]
+                png_success_count = sum(1 for r in upload_results[1:] if r.get('success'))
+                main_result['png_uploads_successful'] = png_success_count
+            
+            if main_result.get('success'):
                 logger.info(f"Successfully uploaded image for {url}")
-                return upload_result
+                return main_result
             else:
-                logger.error(f"Failed to upload image for {url}: {upload_result.get('error')}")
-                return upload_result
+                logger.error(f"Failed to upload image for {url}: {main_result.get('error')}")
+                return main_result
                 
         except Exception as e:
             logger.error(f"Error uploading to storage for {url}: {str(e)}")
