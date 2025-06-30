@@ -439,3 +439,105 @@ class StorageManager:
                 'success': False,
                 'error': str(e)
             }
+    
+    def store_file(self, filename: str, content: bytes, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Store a file (text, binary, etc.) to storage
+        
+        Args:
+            filename (str): The filename for the file
+            content (bytes): The file content as bytes
+            metadata (dict, optional): Additional metadata to store with the file
+            
+        Returns:
+            dict: Result of the storage operation with success status and details
+        """
+        logger.info(f"Starting file storage: {filename} to project: {self.project_name}")
+        
+        try:
+            if not REPLIT_STORAGE_AVAILABLE:
+                # Development mode - save locally instead
+                return self._store_file_locally(filename, content, metadata)
+            
+            if not self.client:
+                raise Exception("Storage client not initialized")
+            
+            # Get the full path including project folder
+            full_path = self._get_project_path(filename)
+            
+            # Upload using the official SDK method
+            logger.debug(f"Storing file with path '{full_path}'")
+            
+            self.client.upload_from_bytes(full_path, content)
+            
+            logger.info(f"Successfully stored file: {full_path}")
+            
+            return {
+                'success': True,
+                'filename': filename,
+                'project': self.project_name,
+                'path': full_path,
+                'size': len(content),
+                'metadata': metadata or {}
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to store file {filename}: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e),
+                'filename': filename
+            }
+    
+    def _store_file_locally(self, filename: str, content: bytes, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Store file locally in development mode
+        
+        Args:
+            filename (str): The filename
+            content (bytes): The file content
+            metadata (dict, optional): Additional metadata
+            
+        Returns:
+            dict: Result of the local storage operation
+        """
+        try:
+            # Create project directory structure
+            local_storage_dir = os.path.join('local_storage', self.project_name)
+            
+            # Handle nested paths in filename
+            file_dir = os.path.dirname(filename)
+            if file_dir:
+                full_dir = os.path.join(local_storage_dir, file_dir)
+                os.makedirs(full_dir, exist_ok=True)
+            else:
+                os.makedirs(local_storage_dir, exist_ok=True)
+            
+            local_path = os.path.join(local_storage_dir, filename)
+            
+            # Save the file
+            with open(local_path, 'wb') as f:
+                f.write(content)
+            
+            logger.info(f"Successfully stored file locally: {local_path}")
+            
+            if metadata:
+                logger.debug(f"Metadata for {filename}: {metadata}")
+            
+            return {
+                'success': True,
+                'filename': filename,
+                'project': self.project_name,
+                'local_path': local_path,
+                'size': len(content),
+                'metadata': metadata or {},
+                'note': 'Stored locally - Replit Object Storage not available'
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to store file locally {filename}: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e),
+                'filename': filename
+            }

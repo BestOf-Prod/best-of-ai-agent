@@ -15,6 +15,8 @@ import math
 from enum import Enum
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
+from utils.storage_manager import StorageManager
+from utils.paragraph_formatter import format_article_paragraphs
 
 # Setup logging
 logger = setup_logging(__name__)
@@ -421,21 +423,19 @@ def generate_markdown_content(article_data: dict, image_path: Optional[str] = No
     
     return '\n'.join(markdown)
 
-def download_image(image_url: str, output_dir: str) -> Optional[str]:
+def download_image(image_url: str, output_dir: str, storage_manager: StorageManager = None) -> Optional[str]:
     """
-    Download an image from URL and save it locally
+    Download an image from URL and save it using storage manager
     
     Args:
         image_url (str): URL of the image to download
-        output_dir (str): Directory to save the image in
+        output_dir (str): Directory to save the image in (for local storage)
+        storage_manager (StorageManager): Storage manager instance for project-based storage
         
     Returns:
         str: Path to the downloaded image, or None if download failed
     """
     try:
-        # Create output directory if it doesn't exist
-        os.makedirs(output_dir, exist_ok=True)
-        
         # Generate filename from URL
         parsed_url = urlparse(image_url)
         filename = os.path.basename(parsed_url.path)
@@ -446,25 +446,39 @@ def download_image(image_url: str, output_dir: str) -> Optional[str]:
         response = requests.get(image_url, stream=True, timeout=10)
         response.raise_for_status()
         
-        # Save image
-        output_path = os.path.join(output_dir, filename)
-        with open(output_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
+        # Get image data
+        image_data = b''
+        for chunk in response.iter_content(chunk_size=8192):
+            image_data += chunk
         
-        logger.info(f"Successfully downloaded image to {output_path}")
+        if storage_manager:
+            # Use storage manager for project-based storage
+            source = parsed_url.netloc.replace('www.', '')
+            image_filename = f"images/{source}/{filename}"
+            storage_manager.store_file(image_filename, image_data)
+            output_path = storage_manager._get_project_path(image_filename)
+            logger.info(f"Successfully stored image using StorageManager: {output_path}")
+        else:
+            # Fallback to local storage
+            os.makedirs(output_dir, exist_ok=True)
+            output_path = os.path.join(output_dir, filename)
+            with open(output_path, 'wb') as f:
+                f.write(image_data)
+            logger.info(f"Successfully downloaded image to {output_path}")
+        
         return output_path
         
     except Exception as e:
         logger.error(f"Failed to download image: {str(e)}")
         return None
 
-def extract_from_url(url):
+def extract_from_url(url, project_name: str = "default"):
     """
     Extract article content from a given URL
     
     Args:
         url (str): The URL of the article to extract
+        project_name (str): The project name for organizing storage
         
     Returns:
         dict: A dictionary containing the extracted article data or error information
@@ -740,13 +754,37 @@ def extract_from_url(url):
         
         logger.info("Article extraction completed successfully")
         
+        # Apply paragraph formatting to the extracted content if needed
+        formatted_content = content
+        try:
+            # Create context for paragraph formatting
+            context = {
+                'headline': headline_text,
+                'source': source,
+                'author': author,
+                'date': date_text
+            }
+            
+            # Apply paragraph formatting using LLM or fallback methods
+            formatted_content = format_article_paragraphs(content, context)
+            
+            if formatted_content and formatted_content != content:
+                logger.info(f"Applied paragraph formatting to URL content (original: {len(content)} chars, formatted: {len(formatted_content)} chars)")
+            else:
+                logger.debug("URL content already has adequate paragraph formatting or formatting failed")
+                formatted_content = content  # Use original if formatting didn't improve it
+                
+        except Exception as e:
+            logger.warning(f"Paragraph formatting failed for URL content, using original: {str(e)}")
+            formatted_content = content  # Fallback to original content
+        
         # Create the article data dictionary
         article_data = {
             "success": True,
             "headline": headline_text,
             "date": date_text,
             "author": author,
-            "text": content,
+            "text": formatted_content,
             "source": source,
             "url": url,
             "image_url": image_url,
@@ -768,9 +806,11 @@ def extract_from_url(url):
         # Create the filename
         markdown_filename = f"{date_str}_{clean_source}_{safe_headline}.md"
         
-        # Create output directory if it doesn't exist
-        os.makedirs('extracted_articles', exist_ok=True)
-        markdown_path = os.path.join('extracted_articles', markdown_filename)
+        # Initialize storage manager with project name
+        storage_manager = StorageManager(project_name=project_name)
+        
+        # Use storage manager for file path
+        markdown_path = storage_manager._get_project_path(markdown_filename)
         
         # Add markdown path to article data before generating content
         article_data["markdown_path"] = markdown_path
@@ -778,16 +818,16 @@ def extract_from_url(url):
         # Download image if available
         image_path = None
         if image_url:
-            # Create a directory for images
-            image_dir = os.path.join('extracted_images', source)
-            image_path = download_image(image_url, image_dir)
+            # Use storage manager for image path
+            image_filename = os.path.basename(urlparse(image_url).path) or f"image_{int(time.time())}.jpg"
+            image_path = storage_manager._get_project_path(f"images/{source}/{image_filename}")
+            image_path = download_image(image_url, os.path.dirname(image_path), storage_manager)
         
         # Generate markdown content
         markdown_content = generate_markdown_content(article_data, image_path)
         
-        # Save the complete markdown content
-        with open(markdown_path, 'w', encoding='utf-8') as f:
-            f.write(markdown_content)
+        # Save the complete markdown content using storage manager
+        storage_manager.store_file(markdown_filename, markdown_content.encode('utf-8'))
         
         logger.info(f"Saved complete article content to {markdown_path}")
         

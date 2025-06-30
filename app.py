@@ -43,21 +43,15 @@ def main():
     initialize_session_state()
     
     # Application title
-    st.title("🚀 Best of AI Agent - Enhanced Batch Document Processor")
-    st.subheader("Upload a Word document with URLs for automated article extraction with advanced Newspapers.com authentication")
-    logger.info("Rendered enhanced application header")
+    st.title("📰 Article Extractor")
+    st.caption("Upload documents, extract articles, and generate newspaper clippings")
+    logger.info("Rendered application header")
     
     # Get configuration from sidebar
-    config = enhanced_sidebar_config()
+    config = streamlined_sidebar_config()
     
-    # Display authentication status at the top
-    display_authentication_status()
-    
-    # Display workflow visualization
-    display_enhanced_workflow()
-    
-    # Main content area with tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📄 Document Processing", "🔬 Test Article", "🔍 Newspapers.com Search", "📊 Batch Results", "🖼️ Image Gallery", "📑 ICML Export", "📰 Newspaper Clipping"])
+    # Main content area with simplified tabs
+    tab1, tab2, tab3, tab4 = st.tabs(["📄 Process Documents", "🖼️ Gallery & Results", "📑 Export", "⚙️ Advanced"])
     
     with tab1:
         handle_document_upload(config)
@@ -65,26 +59,31 @@ def main():
             display_extracted_urls(config)
     
     with tab2:
-        handle_article_test(config)
-    
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            st.subheader("📊 Processing Results")
+            display_batch_results()
+        with col2:
+            st.subheader("🖼️ Generated Images")
+            display_images_gallery(config)
+        
     with tab3:
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            st.subheader("📑 ICML Export")
+            handle_icml_conversion()
+        with col2:
+            st.subheader("📰 Newspaper Format")
+            handle_newspaper_conversion()
+            
+    with tab4:
+        st.subheader("🔬 Test Single Article")
+        handle_article_test(config)
+        st.divider()
+        st.subheader("🔍 Newspapers.com Search")
         handle_newspapers_search(config)
     
-    with tab4:
-        display_batch_results()
-    
-    with tab5:
-        display_images_gallery(config)
-        
-    with tab6:
-        handle_icml_conversion()
-        
-    with tab7:
-        handle_newspaper_conversion()
-    
-    # Footer
-    display_enhanced_footer()
-    logger.info("Enhanced application fully rendered")
+    logger.info("Application fully rendered")
 
 def initialize_session_state():
     """Initialize all session state variables"""
@@ -104,69 +103,55 @@ def initialize_session_state():
             st.session_state[key] = default_value
             logger.info(f"Initialized {key} session state")
 
-def enhanced_sidebar_config():
-    """Enhanced sidebar configuration with authentication options"""
-    logger.info("Setting up enhanced sidebar")
-    st.sidebar.header("🔧 Processing Configuration")
+def streamlined_sidebar_config():
+    """Streamlined sidebar configuration"""
+    logger.info("Setting up sidebar")
+    st.sidebar.header("⚙️ Settings")
     
-    # Authentication section
-    st.sidebar.subheader("🔐 Newspapers.com Authentication")
+    # Authentication section (collapsed by default)
+    with st.sidebar.expander("🔐 Newspapers.com Login", expanded=False):
+        # email = st.text_input("Email", key="np_email")
+        # password = st.text_input("Password", type="password", key="np_password")
+        uploaded_cookies = st.file_uploader("Cookies File (Optional)", type=['json'])
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Login", key="init_auth"):
+                initialize_newspapers_authentication(email, password, uploaded_cookies)
+        with col2:
+            if st.button("Test", key="test_auth"):
+                test_newspapers_authentication()
     
-    # Get login credentials
-    email = st.sidebar.text_input(
-        "Newspapers.com Email",
-        help="Enter your Newspapers.com account email"
-    )
-    
-    password = st.sidebar.text_input(
-        "Newspapers.com Password",
-        type="password",
-        help="Enter your Newspapers.com account password"
-    )
-
-    # Add cookie file upload
-    uploaded_cookies = st.sidebar.file_uploader(
-        "Upload Cookies (Optional)",
-        type=['json'],
-        help="Upload a JSON file containing Newspapers.com cookies"
-    )
-    
-    # Initialize/refresh authentication
-    col1, col2 = st.sidebar.columns(2)
-    with col1:
-        if st.sidebar.button("🔄 Initialize Auth"):
-            initialize_newspapers_authentication(email, password, uploaded_cookies)
-    
-    with col2:
-        if st.sidebar.button("🧪 Test Auth"):
-            test_newspapers_authentication()
-    
-    # Storage configuration
-    st.sidebar.subheader("☁️ Storage Settings")
-    bucket_name = st.sidebar.text_input(
-        "Replit Storage Bucket Name", 
-        value="newspaper-clippings",
-        help="Name of the Replit Object Storage bucket to upload images to"
-    )
-    
+    # Project settings
     project_name = st.sidebar.text_input(
-        "Project Name",
+        "📁 Project Name",
         value="default",
-        help="Name of the project folder to organize images in storage"
+        help="Organizes files in folders"
     )
     
-    # Processing configuration
-    st.sidebar.subheader("⚙️ Batch Processing")
-    max_workers = st.sidebar.slider("Concurrent Workers", 1, 5, 3, help="Number of URLs to process simultaneously")
-    delay_between_requests = st.sidebar.slider("Delay Between Requests (sec)", 0.5, 5.0, 1.0, 0.5, help="Delay between requests to be respectful to servers")
+    # Storage configuration (collapsed)
+    with st.sidebar.expander("☁️ Storage", expanded=False):
+        bucket_name = st.text_input(
+            "Bucket Name", 
+            value="newspaper-clippings"
+        )
     
-    # Newspapers.com specific settings
-    st.sidebar.subheader("📰 Newspapers.com Settings")
-    date_range = st.sidebar.selectbox(
-        "Date Range",
-        ["Any", "2020-2025", "2010-2019", "2000-2009", "1990-1999", "1980-1989"],
-        help="Filter articles by date range"
-    )
+    # Processing settings
+    max_workers = st.sidebar.slider("⚡ Workers", 1, 5, 3, help="Concurrent processing")
+    delay_between_requests = st.sidebar.slider("⏱️ Delay (sec)", 0.5, 5.0, 1.0, 0.5, help="Between requests")
+    
+    # Additional settings (collapsed)
+    with st.sidebar.expander("📰 Filters", expanded=False):
+        date_range = st.selectbox(
+            "Date Range",
+            ["Any", "2020-2025", "2010-2019", "2000-2009", "1990-1999", "1980-1989"]
+        )
+    
+    # Display auth status compactly
+    if st.session_state.get('authentication_status', {}).get('authenticated'):
+        st.sidebar.success("✅ Logged in")
+    else:
+        st.sidebar.info("ℹ️ Login for newspapers.com")
     
     return {
         'bucket_name': bucket_name,
@@ -313,10 +298,8 @@ def display_enhanced_workflow():
 
 def handle_newspapers_search(config):
     """Handle direct Newspapers.com search functionality"""
-    st.write("## 🔍 Direct Newspapers.com Search")
-    
     if not st.session_state.newspapers_extractor:
-        st.warning("Please initialize Newspapers.com authentication first in the sidebar")
+        st.warning("🔐 Initialize authentication first in the sidebar")
         return
     
     col1, col2 = st.columns([2, 1])
@@ -435,10 +418,8 @@ def display_extracted_urls(config):
     """Enhanced display of extracted URLs"""
     logger.info("Displaying extracted URLs with enhanced features")
     
-    st.write("## 📋 Step 2: Review and Manage URLs")
-    
     urls = st.session_state.extracted_urls
-    st.write(f"**Total URLs: {len(urls)}**")
+    st.write(f"📋 **{len(urls)} URLs found:**")
     
     # Enhanced URL display with domain analysis
     if urls:
@@ -449,73 +430,20 @@ def display_extracted_urls(config):
             'Type': ['Newspapers.com' if 'newspapers.com' in url else 'Other' for url in urls]
         })
         
-        # Show domain statistics
-        domain_counts = url_df['Domain'].value_counts()
-        st.write("**Domain Distribution:**")
-        for domain, count in domain_counts.head(5).items():
-            st.write(f"• {domain}: {count} URLs")
+        st.dataframe(url_df, use_container_width=True, hide_index=True)
         
-        st.dataframe(url_df, use_container_width=True)
-        
-        # Enhanced URL management
-        manage_urls(config)
-        
-        # Start processing section
-        start_enhanced_processing(config)
+        # Processing controls
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            if st.button("⚡ Process All URLs", type="primary", use_container_width=True):
+                start_enhanced_batch_processing(config)
+        with col2:
+            if st.button("🗑️ Clear", use_container_width=True):
+                clear_extracted_data()
 
-def manage_urls(config):
-    """Enhanced URL management interface"""
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        manual_url = st.text_input("Add URL manually:")
-        if st.button("➕ Add URL") and manual_url:
-            if manual_url not in st.session_state.extracted_urls:
-                st.session_state.extracted_urls.append(manual_url)
-                logger.info(f"Manually added URL: {manual_url}")
-                st.rerun()
-    
-    with col2:
-        if st.session_state.extracted_urls:
-            url_to_remove = st.selectbox("Remove URL:", ["Select URL to remove..."] + st.session_state.extracted_urls)
-            if st.button("➖ Remove URL") and url_to_remove != "Select URL to remove...":
-                st.session_state.extracted_urls.remove(url_to_remove)
-                logger.info(f"Removed URL: {url_to_remove}")
-                st.rerun()
-    
-    with col3:
-        st.write("**Processing Settings:**")
-        st.write(f"🔧 Workers: {config['max_workers']}")
-        st.write(f"⏱️ Delay: {config['delay_between_requests']}s")
+# Removed - functionality integrated into display_extracted_urls
 
-def start_enhanced_processing(config):
-    """Enhanced batch processing with advanced features"""
-    st.write("## 🚀 Step 3: Start Enhanced Batch Processing")
-    
-    urls = st.session_state.extracted_urls
-    newspapers_urls = [url for url in urls if 'newspapers.com' in url]
-    other_urls = [url for url in urls if 'newspapers.com' not in url]
-    
-    # Show processing breakdown
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total URLs", len(urls))
-    with col2:
-        st.metric("Newspapers.com", len(newspapers_urls))
-    with col3:
-        st.metric("Other Sites", len(other_urls))
-    
-    if newspapers_urls and not st.session_state.authentication_status.get('initialized'):
-        st.warning("⚠️ You have Newspapers.com URLs but authentication is not set up. Initialize authentication in the sidebar for better results.")
-    
-    if not st.session_state.processing_active:
-        if st.button("🚀 Start Enhanced Batch Processing", type="primary", disabled=len(urls) == 0):
-            start_enhanced_batch_processing(config)
-    else:
-        st.warning("⏳ Enhanced batch processing is currently active...")
-        if st.button("🛑 Stop Processing"):
-            st.session_state.processing_active = False
-            st.rerun()
+# Removed - functionality integrated into display_extracted_urls
 
 def start_enhanced_batch_processing(config):
     """Start enhanced batch processing with auto-authentication"""
@@ -558,7 +486,8 @@ def start_enhanced_batch_processing(config):
                 progress_callback=enhanced_progress_callback,
                 delay_between_requests=config['delay_between_requests'],
                 player_name=config.get('player_name'),
-                enable_advanced_processing=config.get('enable_advanced_processing', True)
+                enable_advanced_processing=config.get('enable_advanced_processing', True),
+                project_name=project_name
             )
         
         # Store enhanced results
@@ -608,17 +537,13 @@ def test_storage_connection(bucket_name, project_name):
 def display_batch_results():
     """Enhanced display of batch processing results"""
     if not st.session_state.batch_results:
-        st.info("No batch processing results yet. Process some URLs to see results here.")
+        st.info("📊 No results yet. Process URLs first.")
         return
-    
-    logger.info("Displaying enhanced batch results")
     
     results = st.session_state.batch_results
     
-    st.write("## 📊 Enhanced Batch Processing Results")
-    
-    # Enhanced summary metrics
-    col1, col2, col3, col4, col5 = st.columns(5)
+    # Summary metrics
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         st.metric("Total URLs", results['total_urls'])
@@ -758,61 +683,26 @@ def display_batch_results():
                 st.success("No failed extractions in this batch!")
 
 def display_images_gallery(config):
-    """Enhanced image gallery with preview capabilities"""
-    logger.info("Displaying enhanced images gallery")
+    """Image gallery display"""
+    logger.info("Displaying images gallery")
     
-    st.write("## 🖼️ Enhanced Images Gallery")
-    
-    col1, col2, col3 = st.columns([2, 1, 1])
-    
+    col1, col2 = st.columns([1, 1])
     with col1:
-        if st.button("🔄 Refresh Images"):
+        if st.button("🔄 Refresh"):
             refresh_images_gallery(config)
-    
     with col2:
-        st.write(f"**Total Images: {len(st.session_state.uploaded_images)}**")
-    
-    with col3:
-        if st.session_state.uploaded_images:
-            if st.button("📥 Download All"):
-                st.info("Download all functionality would be implemented here")
+        st.write(f"**{len(st.session_state.uploaded_images)} images**")
     
     if st.session_state.uploaded_images:
-        # Enhanced image display with filtering
         images = st.session_state.uploaded_images
         
-        # Filter options
-        st.write("### Filter Options")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            name_filter = st.text_input("Filter by name:", placeholder="Enter text to filter...")
-        
-        with col2:
-            sort_option = st.selectbox("Sort by:", ["Name", "Date Created", "Size"])
-        
-        # Apply filters
-        filtered_images = images
-        if name_filter:
-            filtered_images = [img for img in images if name_filter.lower() in img['name'].lower()]
-        
-        # Sort images
-        if sort_option == "Date Created":
-            filtered_images.sort(key=lambda x: x.get('created', ''), reverse=True)
-        elif sort_option == "Size":
-            filtered_images.sort(key=lambda x: x.get('size', 0), reverse=True)
-        else:  # Name
-            filtered_images.sort(key=lambda x: x.get('name', ''))
-        
-        st.write(f"Showing {len(filtered_images)} of {len(images)} images")
-        
-        # Enhanced grid layout
+        # Simple grid layout
         cols_per_row = 3
-        for i in range(0, len(filtered_images), cols_per_row):
+        for i in range(0, len(images), cols_per_row):
             cols = st.columns(cols_per_row)
             for j, col in enumerate(cols):
-                if i + j < len(filtered_images):
-                    display_image_card(filtered_images[i + j], config, i + j)
+                if i + j < len(images):
+                    display_image_card(images[i + j], config, i + j)
     else:
         st.info("📸 No images uploaded yet. Process some URLs to generate newspaper clippings!")
 
@@ -916,64 +806,12 @@ def download_image(img, config):
     """Download image functionality"""
     st.info(f"Download functionality for {img['name']} would be implemented here")
 
-def display_enhanced_footer():
-    """Display enhanced footer with more information"""
-    logger.info("Rendering enhanced footer")
-    st.write("---")
-    st.write("### 🚀 About This Enhanced Application")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.info("""
-        **Best of AI Agent - Enhanced Batch Document Processor**
-        
-        🔥 **New Features:**
-        - 🔐 Auto-cookie authentication for Newspapers.com
-        - 🧠 Advanced image processing and OCR
-        - 🎯 Smart content filtering and analysis
-        - 📊 Enhanced progress tracking and results
-        - 🔍 Direct Newspapers.com search
-        """)
-    
-    with col2:
-        st.info("""
-        **Enhanced Workflow:**
-        1. 🔐 Automatic browser cookie detection
-        2. 📄 Word document URL extraction
-        3. 🔍 Direct newspaper search capability
-        4. ⚡ Concurrent batch processing
-        5. 🖼️ Advanced newspaper clipping generation
-        6. ☁️ Seamless cloud storage integration
-        """)
-    
-    # Technical details
-    with st.expander("🔧 Technical Details"):
-        st.write("""
-        **Enhanced Authentication:**
-        - Automatic cookie extraction from Chrome, Firefox, Edge, Safari
-        - Session management and authentication testing
-        - Fallback to manual cookie input
-        
-        **Advanced Image Processing:**
-        - Computer vision for article boundary detection
-        - Enhanced OCR with confidence scoring
-        - Smart content analysis and filtering
-        
-        **Improved Performance:**
-        - Concurrent processing with rate limiting
-        - Progress tracking with detailed feedback
-        - Error handling and retry mechanisms
-        """)
-    
-    logger.debug("Enhanced footer rendered")
+# Removed - footer function not needed
 
 def handle_article_test(config):
     """Handle testing of individual Newspapers.com article links"""
-    st.write("## 🔬 Test Individual Article")
-    
     if not st.session_state.newspapers_extractor:
-        st.warning("Please initialize Newspapers.com authentication first in the sidebar")
+        st.warning("🔐 Initialize authentication first in the sidebar")
         return
     
     # Article URL input

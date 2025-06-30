@@ -2,6 +2,7 @@
 # Complete Newspaper.com Scraping Suite with Auto Cookie Extraction
 
 import streamlit as st
+from utils.storage_manager import StorageManager
 import requests
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -39,6 +40,9 @@ import threading
 import queue
 import tempfile
 from pathlib import Path
+
+# Import paragraph formatter for text processing
+from utils.paragraph_formatter import format_article_paragraphs
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
@@ -1193,8 +1197,15 @@ class StorageManager:
                 'saved_timestamp': datetime.now().isoformat()
             }
             
-            with open(metadata_path, 'w', encoding='utf-8') as f:
-                json.dump(metadata_dict, f, indent=2, ensure_ascii=False)
+            # Use StorageManager for metadata storage if available
+            if hasattr(self, 'storage_manager') and self.storage_manager:
+                metadata_filename = f"{result.filename}_metadata.json"
+                metadata_content = json.dumps(metadata_dict, indent=2, ensure_ascii=False)
+                self.storage_manager.store_file(metadata_filename, metadata_content.encode('utf-8'))
+            else:
+                # Fallback to local storage
+                with open(metadata_path, 'w', encoding='utf-8') as f:
+                    json.dump(metadata_dict, f, indent=2, ensure_ascii=False)
             
             logger.info(f"Successfully saved clipping: {result.filename}")
             return True
@@ -1236,12 +1247,14 @@ class StorageManager:
 class NewspapersComExtractor:
     """Main scraper class that coordinates all components"""
     
-    def __init__(self, auto_auth: bool = True):
+    def __init__(self, auto_auth: bool = True, project_name: str = "default"):
         self.cookie_manager = AutoCookieManager()
         self.image_processor = NewspaperImageProcessor()
         self.content_analyzer = ContentAnalyzer()
         self.results = []
         self.auto_auth = auto_auth
+        self.storage_manager = StorageManager(project_name=project_name)
+        self.project_name = project_name
         
     def initialize(self, email: str = None, password: str = None) -> bool:
         st.info("🔍 Setting up Newspapers.com authentication...")
@@ -1470,7 +1483,7 @@ class NewspapersComExtractor:
             logger.error(f"Error extracting article data from element: {e}")
             return None
     
-    def extract_from_url(self, url: str, player_name: Optional[str] = None, extract_multi_page: bool = True) -> Dict:
+    def extract_from_url(self, url: str, player_name: Optional[str] = None, extract_multi_page: bool = True, project_name: str = "default") -> Dict:
         try:
             if not self.cookie_manager.refresh_cookies_if_needed():
                 logger.error("Failed to refresh authentication cookies for article extraction.")
@@ -1673,6 +1686,31 @@ class NewspapersComExtractor:
             # Select the overall best result
             overall_best = max(best_results, key=lambda r: r['analysis'].get('sports_score', 0) + (r['confidence'] / 100))
             logger.info(f"Selected overall best result from page {overall_best['page_number']}.")
+            
+            # Apply paragraph formatting to the extracted text if it lacks proper breaks
+            original_text = overall_best['text']
+            try:
+                # Create context for paragraph formatting
+                context = {
+                    'headline': metadata.get('title', ''),
+                    'source': metadata.get('newspaper', ''),
+                    'author': metadata.get('author', ''),
+                    'date': metadata.get('date', '')
+                }
+                
+                # Format paragraphs using LLM or fallback methods
+                formatted_text = format_article_paragraphs(original_text, context)
+                
+                # Update the text in overall_best if formatting was successful and different
+                if formatted_text and formatted_text != original_text:
+                    overall_best['text'] = formatted_text
+                    logger.info(f"Applied paragraph formatting to extracted text (original: {len(original_text)} chars, formatted: {len(formatted_text)} chars)")
+                else:
+                    logger.debug("Text already has adequate paragraph formatting or formatting failed")
+                    
+            except Exception as e:
+                logger.warning(f"Paragraph formatting failed, using original text: {str(e)}")
+                # Continue with original text if formatting fails
             
             # NEW: Multi-image processing for better article boundary detection
             clipping = None
@@ -2096,8 +2134,13 @@ class NewspapersComExtractor:
             filename = f"debug_page_{timestamp}_{url_hash}.html"
             filepath = os.path.join(debug_dir, filename)
             
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(page_html)
+            # Use StorageManager for debug files if available
+            if hasattr(self, 'storage_manager') and self.storage_manager:
+                self.storage_manager.store_file(f"debug/{filename}", page_html.encode('utf-8'))
+            else:
+                # Fallback to local storage
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(page_html)
             
             logger.info(f"Saved debug HTML to: {filepath}")
             
@@ -2121,8 +2164,14 @@ class NewspapersComExtractor:
                 }
             }
             
-            with open(summary_filepath, 'w', encoding='utf-8') as f:
-                json.dump(summary_data, f, indent=2, ensure_ascii=False)
+            # Use StorageManager for summary files if available
+            if hasattr(self, 'storage_manager') and self.storage_manager:
+                summary_content = json.dumps(summary_data, indent=2, ensure_ascii=False)
+                self.storage_manager.store_file(f"debug/{summary_filename}", summary_content.encode('utf-8'))
+            else:
+                # Fallback to local storage
+                with open(summary_filepath, 'w', encoding='utf-8') as f:
+                    json.dump(summary_data, f, indent=2, ensure_ascii=False)
             
             logger.info(f"Saved debug summary to: {summary_filepath}")
             
@@ -2265,8 +2314,8 @@ class NewspapersComExtractor:
 # Removed the main() function from here to avoid confusion and focus on module functionality.
 
 # Keeping the direct extraction function for external use (e.g., batch_processor)
-def extract_from_newspapers_com(url: str, cookies: str = "", player_name: Optional[str] = None) -> Dict:
-    extractor = NewspapersComExtractor(auto_auth=False)
+def extract_from_newspapers_com(url: str, cookies: str = "", player_name: Optional[str] = None, project_name: str = "default") -> Dict:
+    extractor = NewspapersComExtractor(auto_auth=False, project_name=project_name)
     if cookies:
         # In this enhanced version, the `cookies` argument for direct extraction is less relevant
         # as the extractor now manages its own authentication state via SeleniumLoginManager.
@@ -2280,4 +2329,4 @@ def extract_from_newspapers_com(url: str, cookies: str = "", player_name: Option
     if not extractor.initialize():
         return {'success': False, 'error': "Newspapers.com extractor could not initialize or authenticate."}
     
-    return extractor.extract_from_url(url, player_name)
+    return extractor.extract_from_url(url, player_name, project_name=project_name)

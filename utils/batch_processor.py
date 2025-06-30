@@ -64,7 +64,8 @@ class BatchProcessor:
         progress_callback: Optional[Callable] = None, 
         delay_between_requests: float = 1.0,
         player_name: Optional[str] = None,
-        enable_advanced_processing: bool = True
+        enable_advanced_processing: bool = True,
+        project_name: str = "default"
     ) -> Dict:
         """
         Process multiple URLs in batch with enhanced features
@@ -98,7 +99,8 @@ class BatchProcessor:
                         self._process_single_url_enhanced,
                         url,
                         player_name,
-                        enable_advanced_processing
+                        enable_advanced_processing,
+                        project_name
                     )
                     future_to_url[future] = url
                     
@@ -240,7 +242,8 @@ class BatchProcessor:
         self, 
         url: str, 
         player_name: Optional[str] = None,
-        enable_advanced_processing: bool = True
+        enable_advanced_processing: bool = True,
+        project_name: str = "default"
     ):
         """Process a single URL with enhanced features"""
         logger.debug(f"Processing URL with enhanced features: {url}")
@@ -248,9 +251,9 @@ class BatchProcessor:
         try:
             # Determine processing method based on URL type
             if 'newspapers.com' in url.lower():
-                return self._process_newspapers_url(url, player_name, enable_advanced_processing)
+                return self._process_newspapers_url(url, player_name, enable_advanced_processing, project_name)
             else:
-                return self._process_general_url(url, player_name)
+                return self._process_general_url(url, player_name, project_name)
                 
         except Exception as e:
             logger.error(f"Error in enhanced processing for {url}: {str(e)}")
@@ -278,7 +281,8 @@ class BatchProcessor:
         self, 
         url: str, 
         player_name: Optional[str] = None,
-        enable_advanced_processing: bool = True
+        enable_advanced_processing: bool = True,
+        project_name: str = "default"
     ):
         """Process Newspapers.com URL with enhanced authentication"""
         logger.debug(f"Processing Newspapers.com URL: {url}")
@@ -286,17 +290,18 @@ class BatchProcessor:
         if self.newspapers_extractor and enable_advanced_processing:
             # Use enhanced extractor with auto-authentication
             logger.debug("Using enhanced Newspapers.com extractor")
-            return self.newspapers_extractor.extract_from_url(url, player_name=player_name)
+            return self.newspapers_extractor.extract_from_url(url, player_name=player_name, project_name=project_name)
         else:
             # Fall back to standard extraction
             logger.debug("Using standard Newspapers.com extraction")
             return extract_from_newspapers_com(
                 url=url,
                 cookies=self.newspapers_cookies,
-                player_name=player_name
+                player_name=player_name,
+                project_name=project_name
             )
     
-    def _process_general_url(self, url: str, player_name: Optional[str] = None):
+    def _process_general_url(self, url: str, player_name: Optional[str] = None, project_name: str = "default"):
         """Process general URL with standard extraction"""
         logger.info(f"Processing general URL: {url}")
         
@@ -316,7 +321,7 @@ class BatchProcessor:
         
         try:
             # Use existing URL extractor for non-newspapers.com URLs
-            result = extract_from_url(url)
+            result = extract_from_url(url, project_name=project_name)
             
             # Convert to compatible format
             if isinstance(result, dict) and result.get('success'):
