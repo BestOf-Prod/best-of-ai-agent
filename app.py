@@ -23,7 +23,7 @@ from utils.storage_manager import StorageManager
 from utils.batch_processor import BatchProcessor
 from utils.icml_converter import convert_to_icml
 from utils.modular_icml_converter import create_modular_icml_package
-from utils.newspaper_converter import convert_markdown_to_newspaper, convert_multiple_markdown_to_newspaper_zip
+from utils.newspaper_converter import convert_markdown_to_newspaper, convert_multiple_markdown_to_newspaper_zip, convert_articles_to_component_zip
 
 # Setup logging
 logger = setup_logging(__name__, log_level=logging.INFO)
@@ -1349,8 +1349,39 @@ def handle_processed_articles_conversion():
             st.write(f"**Combined content length:** {total_content_length} characters")
             st.write(f"**Estimated layout:** {determine_layout_display(total_content_length)}")
             
-            if st.button("🔄 Convert Selected Articles", type="primary"):
-                convert_processed_articles(selected_articles, successful_results)
+            # Show conversion options
+            st.write("### 🔄 Choose Conversion Type")
+            
+            col_info1, col_info2 = st.columns(2)
+            
+            with col_info1:
+                st.info("""
+                **📰 Standard Newspaper Format**
+                - Single Word document per article
+                - Complete newspaper-style layout
+                - Images embedded in document
+                - Ready for immediate use
+                """)
+            
+            with col_info2:
+                st.info("""
+                **📦 Component Documents**
+                - Separate documents for each element
+                - Organized by word count, font & title
+                - Individual heading, body, blockquote files
+                - Professional font selection by source
+                """)
+            
+            # Create two columns for conversion buttons
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🔄 Convert Selected Articles", type="primary"):
+                    convert_processed_articles(selected_articles, successful_results)
+            
+            with col2:
+                if st.button("📦 Convert to Components", type="secondary", help="Create separate Word documents for each article component (heading, body, blockquote) organized by word count, font, and title"):
+                    convert_processed_articles_to_components(selected_articles, successful_results)
 
 def determine_layout_display(content_length):
     """Return display string for layout type"""
@@ -1514,6 +1545,113 @@ def convert_processed_articles(selected_indices, results):
         except Exception as e:
             logger.error(f"Article conversion error: {str(e)}")
             st.error(f"Conversion error: {str(e)}")
+
+def convert_processed_articles_to_components(selected_indices, results):
+    """Convert processed articles to component documents organized by word count, font, and title"""
+    with st.spinner("Converting processed articles to component documents..."):
+        try:
+            # Transform processed articles into the format expected by component converter
+            articles_data = []
+            
+            for idx in selected_indices:
+                article = results[idx]
+                headline = article.get('headline', 'Untitled Article')
+                source = article.get('source', 'Unknown Source')
+                date = article.get('date', 'Unknown Date')
+                content = article.get('full_content') or article.get('content', 'No content available')
+                url = article.get('url', '')
+                
+                # Create article data in the format expected by component converter
+                article_data = {
+                    'headline': headline,
+                    'text': content,
+                    'source': source,
+                    'date': date,
+                    'url': url,
+                    # For now, we'll let the component converter parse the content into structured components
+                    # In the future, this could be enhanced to pre-parse blockquotes and paragraphs
+                    'structured_content': []
+                }
+                
+                articles_data.append(article_data)
+                logger.info(f"Prepared component data for article: {headline}")
+            
+            if not articles_data:
+                st.error("❌ No valid articles to convert")
+                return
+            
+            # Convert to component zip file
+            result = convert_articles_to_component_zip(articles_data)
+            
+            if result and result.get('zip_data'):
+                st.success(f"✅ Successfully created component documents from {len(selected_indices)} articles!")
+                
+                # Generate zip filename
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                zip_filename = f"component_articles_{timestamp}.zip"
+                
+                # Create download button for zip file
+                st.write("### 📥 Download Component Documents")
+                
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"📦 **{zip_filename}** ({result['total_size']:,} bytes)")
+                    st.write(f"Contains {result['document_count']} component documents in {result['article_count']} article directories")
+                with col2:
+                    st.download_button(
+                        label="📥 Download Zip",
+                        data=result['zip_data'],
+                        file_name=zip_filename,
+                        mime="application/zip"
+                    )
+                
+                # Show detailed breakdown
+                with st.expander("📋 Component Package Details"):
+                    st.write(f"**Total component documents:** {result['document_count']}")
+                    st.write(f"**Total images:** {result.get('image_count', 0)}")
+                    st.write(f"**Total article directories:** {result['article_count']}")
+                    st.write(f"**Total size:** {result['total_size']:,} bytes")
+                    
+                    # Show component counts
+                    st.write("**Component breakdown:**")
+                    for component_type, count in result.get('component_counts', {}).items():
+                        st.write(f"  • {component_type.title()} documents: {count}")
+                    
+                    st.write("**Article directories:**")
+                    for article_info in result.get('articles', []):
+                        st.write(f"  📁 **{article_info['directory']}**")
+                        st.write(f"    • Title: {article_info['title']}")
+                        st.write(f"    • Word count: {article_info['word_count']} words")
+                        st.write(f"    • Font: {article_info['font']}")
+                        st.write(f"    • Components: {article_info['components']} documents")
+                        st.write(f"    • Images: {article_info['images']} files")
+                    
+                    st.write("**Package structure:**")
+                    st.code(f"""
+{zip_filename.replace('.zip', '')}
+├── {result['articles'][0]['directory'] if result.get('articles') else 'WORDCOUNT_FONT_TITLE'}/
+│   ├── heading.docx
+│   ├── body.docx
+│   ├── blockquote.docx (if quotes found)
+│   ├── images/ (if any)
+│   └── article_info.txt
+├── [next article directory]/
+└── ...
+                    """)
+                    
+                    st.write("**Key Features:**")
+                    st.write("• **Organized by metadata**: Each article in its own directory named with word count, font, and title")
+                    st.write("• **Separate components**: Individual Word documents for heading, body, and blockquotes")
+                    st.write("• **Font selection**: Automatically chooses appropriate fonts based on source domain")
+                    st.write("• **Dynamic styling**: Professional newspaper styling for each component")
+                    st.write("• **Image handling**: Downloads and organizes images by article")
+                    st.write("• **Metadata tracking**: Includes article info file with processing details")
+            else:
+                st.error("❌ Failed to create component zip file")
+                
+        except Exception as e:
+            logger.error(f"Component conversion error: {str(e)}")
+            st.error(f"Component conversion error: {str(e)}")
 
 if __name__ == "__main__":
     try:

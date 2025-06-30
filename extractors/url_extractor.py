@@ -398,7 +398,9 @@ def generate_markdown_content(article_data: dict, image_path: Optional[str] = No
     
     # Add metadata
     markdown.append(f"*By {article_data.get('author', 'Unknown Author')}*")
-    markdown.append(f"*{article_data.get('date', 'Unknown Date')}*\n")
+    markdown.append(f"*{article_data.get('date', 'Unknown Date')}*")
+    markdown.append(f"*Source: {article_data.get('source', 'Unknown Source')}*")
+    markdown.append(f"*URL: {article_data.get('url', 'Unknown URL')}*\n")
     
     # Add image if available
     if image_path:
@@ -615,19 +617,56 @@ def extract_from_url(url):
                 break
         
         if article_body:
-            # Extract all paragraphs
-            paragraphs = article_body.find_all('p')
-            logger.debug(f"Found {len(paragraphs)} paragraphs in article body")
+            # Extract content with better styling preservation
+            content_elements = []
             
-            # Join paragraphs, removing any that seem like non-content
-            filtered_paragraphs = []
-            for p in paragraphs:
-                text = p.text.strip()
+            # Process all content elements including paragraphs, blockquotes, lists
+            for element in article_body.find_all(['p', 'blockquote', 'ul', 'ol', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                text = element.get_text().strip()
+                
                 # Skip very short paragraphs or known ad/promo text
-                if len(text) > 20 and not any(skip in text.lower() for skip in ['advertisement', 'subscribe', 'privacy policy', 'cookie policy', 'terms of use']):
-                    filtered_paragraphs.append(text)
+                if len(text) < 20 or any(skip in text.lower() for skip in ['advertisement', 'subscribe', 'privacy policy', 'cookie policy', 'terms of use']):
+                    continue
+                
+                # Preserve element type for later processing
+                element_data = {
+                    'type': element.name,
+                    'text': text,
+                    'class': element.get('class', []),
+                    'style': element.get('style', '')
+                }
+                
+                # Check for indentation or special styling
+                if 'indent' in str(element.get('class', [])).lower() or 'margin' in element.get('style', ''):
+                    element_data['indented'] = True
+                
+                content_elements.append(element_data)
             
-            content = "\n\n".join(filtered_paragraphs)
+            logger.debug(f"Found {len(content_elements)} content elements in article body")
+            
+            # Convert to structured content format
+            structured_content = []
+            for elem in content_elements:
+                if elem['type'] == 'blockquote':
+                    structured_content.append({
+                        'type': 'blockquote',
+                        'text': elem['text']
+                    })
+                elif elem['type'] in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                    structured_content.append({
+                        'type': 'heading',
+                        'text': elem['text'],
+                        'level': int(elem['type'][1])
+                    })
+                else:
+                    structured_content.append({
+                        'type': 'paragraph',
+                        'text': elem['text'],
+                        'indented': elem.get('indented', False)
+                    })
+            
+            # Also store original content for backward compatibility
+            content = "\n\n".join([elem['text'] for elem in content_elements])
             logger.debug(f"Extracted content length: {len(content)} characters")
         else:
             # Last resort - try to get any paragraphs that seem to be content
@@ -711,6 +750,7 @@ def extract_from_url(url):
             "source": source,
             "url": url,
             "image_url": image_url,
+            "structured_content": structured_content if 'structured_content' in locals() else None,
         }
         
         # Create a more descriptive filename
