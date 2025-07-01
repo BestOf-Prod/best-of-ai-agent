@@ -48,6 +48,11 @@ class ParagraphFormatter:
         if not text or len(text.strip()) < 100:
             return False
         
+        # If text already contains linebreaks, don't use LLM formatting
+        if '\n' in text:
+            logger.debug("Text already contains linebreaks, skipping LLM formatting")
+            return False
+        
         # Count existing paragraph breaks
         paragraph_breaks = text.count('\n\n')
         sentence_count = len(re.findall(r'[.!?]+\s+[A-Z]', text))
