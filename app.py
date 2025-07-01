@@ -21,8 +21,6 @@ from utils.processor import process_article
 from utils.document_processor import extract_urls_from_docx, validate_document_format
 from utils.storage_manager import StorageManager
 from utils.batch_processor import BatchProcessor
-from utils.icml_converter import convert_to_icml
-from utils.modular_icml_converter import create_modular_icml_package
 from utils.newspaper_converter import convert_markdown_to_newspaper, convert_multiple_markdown_to_newspaper_zip, convert_articles_to_component_zip
 
 # Setup logging
@@ -51,7 +49,7 @@ def main():
     config = streamlined_sidebar_config()
     
     # Main content area with simplified tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["📄 Process Documents", "🖼️ Gallery & Results", "📑 Export", "⚙️ Advanced"])
+    tab1, tab2, tab3 = st.tabs(["📄 Process Documents", "📊 Results", "⚙️ Advanced"])
     
     with tab1:
         handle_document_upload(config)
@@ -59,24 +57,13 @@ def main():
             display_extracted_urls(config)
     
     with tab2:
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            st.subheader("📊 Processing Results")
-            display_batch_results()
-        with col2:
-            st.subheader("🖼️ Generated Images")
-            display_images_gallery(config)
-        
-    with tab3:
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            st.subheader("📑 ICML Export")
-            handle_icml_conversion()
-        with col2:
-            st.subheader("📰 Newspaper Format")
-            handle_newspaper_conversion()
+        st.subheader("📊 Processing Results")
+        display_batch_results()
+        st.divider()
+        st.subheader("📰 Newspaper Format")
+        handle_newspaper_conversion()
             
-    with tab4:
+    with tab3:
         st.subheader("🔬 Test Single Article")
         handle_article_test(config)
         st.divider()
@@ -487,7 +474,7 @@ def start_enhanced_batch_processing(config):
                 delay_between_requests=config['delay_between_requests'],
                 player_name=config.get('player_name'),
                 enable_advanced_processing=config.get('enable_advanced_processing', True),
-                project_name=project_name
+                project_name=config['project_name']
             )
         
         # Store enhanced results
@@ -543,7 +530,7 @@ def display_batch_results():
     results = st.session_state.batch_results
     
     # Summary metrics
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
         st.metric("Total URLs", results['total_urls'])
@@ -682,129 +669,6 @@ def display_batch_results():
             else:
                 st.success("No failed extractions in this batch!")
 
-def display_images_gallery(config):
-    """Image gallery display"""
-    logger.info("Displaying images gallery")
-    
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        if st.button("🔄 Refresh"):
-            refresh_images_gallery(config)
-    with col2:
-        st.write(f"**{len(st.session_state.uploaded_images)} images**")
-    
-    if st.session_state.uploaded_images:
-        images = st.session_state.uploaded_images
-        
-        # Simple grid layout
-        cols_per_row = 3
-        for i in range(0, len(images), cols_per_row):
-            cols = st.columns(cols_per_row)
-            for j, col in enumerate(cols):
-                if i + j < len(images):
-                    display_image_card(images[i + j], config, i + j)
-    else:
-        st.info("📸 No images uploaded yet. Process some URLs to generate newspaper clippings!")
-
-def refresh_images_gallery(config):
-    """Refresh the images gallery"""
-    storage_manager = StorageManager(bucket_name=config['bucket_name'], project_name=config['project_name'])
-    result = storage_manager.list_uploaded_images()
-    if result['success']:
-        st.session_state.uploaded_images = result['images']
-        st.success(f"🔄 Refreshed! Found {len(result['images'])} images in project '{config['project_name']}'")
-    else:
-        st.error(f"❌ Failed to refresh images: {result['error']}")
-
-def display_image_card(img, config, index):
-    """Display an enhanced image card"""
-    with st.container():
-        st.write(f"**{img['name'][:25]}{'...' if len(img['name']) > 25 else ''}**")
-        
-        # Image metadata
-        col1, col2 = st.columns(2)
-        with col1:
-            st.write(f"📏 {img['size']:,} bytes")
-        with col2:
-            created_display = img['created']
-            if created_display != 'Unknown' and 'T' in created_display:
-                try:
-                    created_dt = datetime.fromisoformat(created_display.replace('Z', '+00:00'))
-                    created_display = created_dt.strftime('%m/%d %H:%M')
-                except:
-                    created_display = created_display[:10]
-            st.write(f"📅 {created_display}")
-        
-        # Action buttons
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🔍 Preview", key=f"preview_{index}"):
-                show_enhanced_image_preview(img, config)
-        
-        with col2:
-            if st.button("📥 Download", key=f"download_{index}"):
-                download_image(img, config)
-        
-        # Thumbnail for local images
-        if 'local_path' in img:
-            try:
-                st.image(img['local_path'], use_container_width=True)
-            except Exception as e:
-                st.error(f"Could not load: {str(e)[:30]}...")
-        else:
-            st.info("Cloud stored")
-
-def show_enhanced_image_preview(img, config):
-    """Show enhanced image preview with metadata"""
-    logger.info(f"Showing enhanced preview for image: {img['name']}")
-    
-    storage_manager = StorageManager(bucket_name=config['bucket_name'], project_name=config['project_name'])
-    
-    object_name = img.get('full_path', img['name'])
-    if 'local_path' not in img and not object_name.startswith(config['project_name'] + '/'):
-        object_name = f"{config['project_name']}/{img['name']}"
-    
-    with st.spinner(f"Loading enhanced preview for {img['name']}..."):
-        try:
-            if 'local_path' in img:
-                st.image(img['local_path'], caption=img['name'], use_container_width=True)
-                st.success(f"✅ Local image preview loaded")
-                
-                # Show local file metadata
-                with st.expander("📋 Image Metadata"):
-                    st.json({
-                        "name": img['name'],
-                        "size": f"{img['size']:,} bytes",
-                        "local_path": img['local_path'],
-                        "created": img.get('created', 'Unknown')
-                    })
-            else:
-                preview_result = storage_manager.get_image_preview(object_name)
-                
-                if preview_result['success']:
-                    st.image(preview_result['data'], caption=img['name'], use_container_width=True)
-                    st.success(f"✅ Cloud image preview loaded ({preview_result['size']:,} bytes)")
-                    
-                    # Show cloud metadata
-                    with st.expander("☁️ Cloud Metadata"):
-                        st.json({
-                            "name": img['name'],
-                            "size": f"{img['size']:,} bytes",
-                            "object_name": object_name,
-                            "created": img.get('created', 'Unknown'),
-                            "bucket": config['bucket_name'],
-                            "project": config['project_name']
-                        })
-                else:
-                    st.error(f"❌ Failed to load preview: {preview_result['error']}")
-                    
-        except Exception as e:
-            logger.error(f"Error showing enhanced image preview: {str(e)}")
-            st.error(f"Error loading preview: {str(e)}")
-
-def download_image(img, config):
-    """Download image functionality"""
-    st.info(f"Download functionality for {img['name']} would be implemented here")
 
 # Removed - footer function not needed
 
@@ -877,220 +741,6 @@ def handle_article_test(config):
                 logger.error(f"Article test failed: {str(e)}")
                 st.error(f"Article test failed: {str(e)}")
 
-def handle_icml_conversion():
-    """Handle ICML conversion of processed articles"""
-    st.write("## 📑 ICML Export for InDesign")
-    
-    # Debug toggle for ICML conversion
-    icml_debug_mode = st.checkbox("🔍 Enable ICML Debug Mode", help="Show detailed ICML conversion process and content analysis")
-    
-    if not st.session_state.batch_results or not st.session_state.batch_results.get('results'):
-        st.info("Process some articles first to enable ICML export")
-        return
-    
-    # Conversion type selection
-    st.write("### Choose Conversion Type")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.info("""
-        **📄 Single File ICML**
-        - All articles combined into one ICML file
-        - Easy to import as a complete document
-        - Traditional workflow
-        """)
-    
-    with col2:
-        st.info("""
-        **📁 Modular ICML Package**
-        - Individual ICML files for each article element
-        - Separate files for title, author/date, and body
-        - Images downloaded and organized
-        - Precise InDesign placement control
-        """)
-    
-    conversion_type = st.radio(
-        "Select conversion type:",
-        ["Single File ICML", "Modular ICML Package"],
-        help="Choose how you want to structure the ICML output"
-    )
-    
-    # Create a temporary directory for markdown files
-    output_dir = Path("output")
-    output_dir.mkdir(exist_ok=True)
-    
-    # Get successful results
-    successful_results = st.session_state.batch_results.get('results', [])
-    
-    if not successful_results:
-        st.warning("No successfully processed articles found to convert")
-        return
-    
-    # Create markdown content for each article
-    markdown_files = []
-    for idx, result in enumerate(successful_results):
-        # Get full content - optimized for Replit environment
-        article_content = 'No content available'
-        
-        # Primary: try to get full_content from result (works in Replit)
-        if result.get('full_content'):
-            article_content = result.get('full_content')
-            if icml_debug_mode:
-                st.write(f"📝 Using full_content for article {idx + 1}: {len(article_content)} characters")
-        
-        # Fallback: use the truncated content and warn user
-        else:
-            article_content = result.get('content', 'No content available')
-            if icml_debug_mode:
-                st.warning(f"⚠️ Using truncated content for article {idx + 1}: {len(article_content)} characters")
-                st.write("💡 **Note**: If content appears truncated, there may be an issue with the batch processing results.")
-        
-        # Create enhanced markdown content with proper formatting for modular converter
-        author_line = f"*By {result.get('source', 'Unknown Source')}*"
-        date_line = f"*{result.get('date', 'Unknown Date')}*"
-        
-        if conversion_type == "Modular ICML Package":
-            # Format for modular converter (matches expected structure)
-            markdown_content = f"""# {result.get('headline', 'Untitled Article')}
-
-{author_line}
-{date_line}
-
-{article_content}
-
----
-*Source: {result.get('source', 'Unknown Source')}*
-"""
-        else:
-            # Original format for single file
-            markdown_content = f"""# {result.get('headline', 'Untitled Article')}
-
-Source: {result.get('source', 'Unknown Source')}
-Date: {result.get('date', 'Unknown Date')}
-
-{article_content}
-"""
-        
-        # Save markdown file
-        md_filename = f"article_{idx + 1}.md"
-        md_path = output_dir / md_filename
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(markdown_content)
-        markdown_files.append(str(md_path))  # Convert Path to string
-    
-    # Show markdown files info
-    if icml_debug_mode:
-        st.write("### 📋 Debug: Markdown Files Created")
-        for i, md_file in enumerate(markdown_files):
-            try:
-                with open(md_file, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                st.write(f"**File {i+1}:** {os.path.basename(md_file)} ({len(content)} characters)")
-                if len(content) > 200:
-                    st.write(f"**Preview:** {content[:200]}...")
-                else:
-                    st.write(f"**Content:** {content}")
-            except Exception as e:
-                st.error(f"Error reading {md_file}: {str(e)}")
-    
-    # Convert to ICML
-    button_text = "🔄 Create Single ICML File" if conversion_type == "Single File ICML" else "📁 Create Modular ICML Package"
-    
-    if st.button(button_text):
-        conversion_status = st.empty()
-        
-        if conversion_type == "Single File ICML":
-            conversion_status.write("Converting articles to single ICML file...")
-            
-            with st.spinner("Converting articles to ICML format..."):
-                try:
-                    # Convert all markdown files to a single ICML with debug mode
-                    icml_content = convert_to_icml(markdown_files, debug_mode=icml_debug_mode)
-                    
-                    # Generate output filename
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    output_filename = f"combined_articles_{timestamp}.icml"
-                    
-                    # Create download button for the ICML file
-                    st.download_button(
-                        label=f"📥 Download {output_filename}",
-                        data=icml_content,
-                        file_name=output_filename,
-                        mime="application/x-indesign"
-                    )
-                    
-                    st.success(f"✅ Successfully converted {len(markdown_files)} articles to a single ICML file")
-                    
-                    # Show summary
-                    with st.expander("📋 Single File Conversion Summary"):
-                        st.write(f"**Input files:** {len(markdown_files)} markdown files")
-                        file_list = ", ".join([os.path.basename(f) for f in markdown_files])
-                        st.write(f"**Files combined:** {file_list}")
-                        st.write(f"**Output:** {output_filename}")
-                        st.write("**Debug mode:** " + ("Enabled" if icml_debug_mode else "Disabled"))
-                        st.write("**Format:** Single ICML file with all articles combined")
-                    
-                except Exception as e:
-                    st.error(f"ICML conversion error: {str(e)}")
-                    logger.error(f"ICML conversion error: {str(e)}")
-        
-        else:  # Modular ICML Package
-            conversion_status.write("Creating modular ICML package...")
-            
-            with st.spinner("Creating modular ICML package with individual files..."):
-                try:
-                    # Create modular ICML package
-                    zip_content, zip_filename = create_modular_icml_package(markdown_files, debug_mode=icml_debug_mode)
-                    
-                    # Create download button for the zip file
-                    st.download_button(
-                        label=f"📥 Download {zip_filename}",
-                        data=zip_content,
-                        file_name=zip_filename,
-                        mime="application/zip"
-                    )
-                    
-                    st.success(f"✅ Successfully created modular ICML package from {len(markdown_files)} articles!")
-                    
-                    # Show summary
-                    with st.expander("📁 Modular Package Summary"):
-                        st.write(f"**Input files:** {len(markdown_files)} markdown files")
-                        file_list = ", ".join([os.path.basename(f) for f in markdown_files])
-                        st.write(f"**Files processed:** {file_list}")
-                        st.write(f"**Output:** {zip_filename}")
-                        st.write("**Structure:** Individual ICML files for title, author/date, and body")
-                        st.write("**Debug mode:** " + ("Enabled" if icml_debug_mode else "Disabled"))
-                        st.write("**Format:** Zip package with subdirectories for each article")
-                        
-                        # Show expected structure
-                        st.write("**Package Structure:**")
-                        st.code(f"""
-{zip_filename.replace('.zip', '')}
-├── article_1/
-│   ├── article_1_title.icml
-│   ├── article_1_author.icml
-│   ├── article_1_body.icml
-│   └── images/ (if any)
-├── article_2/
-│   ├── article_2_title.icml
-│   ├── article_2_author.icml
-│   ├── article_2_body.icml
-│   └── images/ (if any)
-└── ...
-                        """)
-                
-                except Exception as e:
-                    st.error(f"Modular ICML package creation error: {str(e)}")
-                    logger.error(f"Modular ICML package creation error: {str(e)}")
-        
-        # Clean up temporary files
-        try:
-            for md_file in markdown_files:
-                if os.path.exists(md_file):
-                    os.unlink(md_file)
-        except Exception as e:
-            logger.warning(f"Error cleaning up temporary files: {str(e)}")
 
 def handle_newspaper_conversion():
     """Handle newspaper clipping conversion functionality"""

@@ -316,7 +316,7 @@ def create_headline_style(paragraph, text, font_name=None):
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = paragraph.add_run(text)
     run.font.name = font_name or 'Times New Roman'
-    run.font.size = Pt(random.randint(36, 40))  # Random size between 36-40pt
+    run.font.size = Pt(38)  # Fixed headline size
     run.font.bold = True
     paragraph.space_after = Pt(6)
 
@@ -327,7 +327,7 @@ def create_body_style(paragraph, text, font_name=None, indented=False):
         paragraph.paragraph_format.left_indent = Inches(0.5)
     run = paragraph.add_run(text)
     run.font.name = font_name or 'Times New Roman'
-    run.font.size = Pt(random.randint(13, 15))  # Random size between 13-15pt
+    run.font.size = Pt(14)  # Fixed body text size
     paragraph.space_after = Pt(3)
 
 def create_blockquote_style(paragraph, text, font_name=None):
@@ -337,7 +337,7 @@ def create_blockquote_style(paragraph, text, font_name=None):
     paragraph.paragraph_format.right_indent = Inches(0.5)
     run = paragraph.add_run(text)
     run.font.name = font_name or 'Times New Roman'
-    run.font.size = Pt(random.randint(13, 15))  # Same range as body text
+    run.font.size = Pt(14)  # Fixed blockquote size to match body text
     run.font.italic = True
     paragraph.space_after = Pt(6)
 
