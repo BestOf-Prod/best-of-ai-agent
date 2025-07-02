@@ -265,7 +265,31 @@ def download_image(url, temp_dir):
         with open(temp_path, 'wb') as f:
             f.write(response.content)
         
-        logger.info(f"Successfully downloaded image to: {temp_path} ({len(response.content)} bytes)")
+        # Validate image dimensions after download
+        try:
+            from PIL import Image
+            with Image.open(temp_path) as img:
+                width, height = img.size
+                
+                # Skip very small images (likely icons or logos)
+                if width < 200 or height < 200:
+                    logger.info(f"Skipping small image ({width}x{height}): {temp_path}")
+                    os.remove(temp_path)  # Clean up the file
+                    return None
+                
+                # Skip very narrow or very wide images (likely banners or decorative elements)
+                aspect_ratio = max(width, height) / min(width, height)
+                if aspect_ratio > 4:  # More than 4:1 ratio
+                    logger.info(f"Skipping unusual aspect ratio image ({width}x{height}, ratio {aspect_ratio:.1f}): {temp_path}")
+                    os.remove(temp_path)  # Clean up the file
+                    return None
+                
+                logger.info(f"Successfully downloaded and validated image: {temp_path} ({len(response.content)} bytes, {width}x{height})")
+                
+        except Exception as e:
+            logger.warning(f"Could not validate image dimensions for {temp_path}: {str(e)}")
+            # If we can't validate dimensions, keep the image but log the issue
+        
         return temp_path
         
     except requests.exceptions.RequestException as e:
@@ -388,7 +412,21 @@ def create_component_documents(article_data, temp_dir):
     # Extract components
     headline = article_data.get('headline', '')
     structured_content = article_data.get('structured_content', [])
-    images = extract_images_from_markdown(article_data.get('text', ''))
+    
+    # Get images from article data directly (preferred) or extract from markdown text
+    images = []
+    if article_data.get('image_url'):
+        # Use the image URL directly from article data (from url_extractor)
+        images.append({
+            'alt_text': 'Article Image',
+            'url': article_data['image_url'],
+            'markdown': f"![Article Image]({article_data['image_url']})"
+        })
+        logger.info(f"Using image URL from article data: {article_data['image_url']}")
+    else:
+        # Fallback: try to extract from markdown text
+        images = extract_images_from_markdown(article_data.get('text', ''))
+        logger.info(f"Extracted {len(images)} images from markdown text")
     
     components = {
         'heading': None,
@@ -470,19 +508,31 @@ def create_component_documents(article_data, temp_dir):
     # Handle images
     downloaded_images = []
     if images:
-        logger.info(f"Processing {len(images)} images")
+        logger.info(f"Processing {len(images)} images for article: {article_data.get('headline', 'Unknown')}")
         for i, image in enumerate(images):
+            logger.info(f"Attempting to download image {i+1}: {image['url']}")
             image_path = download_image(image['url'], temp_dir)
             if image_path:
-                downloaded_images.append({
-                    'path': image_path,
-                    'alt_text': image['alt_text'],
-                    'url': image['url']
-                })
-                logger.info(f"Downloaded image {i+1}: {image_path}")
+                # Verify the downloaded file exists and has content
+                if os.path.exists(image_path) and os.path.getsize(image_path) > 0:
+                    downloaded_images.append({
+                        'path': image_path,
+                        'alt_text': image['alt_text'],
+                        'url': image['url']
+                    })
+                    logger.info(f"Successfully downloaded image {i+1}: {image_path} ({os.path.getsize(image_path)} bytes)")
+                else:
+                    logger.error(f"Image file {image_path} is missing or empty after download")
+            else:
+                logger.error(f"Failed to download image {i+1}: {image['url']}")
+    else:
+        logger.info(f"No images found for article: {article_data.get('headline', 'Unknown')}")
     
     if downloaded_images:
         components['image'] = downloaded_images
+        logger.info(f"Added {len(downloaded_images)} downloaded images to components")
+    else:
+        logger.warning(f"No images were successfully downloaded for article: {article_data.get('headline', 'Unknown')}")
     
     return components
 
@@ -643,6 +693,7 @@ def convert_articles_to_component_zip(articles_data, output_zip_path=None):
             
             # Handle images
             if components.get('image'):
+                logger.info(f"Found {len(components['image'])} images in components for directory: {directory_name}")
                 for img_idx, img in enumerate(components['image']):
                     img_filename = f"image_{img_idx + 1}_{os.path.basename(img['path'])}"
                     img_info = {
@@ -654,6 +705,13 @@ def convert_articles_to_component_zip(articles_data, output_zip_path=None):
                     }
                     all_images.append(img_info)
                     article_directories[directory_name]['images'].append(img_info)
+                    logger.info(f"Prepared image {img_idx + 1} for zip: {img_filename} from {img['path']}")
+            else:
+                logger.warning(f"No images found in components for directory: {directory_name}")
+                if 'image' in components:
+                    logger.warning(f"components['image'] exists but is empty: {components['image']}")
+                else:
+                    logger.warning(f"components['image'] key not found. Available keys: {list(components.keys())}")
         
         # Create zip file with organized directory structure
         zip_buffer = io.BytesIO()
@@ -670,16 +728,30 @@ def convert_articles_to_component_zip(articles_data, output_zip_path=None):
             logger.info(f"Adding {len(all_images)} images to article directories")
             for img in all_images:
                 try:
+                    logger.info(f"Processing image for zip: {img['clip_filename']} from {img['source_path']}")
+                    
+                    # Check if source file exists
+                    if not os.path.exists(img['source_path']):
+                        logger.error(f"Source image file not found: {img['source_path']}")
+                        continue
+                    
+                    # Check file size
+                    file_size = os.path.getsize(img['source_path'])
+                    if file_size == 0:
+                        logger.error(f"Source image file is empty: {img['source_path']}")
+                        continue
+                    
                     with open(img['source_path'], 'rb') as f:
                         img_data = f.read()
                     
                     directory_path = img['directory']
                     zip_path = f"{directory_path}/images/{img['clip_filename']}"
                     zip_file.writestr(zip_path, img_data)
-                    logger.info(f"Added image to zip: {zip_path}")
+                    logger.info(f"Successfully added image to zip: {zip_path} ({len(img_data)} bytes)")
                     
                 except Exception as e:
-                    logger.warning(f"Failed to add image {img['clip_filename']} to zip: {str(e)}")
+                    logger.error(f"Failed to add image {img['clip_filename']} to zip: {str(e)}")
+                    logger.error(f"Image details: source_path={img.get('source_path')}, directory={img.get('directory')}")
             
             # Add metadata file for each article directory
             for directory_name, dir_info in article_directories.items():

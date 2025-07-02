@@ -1056,6 +1056,7 @@ def convert_processed_articles_to_components(selected_indices, results):
                     'source': source,
                     'date': date,
                     'url': url,
+                    'image_url': article.get('image_url'),  # Pass through the image URL from batch results
                     # For now, we'll let the component converter parse the content into structured components
                     # In the future, this could be enhanced to pre-parse blockquotes and paragraphs
                     'structured_content': []

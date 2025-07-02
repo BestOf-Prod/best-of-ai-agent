@@ -701,47 +701,106 @@ def extract_from_url(url, project_name: str = "default"):
         # Extract main image if available
         logger.debug("Extracting featured image")
         image_url = None
-        image_selectors = [
-            'picture img',
-            '.article-featured-image img',
-            '.main-image img',
-            'article img',
-            '.article img',
-            '.featured-image img',
-            'meta[property="og:image"]',
-            'meta[name="twitter:image"]'
-        ]
         
-        for selector in image_selectors:
-            image_tags = soup.select(selector)
-            for img in image_tags:
-                # Handle both img tags and meta tags
-                if img.name == 'meta':
-                    image_url = img.get('content')
-                else:
-                    image_url = img.get('src')
-                
-                if image_url and not any(skip in image_url.lower() for skip in ['spacer', 'pixel', 'advertisement']):
-                    # Filter out small icons or tracking pixels
-                    if img.get('width') and img.get('height'):
-                        try:
-                            width = int(img['width'])
-                            height = int(img['height'])
-                            if width < 100 or height < 100:
-                                continue  # Skip small images
-                        except (ValueError, TypeError):
-                            pass  # Can't determine size, continue
-
-                    # Fix relative URLs
-                    if image_url.startswith('/'):
-                        parsed_url = urlparse(url)
-                        base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
-                        image_url = base_url + image_url
-                    logger.debug(f"Found image URL: {image_url}")
-                    break
+        def get_image_url_from_element(element):
+            """Extract image URL from element, checking multiple attributes"""
+            if element.name == 'meta':
+                return element.get('content')
             
-            if image_url:
-                break
+            # Check common image attributes in order of preference
+            for attr in ['src', 'data-src', 'data-lazy-src', 'data-original']:
+                url = element.get(attr)
+                if url and url.strip():
+                    return url.strip()
+            return None
+        
+        def is_valid_image_url(url):
+            """Check if URL looks like a valid image and meets size criteria"""
+            if not url:
+                return False
+            
+            # Skip obvious non-images
+            skip_patterns = ['pixel', 'spacer', 'tracking', 'icon', 'favicon', 'logo']
+            if any(pattern in url.lower() for pattern in skip_patterns):
+                return False
+            
+            # Skip very small images based on filename hints
+            size_hints = ['16x16', '32x32', '48x48', '64x64', '150x150', 'thumb', 'small']
+            if any(hint in url.lower() for hint in size_hints):
+                return False
+                
+            # Must be reasonable length and format
+            if not (len(url) > 10 and any(ext in url.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif', 'image'])):
+                return False
+            
+            # Check actual image size by making a HEAD request
+            try:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+                response = requests.head(url, headers=headers, timeout=5)
+                
+                # Check file size (skip very small files)
+                content_length = response.headers.get('content-length')
+                if content_length:
+                    file_size = int(content_length)
+                    if file_size < 5000:  # Skip images smaller than 5KB
+                        logger.debug(f"Skipping small image ({file_size} bytes): {url}")
+                        return False
+                
+                # Check if it's actually an image
+                content_type = response.headers.get('content-type', '').lower()
+                if content_type and not content_type.startswith('image/'):
+                    logger.debug(f"Skipping non-image content-type ({content_type}): {url}")
+                    return False
+                    
+                return True
+                
+            except Exception as e:
+                logger.debug(f"Could not validate image size for {url}: {str(e)}")
+                # If we can't check, allow it but with lower priority
+                return True
+        
+        # Try meta tags first (most reliable)
+        for meta_selector in ['meta[property="og:image"]', 'meta[name="twitter:image"]']:
+            meta_tag = soup.select_one(meta_selector)
+            if meta_tag:
+                image_url = get_image_url_from_element(meta_tag)
+                if is_valid_image_url(image_url):
+                    logger.debug(f"Found image from meta tag: {image_url}")
+                    break
+        
+        # If no meta image found, look for content images
+        if not image_url:
+            # Use broader selectors to catch more image structures
+            content_selectors = ['article img', '.content img', '.story img', 'main img']
+            
+            for selector in content_selectors:
+                images = soup.select(selector)
+                for img in images:
+                    candidate_url = get_image_url_from_element(img)
+                    if is_valid_image_url(candidate_url):
+                        image_url = candidate_url
+                        logger.debug(f"Found content image: {image_url}")
+                        break
+                if image_url:
+                    break
+        
+        # Fix relative URLs
+        if image_url:
+            if image_url.startswith('//'):
+                # Protocol-relative URL
+                parsed_url = urlparse(url)
+                image_url = f"{parsed_url.scheme}:{image_url}"
+            elif image_url.startswith('/'):
+                # Absolute path
+                parsed_url = urlparse(url)
+                image_url = f"{parsed_url.scheme}://{parsed_url.netloc}{image_url}"
+            elif not image_url.startswith(('http://', 'https://')):
+                # Relative path
+                parsed_url = urlparse(url)
+                base_url = f"{parsed_url.scheme}://{parsed_url.netloc}{os.path.dirname(parsed_url.path)}/"
+                image_url = base_url + image_url
                 
         if image_url:
             logger.info(f"Extracted image URL: {image_url}")

@@ -153,6 +153,7 @@ class BatchProcessor:
                             'upload_result': upload_result,
                             'metadata': result.get('metadata', {}) if isinstance(result, dict) else getattr(result, 'metadata', {}),
                             'image_data': result.get('image_data') if isinstance(result, dict) else getattr(result, 'image_data', None),  # Preserve newspaper clipping images
+                            'image_url': result.get('image_url') if isinstance(result, dict) else getattr(result, 'image_url', None),  # Preserve original image URL
                             'stitched_image': result.get('stitched_image') if isinstance(result, dict) else getattr(result, 'stitched_image', None)  # Preserve stitched images
                         }
                         results.append(result_dict)
@@ -268,6 +269,7 @@ class BatchProcessor:
                     self.date = ""
                     self.content = ""
                     self.image_data = None
+                    self.image_url = None  # Add image_url field
                     self.metadata = {}
                     self.markdown_path = None
                     
@@ -316,6 +318,7 @@ class BatchProcessor:
                 self.date = ""
                 self.content = ""
                 self.image_data = None
+                self.image_url = None  # Add image_url field
                 self.metadata = {}
                 self.markdown_path = None
         
@@ -331,6 +334,7 @@ class BatchProcessor:
                 simple_result.date = result.get('date', datetime.now().strftime('%Y-%m-%d'))
                 simple_result.content = result.get('text', '')
                 simple_result.image_data = result.get('clipping_image')
+                simple_result.image_url = result.get('image_url')  # Store the original image URL
                 logger.info(f"Markdown path in batch processor: {result.get('markdown_path')}")
                 simple_result.markdown_path = result.get('markdown_path')
                 simple_result.metadata = {
