@@ -19,49 +19,13 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
-class SimpleCompatibilityManager:
-    """Simple compatibility manager for batch processor"""
-    def __init__(self):
-        self.cookies = {}
-        
-    def set_login_credentials(self, email: str, password: str):
-        """Compatibility method for setting login credentials"""
-        logger.info(f"Login credentials set for: {email}")
-        # In optimized version, we rely on cookies instead of login
-        
-class SimpleCompatibilityImageProcessor:
-    """Simple compatibility image processor for batch processor"""
-    def save_png_to_storage(self, image, filename, storage_manager):
-        """Compatibility method for PNG storage"""
-        try:
-            import io
-            png_buffer = io.BytesIO()
-            image.save(png_buffer, format='PNG', optimize=True)
-            png_data = png_buffer.getvalue()
-            
-            result = storage_manager.upload_image(
-                image_data=png_data,
-                filename=filename,
-                content_type='image/png'
-            )
-            return result.get('success', False)
-        except Exception as e:
-            logger.error(f"PNG storage failed: {e}")
-            return False
-
 class OptimizedNewspapersExtractor:
     """Optimized newspapers.com extractor focusing only on screenshot and crop functionality"""
     
-    def __init__(self, cookies: str = "", auto_auth: bool = False, project_name: str = "default"):
+    def __init__(self, cookies: str = ""):
         self.driver = None
         self.cookies = self._parse_cookies(cookies) if cookies else {}
         self.is_replit = 'REPL_ID' in os.environ or 'REPL_SLUG' in os.environ
-        self.auto_auth = auto_auth
-        self.project_name = project_name
-        
-        # Compatibility attributes for batch processor
-        self.cookie_manager = SimpleCompatibilityManager()
-        self.image_processor = SimpleCompatibilityImageProcessor()
         
     def _parse_cookies(self, cookie_string: str) -> dict:
         """Parse cookie string into dictionary"""
@@ -174,14 +138,12 @@ class OptimizedNewspapersExtractor:
             logger.error(f"Cropping failed: {e}")
             return image
     
-    def extract_from_url(self, url: str, player_name: str = None, **kwargs) -> dict:
+    def extract_from_url(self, url: str) -> dict:
         """
         Extract screenshot from newspapers.com URL
         
         Args:
             url: Newspapers.com URL to extract from
-            player_name: Optional player name filter (compatibility parameter)
-            **kwargs: Additional compatibility parameters
             
         Returns:
             Dictionary with extraction result
@@ -269,31 +231,6 @@ class OptimizedNewspapersExtractor:
                 logger.info("Driver cleanup completed")
             except Exception as e:
                 logger.warning(f"Driver cleanup failed: {e}")
-    
-    # Compatibility methods for app.py
-    def initialize(self, email: str = None, password: str = None) -> bool:
-        """Initialize the extractor (compatibility method)"""
-        if email and password:
-            self.cookie_manager.set_login_credentials(email, password)
-        logger.info("Extractor initialized successfully")
-        return True
-    
-    def get_authentication_status(self) -> dict:
-        """Get authentication status (compatibility method)"""
-        return {
-            'initialized': True,
-            'authenticated': bool(self.cookies),
-            'cookies_count': len(self.cookies),
-            'last_extraction': datetime.now().isoformat() if self.cookies else None
-        }
-    
-    def search_articles(self, query: str, date_range: str = None, limit: int = 10) -> list:
-        """Search articles (simplified compatibility method)"""
-        logger.warning("Article search not implemented in optimized version - use direct URLs")
-        return []
-
-# Compatibility alias for batch processor
-NewspapersComExtractor = OptimizedNewspapersExtractor
 
 # Legacy function for compatibility
 def extract_from_newspapers_com(url: str, cookies: str = "", **kwargs) -> dict:
