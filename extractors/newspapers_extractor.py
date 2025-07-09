@@ -2023,24 +2023,146 @@ class NewspapersComExtractor:
             
             time.sleep(3) # Reduced from 5 to 3 seconds
             
-            # Click the zoom-out button 3 times instead of 6 for Replit
-            logger.info("Clicking zoom-out button 3 times to capture entire clipping...")
-            for i in range(3): # Reduced from 6 to 3 clicks
-                try:
-                    zoom_out_button = driver.find_element(By.ID, 'btn-zoom-out')
-                    if zoom_out_button.is_displayed() and zoom_out_button.is_enabled():
-                        zoom_out_button.click()
-                        logger.info(f"Clicked zoom-out button {i + 1}/3")
-                        time.sleep(0.5)  # Reduced wait between clicks
-                    else:
-                        logger.warning(f"Zoom-out button not available on click {i + 1}/3")
+            # Enhanced zoom-out functionality for Replit
+            logger.info("Attempting to zoom out to capture entire clipping...")
+            zoom_successful = False
+            
+            # Debug zoom elements before attempting zoom
+            debug_info = self._debug_zoom_elements(driver)
+            
+            # Try multiple selectors for zoom-out button
+            zoom_selectors = [
+                '#btn-zoom-out',
+                'button[title*="zoom out"]',
+                'button[aria-label*="zoom out"]',
+                '.zoom-out',
+                '[data-testid="zoom-out"]',
+                'button:contains("Zoom Out")',
+                'button[class*="zoom-out"]',
+                'button[class*="zoom"]'
+            ]
+            
+            # Also try keyboard shortcuts as fallback
+            try:
+                # Try Ctrl+- (zoom out) keyboard shortcut
+                from selenium.webdriver.common.keys import Keys
+                from selenium.webdriver.common.action_chains import ActionChains
+                
+                actions = ActionChains(driver)
+                actions.key_down(Keys.CONTROL).send_keys('-').key_up(Keys.CONTROL).perform()
+                logger.info("Applied Ctrl+- keyboard shortcut for zoom out")
+                time.sleep(1)
+                zoom_successful = True
+            except Exception as e:
+                logger.warning(f"Keyboard shortcut failed: {e}")
+            
+            # Try clicking zoom-out buttons if keyboard shortcut didn't work
+            if not zoom_successful:
+                for selector in zoom_selectors:
+                    try:
+                        zoom_buttons = driver.find_elements(By.CSS_SELECTOR, selector)
+                        if zoom_buttons:
+                            for button in zoom_buttons:
+                                if button.is_displayed() and button.is_enabled():
+                                    # Try to scroll the button into view first
+                                    driver.execute_script("arguments[0].scrollIntoView(true);", button)
+                                    time.sleep(0.5)
+                                    
+                                    # Click the button
+                                    button.click()
+                                    logger.info(f"Successfully clicked zoom-out button using selector: {selector}")
+                                    time.sleep(1)  # Wait for zoom to take effect
+                                    zoom_successful = True
+                                    break
+                    except Exception as e:
+                        logger.debug(f"Selector {selector} failed: {e}")
+                        continue
+                    
+                    if zoom_successful:
                         break
+            
+            # If no zoom buttons found, try JavaScript zoom
+            if not zoom_successful:
+                try:
+                    # Try to set zoom level via JavaScript
+                    driver.execute_script("document.body.style.zoom = '0.5'")
+                    logger.info("Applied JavaScript zoom out")
+                    time.sleep(1)
+                    zoom_successful = True
                 except Exception as e:
-                    logger.warning(f"Could not click zoom-out button on attempt {i + 1}/3: {e}")
-                    break
+                    logger.warning(f"JavaScript zoom failed: {e}")
+            
+            # If still no success, try multiple zoom-out attempts
+            if not zoom_successful:
+                logger.warning("No zoom-out method worked, trying multiple zoom-out attempts...")
+                for attempt in range(5):  # Try up to 5 times
+                    try:
+                        # Try the most common selector again
+                        zoom_button = driver.find_element(By.ID, 'btn-zoom-out')
+                        if zoom_button.is_displayed() and zoom_button.is_enabled():
+                            zoom_button.click()
+                            logger.info(f"Zoom-out attempt {attempt + 1}/5 successful")
+                            time.sleep(0.5)
+                        else:
+                            logger.debug(f"Zoom button not available on attempt {attempt + 1}")
+                    except Exception as e:
+                        logger.debug(f"Zoom-out attempt {attempt + 1} failed: {e}")
+                        time.sleep(0.5)
+            
+            # If all zoom methods failed, try alternative capture methods
+            if not zoom_successful:
+                logger.warning("All zoom methods failed, trying alternative capture methods...")
+                
+                # Try to find the newspaper image directly
+                try:
+                    newspaper_images = driver.find_elements(By.CSS_SELECTOR, 'img[src*="img.newspapers.com"]')
+                    if newspaper_images:
+                        logger.info(f"Found {len(newspaper_images)} newspaper images, attempting direct capture")
+                        
+                        # Try to get the largest image
+                        largest_image = None
+                        max_area = 0
+                        
+                        for img in newspaper_images:
+                            try:
+                                size = img.size
+                                area = size['width'] * size['height']
+                                if area > max_area:
+                                    max_area = area
+                                    largest_image = img
+                            except:
+                                continue
+                        
+                        if largest_image:
+                            # Scroll to the image
+                            driver.execute_script("arguments[0].scrollIntoView(true);", largest_image)
+                            time.sleep(1)
+                            
+                            # Take screenshot focused on the image area
+                            screenshot_data = driver.get_screenshot_as_png()
+                            full_screenshot = Image.open(io.BytesIO(screenshot_data))
+                            logger.info(f"Captured screenshot focused on newspaper image: {full_screenshot.size}")
+                            return full_screenshot
+                            
+                except Exception as e:
+                    logger.warning(f"Direct image capture failed: {e}")
             
             # Wait for zoom changes to take effect
-            time.sleep(1) # Reduced from 2 to 1 second
+            time.sleep(2) # Increased wait time for zoom to settle
+            
+            # Verify zoom success by checking page state
+            try:
+                # Check if we can see more content (indicating successful zoom)
+                page_height = driver.execute_script("return document.body.scrollHeight;")
+                viewport_height = driver.execute_script("return window.innerHeight;")
+                logger.info(f"Page height: {page_height}, Viewport height: {viewport_height}")
+                
+                if page_height > viewport_height * 1.5:
+                    logger.info("Zoom appears successful - page height is significantly larger than viewport")
+                else:
+                    logger.warning("Zoom may not have been successful - page height similar to viewport")
+            except Exception as e:
+                logger.warning(f"Could not verify zoom success: {e}")
             
             # Scroll down slightly to avoid bottom navigation bar blocking content
             try:
@@ -2052,10 +2174,29 @@ class NewspapersComExtractor:
             
             # Take full page screenshot to capture the entire clipping
             logger.info("Taking full page screenshot to capture entire clipping...")
-            screenshot_data = driver.get_screenshot_as_png()
-            full_screenshot = Image.open(io.BytesIO(screenshot_data))
             
-            logger.info(f"Full page screenshot captured: {full_screenshot.size}")
+            # Try to get the full page screenshot, not just viewport
+            try:
+                # Get the full page dimensions
+                total_height = driver.execute_script("return document.body.scrollHeight;")
+                total_width = driver.execute_script("return document.body.scrollWidth;")
+                
+                # Set window size to capture full page
+                driver.set_window_size(total_width, total_height)
+                time.sleep(1)  # Wait for resize
+                
+                # Take screenshot
+                screenshot_data = driver.get_screenshot_as_png()
+                full_screenshot = Image.open(io.BytesIO(screenshot_data))
+                
+                logger.info(f"Full page screenshot captured: {full_screenshot.size} (target: {total_width}x{total_height})")
+            except Exception as e:
+                logger.warning(f"Full page screenshot failed, using viewport screenshot: {e}")
+                # Fallback to regular screenshot
+                screenshot_data = driver.get_screenshot_as_png()
+                full_screenshot = Image.open(io.BytesIO(screenshot_data))
+                logger.info(f"Viewport screenshot captured: {full_screenshot.size}")
+            
             return full_screenshot
             
         except Exception as e:
@@ -2132,6 +2273,62 @@ class NewspapersComExtractor:
             
         except Exception as e:
             logger.error(f"Failed to save debug HTML: {e}")
+    
+    def _debug_zoom_elements(self, driver) -> Dict:
+        """Debug zoom-related elements on the page"""
+        debug_info = {
+            'zoom_buttons_found': [],
+            'page_dimensions': {},
+            'zoom_selectors_tested': []
+        }
+        
+        try:
+            # Check page dimensions
+            debug_info['page_dimensions'] = {
+                'scroll_height': driver.execute_script("return document.body.scrollHeight;"),
+                'scroll_width': driver.execute_script("return document.body.scrollWidth;"),
+                'client_height': driver.execute_script("return document.documentElement.clientHeight;"),
+                'client_width': driver.execute_script("return document.documentElement.clientWidth;"),
+                'window_height': driver.execute_script("return window.innerHeight;"),
+                'window_width': driver.execute_script("return window.innerWidth;")
+            }
+            
+            # Test zoom selectors
+            zoom_selectors = [
+                '#btn-zoom-out',
+                'button[title*="zoom out"]',
+                'button[aria-label*="zoom out"]',
+                '.zoom-out',
+                '[data-testid="zoom-out"]',
+                'button[class*="zoom-out"]',
+                'button[class*="zoom"]'
+            ]
+            
+            for selector in zoom_selectors:
+                try:
+                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    if elements:
+                        for elem in elements:
+                            debug_info['zoom_buttons_found'].append({
+                                'selector': selector,
+                                'text': elem.text,
+                                'is_displayed': elem.is_displayed(),
+                                'is_enabled': elem.is_enabled(),
+                                'location': elem.location,
+                                'size': elem.size
+                            })
+                except Exception as e:
+                    debug_info['zoom_selectors_tested'].append({
+                        'selector': selector,
+                        'error': str(e)
+                    })
+            
+            logger.info(f"Zoom debug info: {debug_info}")
+            return debug_info
+            
+        except Exception as e:
+            logger.error(f"Failed to debug zoom elements: {e}")
+            return {'error': str(e)}
 
     def _get_possible_image_urls(self, metadata: Dict) -> List[str]:
         logger.info("Generating possible image URLs with focus on high resolution...")
