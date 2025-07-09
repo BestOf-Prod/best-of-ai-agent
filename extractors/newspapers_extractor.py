@@ -92,6 +92,11 @@ class SeleniumLoginManager:
              os.environ.get('REPL_MEMORY_LIMIT') == '1024' or
              os.environ.get('REPLIT_MEMORY_LIMIT') == '1024')
         )
+        # Detect if we're in batch processing mode (higher timeout needs)
+        self.is_batch_processing = (
+            threading.active_count() > 1 or  # Multiple threads active
+            os.environ.get('BATCH_PROCESSING', '').lower() == 'true'  # Explicit batch mode flag
+        )
     
     def set_credentials(self, email: str, password: str):
         """Set login credentials"""
@@ -152,6 +157,18 @@ class SeleniumLoginManager:
                 chrome_options.add_argument('--window-size=800,600')  # Smaller window for deployment
                 chrome_options.add_argument('--remote-debugging-port=9222')  # Enable remote debugging
                 logger.info("Applied deployment-specific Chrome options for resource constraints")
+            
+            # Add batch processing options for improved stability
+            if self.is_batch_processing:
+                chrome_options.add_argument('--renderer-timeout=30000')  # 30 seconds renderer timeout
+                chrome_options.add_argument('--ipc-timeout=30000')  # 30 seconds IPC timeout
+                chrome_options.add_argument('--disable-renderer-backgrounding')
+                chrome_options.add_argument('--disable-background-timer-throttling')
+                chrome_options.add_argument('--disable-features=VizDisplayCompositor')
+                chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+                chrome_options.add_argument('--disable-web-security')
+                chrome_options.add_argument('--disable-features=TranslateUI')
+                logger.info("Applied batch processing Chrome options for improved stability")
         
         try:
             # Try multiple approaches to initialize Chrome driver
@@ -252,11 +269,15 @@ class SeleniumLoginManager:
             
             if driver:
                 self.driver = driver
-                # Set deployment-specific timeouts
+                # Set context-specific timeouts
                 if self.is_replit_deployment:
                     page_load_timeout = 180  # Even longer for deployment
                     implicit_wait = 30
                     logger.info("Applied deployment-specific timeouts (180s page load, 30s implicit wait)")
+                elif self.is_batch_processing:
+                    page_load_timeout = 120  # Longer for batch processing
+                    implicit_wait = 30  # Increase implicit wait for batch processing
+                    logger.info("Applied batch processing timeouts (120s page load, 30s implicit wait)")
                 elif self.is_replit:
                     page_load_timeout = 120
                     implicit_wait = 20

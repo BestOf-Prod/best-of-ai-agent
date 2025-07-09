@@ -5,6 +5,7 @@ import concurrent.futures
 import time
 import logging
 import io
+import os
 from datetime import datetime
 from typing import List, Dict, Callable, Optional
 import requests
@@ -82,6 +83,9 @@ class BatchProcessor:
         """
         logger.info(f"Starting batch processing of {len(urls)} URLs")
         self.start_time = time.time()
+        
+        # Set batch processing flag for newspapers extractor timeout adjustments
+        os.environ['BATCH_PROCESSING'] = 'true'
         
         results = []
         errors = []
@@ -266,6 +270,11 @@ class BatchProcessor:
         }
         
         logger.info(f"Batch processing completed: {len(results)}/{len(urls)} successful in {total_time:.2f}s")
+        
+        # Clean up batch processing flag
+        if 'BATCH_PROCESSING' in os.environ:
+            del os.environ['BATCH_PROCESSING']
+        
         return batch_results
     
     def _process_single_url_enhanced(
