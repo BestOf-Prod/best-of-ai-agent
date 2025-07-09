@@ -401,6 +401,159 @@ class NewspaperImageProcessor:
         self.min_article_area = 30000  # Minimum area for article detection
         self.text_confidence_threshold = 30  # Minimum OCR confidence
     
+    def detect_newspaper_clipping_borders(self, image: Image.Image) -> Tuple[int, int, int, int]:
+        """
+        Detect the borders of a newspaper clipping to crop out excess background.
+        Uses multiple detection methods for better accuracy.
+        Returns (x, y, width, height) of the clipping area.
+        """
+        logger.info(f"Detecting newspaper clipping borders in image of size: {image.size}")
+        
+        if not NUMPY_AVAILABLE:
+            logger.warning("NumPy not available, returning full image bounds")
+            return (0, 0, image.width, image.height)
+        
+        # Convert PIL image to OpenCV format
+        img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+        
+        # Method 1: Edge detection approach
+        try:
+            logger.info("Trying edge detection method...")
+            # Apply stronger Gaussian blur to reduce noise and focus on main boundaries
+            blurred = cv2.GaussianBlur(gray, (9, 9), 0)
+            
+            # Use more conservative Canny edge detection to find main boundaries
+            edges = cv2.Canny(blurred, 30, 100)
+            
+            # Use larger kernel and more iterations to merge nearby edges
+            kernel = np.ones((7, 7), np.uint8)
+            edges = cv2.dilate(edges, kernel, iterations=3)
+            edges = cv2.erode(edges, kernel, iterations=1)  # Clean up
+            
+            # Find contours
+            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if contours:
+                # Filter contours by area (must be at least 5% of image)
+                min_area = (image.width * image.height) * 0.05
+                valid_contours = [c for c in contours if cv2.contourArea(c) > min_area]
+                
+                if valid_contours:
+                    # Find the largest valid contour
+                    largest_contour = max(valid_contours, key=cv2.contourArea)
+                    x, y, w, h = cv2.boundingRect(largest_contour)
+                    
+                    # Check if this looks like a reasonable clipping area
+                    area_ratio = (w * h) / (image.width * image.height)
+                    if 0.15 <= area_ratio <= 0.95:  # Between 15% and 95% of image
+                        logger.info(f"Edge detection successful: area_ratio={area_ratio:.3f}")
+                        return self._apply_smart_padding(x, y, w, h, image)
+        except Exception as e:
+            logger.warning(f"Edge detection failed: {e}")
+        
+        # Method 2: Brightness-based detection
+        try:
+            logger.info("Trying brightness-based detection...")
+            # Calculate brightness statistics
+            mean_brightness = np.mean(gray)
+            std_brightness = np.std(gray)
+            
+            # Create binary mask for areas significantly different from background
+            # Assume background is either very bright or very dark
+            if mean_brightness > 128:  # Light background
+                threshold = mean_brightness - std_brightness
+                mask = gray < threshold
+            else:  # Dark background
+                threshold = mean_brightness + std_brightness
+                mask = gray > threshold
+            
+            # Find the bounding box of the content area
+            coords = np.column_stack(np.where(mask))
+            if len(coords) > 0:
+                y_min, x_min = coords.min(axis=0)
+                y_max, x_max = coords.max(axis=0)
+                
+                x, y = x_min, y_min
+                w, h = x_max - x_min, y_max - y_min
+                
+                # Check if this looks reasonable
+                area_ratio = (w * h) / (image.width * image.height)
+                if 0.15 <= area_ratio <= 0.95:
+                    logger.info(f"Brightness detection successful: area_ratio={area_ratio:.3f}")
+                    return self._apply_smart_padding(x, y, w, h, image)
+        except Exception as e:
+            logger.warning(f"Brightness detection failed: {e}")
+        
+        # Method 3: Simple trim whitespace/background
+        try:
+            logger.info("Trying background trimming...")
+            # Find the dominant background color (corner pixel)
+            bg_color = gray[0, 0]
+            
+            # Find bounds where content differs significantly from background
+            tolerance = 50  # More lenient tolerance to avoid cropping too tightly
+            
+            # Find top and bottom bounds
+            for y in range(gray.shape[0]):
+                if np.any(np.abs(gray[y, :] - bg_color) > tolerance):
+                    top = y
+                    break
+            else:
+                top = 0
+            
+            for y in range(gray.shape[0] - 1, -1, -1):
+                if np.any(np.abs(gray[y, :] - bg_color) > tolerance):
+                    bottom = y
+                    break
+            else:
+                bottom = gray.shape[0] - 1
+            
+            # Find left and right bounds
+            for x in range(gray.shape[1]):
+                if np.any(np.abs(gray[:, x] - bg_color) > tolerance):
+                    left = x
+                    break
+            else:
+                left = 0
+            
+            for x in range(gray.shape[1] - 1, -1, -1):
+                if np.any(np.abs(gray[:, x] - bg_color) > tolerance):
+                    right = x
+                    break
+            else:
+                right = gray.shape[1] - 1
+            
+            x, y = left, top
+            w, h = right - left, bottom - top
+            
+            # Check if this looks reasonable
+            area_ratio = (w * h) / (image.width * image.height)
+            if 0.15 <= area_ratio <= 0.95:
+                logger.info(f"Background trimming successful: area_ratio={area_ratio:.3f}")
+                return self._apply_smart_padding(x, y, w, h, image)
+        except Exception as e:
+            logger.warning(f"Background trimming failed: {e}")
+        
+        # Fallback: return full image
+        logger.warning("All detection methods failed, returning full image bounds")
+        return (0, 0, image.width, image.height)
+    
+    def _apply_smart_padding(self, x: int, y: int, w: int, h: int, image: Image.Image) -> Tuple[int, int, int, int]:
+        """Apply intelligent padding to detected borders"""
+        # Calculate padding based on image size (2% of each dimension)
+        padding_x = max(10, int(image.width * 0.02))
+        padding_y = max(10, int(image.height * 0.02))
+        
+        # Apply padding while keeping within image bounds
+        x = max(0, x - padding_x)
+        y = max(0, y - padding_y)
+        w = min(image.width - x, w + 2 * padding_x)
+        h = min(image.height - y, h + 2 * padding_y)
+        
+        logger.info(f"Applied smart padding: x={x}, y={y}, w={w}, h={h}")
+        return (x, y, w, h)
+    
     def enhance_image_quality(self, image: Image.Image) -> Image.Image:
         """Enhance image quality for better OCR"""
         if image.mode != 'L':
@@ -1166,84 +1319,6 @@ class ContentAnalyzer:
         return is_relevant, analysis
 
 
-class StorageManager:
-    """Manage storage and retrieval of clipping results"""
-    
-    def __init__(self, storage_dir: str = "clippings"):
-        self.storage_dir = storage_dir
-        os.makedirs(storage_dir, exist_ok=True)
-        logger.info(f"Initialized storage manager with directory: {storage_dir}")
-    
-    def save_clipping(self, result: ClippingResult) -> bool:
-        """Save a clipping result to storage"""
-        try:
-            player_dir = os.path.join(self.storage_dir, result.filename.split('_')[0])
-            os.makedirs(player_dir, exist_ok=True)
-            
-            image_path = os.path.join(player_dir, f"{result.filename}.png")
-            result.image.save(image_path)
-            
-            metadata_path = os.path.join(player_dir, f"{result.filename}_metadata.json")
-            metadata_dict = {
-                'title': result.metadata.title,
-                'date': result.metadata.date,
-                'url': result.metadata.url,
-                'newspaper': result.metadata.newspaper,
-                'sentiment_score': result.metadata.sentiment_score,
-                'text_preview': result.metadata.text_preview,
-                'player_mentions': result.metadata.player_mentions,
-                'bounding_box': result.bounding_box,
-                'filename': result.filename,
-                'saved_timestamp': datetime.now().isoformat()
-            }
-            
-            # Use StorageManager for metadata storage if available
-            if hasattr(self, 'storage_manager') and self.storage_manager:
-                metadata_filename = f"{result.filename}_metadata.json"
-                metadata_content = json.dumps(metadata_dict, indent=2, ensure_ascii=False)
-                self.storage_manager.store_file(metadata_filename, metadata_content.encode('utf-8'))
-            else:
-                # Fallback to local storage
-                with open(metadata_path, 'w', encoding='utf-8') as f:
-                    json.dump(metadata_dict, f, indent=2, ensure_ascii=False)
-            
-            logger.info(f"Successfully saved clipping: {result.filename}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to save clipping {result.filename}: {e}")
-            return False
-    
-    def load_clippings(self, player_name: str) -> List[Dict]:
-        """Load saved clippings for a player"""
-        try:
-            player_dir = os.path.join(self.storage_dir, player_name.lower().replace(' ', '_'))
-            if not os.path.exists(player_dir):
-                return []
-            
-            clippings = []
-            for filename in os.listdir(player_dir):
-                if filename.endswith('_metadata.json'):
-                    metadata_path = os.path.join(player_dir, filename)
-                    with open(metadata_path, 'r', encoding='utf-8') as f:
-                        metadata = json.load(f)
-                    
-                    image_filename = filename.replace('_metadata.json', '.png')
-                    image_path = os.path.join(player_dir, image_filename)
-                    if os.path.exists(image_path):
-                        metadata['image_path'] = image_path
-                    
-                    clippings.append({'metadata': metadata})
-            
-            clippings.sort(key=lambda x: x['metadata'].get('date', ''), reverse=True)
-            logger.info(f"Loaded {len(clippings)} clippings for {player_name}")
-            return clippings
-            
-        except Exception as e:
-            logger.error(f"Failed to load clippings for {player_name}: {e}")
-            return []
-
-
 class NewspapersComExtractor:
     """Main scraper class that coordinates all components"""
     
@@ -1599,161 +1674,36 @@ class NewspapersComExtractor:
             
             logger.info(f"Total images to process: {len(all_images)} (main + {len(all_images)-1} additional).")
             
-            best_results = []
+            # Use the main image and auto-crop to clipping borders
+            main_image = all_images[0]['image']
+            main_metadata = all_images[0]['metadata']
             
-            for img_data in all_images:
-                img = img_data['image']
-                img_metadata = img_data['metadata']
-                page_num = img_data['page_number']
-                
-                logger.info(f"Processing page {page_num} of {len(all_images)}: {img.size}")
-                
-                try:
-                    logger.info("Detecting article regions...")
-                    regions = self.image_processor.detect_article_regions(img)
-                    logger.info(f"Found {len(regions)} potential article regions on page {page_num}.")
-                    
-                    max_regions = 5 if len(all_images) == 1 else 3
-                    limited_regions = regions[:max_regions]
-                    if len(regions) > max_regions:
-                        logger.info(f"Limiting region processing from {len(regions)} to {max_regions} regions.")
-                    
-                    page_best_result = None
-                    page_best_score = 0
-                    
-                    for i, region in enumerate(limited_regions):
-                        logger.info(f"Processing page {page_num}, region {i+1}/{len(limited_regions)}: {region}")
-                        
-                        try:
-                            text, confidence = self.image_processor.extract_text_with_confidence(img, region)
-                            
-                            logger.info(f"Page {page_num}, region {i+1} OCR confidence: {confidence:.1f}%")
-                            
-                            if confidence < 30:
-                                logger.info(f"Skipping page {page_num}, region {i+1} due to low OCR confidence.")
-                                continue
-                            
-                            if player_name:
-                                is_relevant, analysis = self.content_analyzer.is_relevant_article(text, player_name)
-                                logger.info(f"Page {page_num}, region {i+1} relevance: relevant={is_relevant}.")
-                                
-                                if not is_relevant:
-                                    logger.info(f"Skipping page {page_num}, region {i+1} - not relevant to {player_name}.")
-                                    continue
-                                
-                                combined_score = analysis.get('sports_score', 0) + (confidence / 100)
-                                if combined_score > page_best_score:
-                                    page_best_score = combined_score
-                                    page_best_result = {
-                                        'region': region,
-                                        'text': text,
-                                        'confidence': confidence,
-                                        'analysis': analysis,
-                                        'page_number': page_num,
-                                        'image': img,
-                                        'metadata': img_metadata
-                                    }
-                                    logger.info(f"New best result for page {page_num} with score {combined_score:.3f}.")
-                            else:
-                                page_best_result = {
-                                    'region': region,
-                                    'text': text,
-                                    'confidence': confidence,
-                                    'analysis': {'sentiment_score': 0, 'player_mentions': []},
-                                    'page_number': page_num,
-                                    'image': img,
-                                    'metadata': img_metadata
-                                }
-                                logger.info(f"Using page {page_num}, region {i+1} as result (no player filter).")
-                                break # If no player name, first good OCR is enough
-                                
-                        except Exception as e:
-                            logger.warning(f"Error processing page {page_num}, region {i+1}: {e}")
-                            continue
-                    
-                    if page_best_result:
-                        best_results.append(page_best_result)
-                        logger.info(f"Added best result from page {page_num}.")
-                        
-                except Exception as e:
-                    logger.error(f"Error processing page {page_num}: {e}")
-                    continue
+            logger.info(f"Processing main image for clipping: {main_image.size}")
             
-            if not best_results:
-                logger.warning("No relevant content found in any image/region.")
-                return {'success': False, 'error': "No relevant content found."}
-            
-            # Select the overall best result
-            overall_best = max(best_results, key=lambda r: r['analysis'].get('sports_score', 0) + (r['confidence'] / 100))
-            logger.info(f"Selected overall best result from page {overall_best['page_number']}.")
-            
-            # Apply paragraph formatting to the extracted text if it lacks proper breaks
-            original_text = overall_best['text']
+            # Detect and crop to newspaper clipping borders
             try:
-                # Create context for paragraph formatting
-                context = {
-                    'headline': metadata.get('title', ''),
-                    'source': metadata.get('newspaper', ''),
-                    'author': metadata.get('author', ''),
-                    'date': metadata.get('date', '')
-                }
+                x, y, w, h = self.image_processor.detect_newspaper_clipping_borders(main_image)
+                logger.info(f"Border detection returned: x={x}, y={y}, w={w}, h={h}")
                 
-                # Format paragraphs using LLM or fallback methods
-                formatted_text = format_article_paragraphs(original_text, context)
-                
-                # Update the text in overall_best if formatting was successful and different
-                if formatted_text and formatted_text != original_text:
-                    overall_best['text'] = formatted_text
-                    logger.info(f"Applied paragraph formatting to extracted text (original: {len(original_text)} chars, formatted: {len(formatted_text)} chars)")
+                # Only crop if we actually detected a meaningful area (not the full image)
+                if not (x == 0 and y == 0 and w == main_image.width and h == main_image.height):
+                    cropped_image = main_image.crop((x, y, x + w, y + h))
+                    logger.info(f"Auto-cropped clipping from {main_image.size} to {cropped_image.size}")
+                    final_image = cropped_image
                 else:
-                    logger.debug("Text already has adequate paragraph formatting or formatting failed")
-                    
+                    logger.info("Border detection returned full image bounds, no cropping applied")
+                    final_image = main_image
             except Exception as e:
-                logger.warning(f"Paragraph formatting failed, using original text: {str(e)}")
-                # Continue with original text if formatting fails
+                logger.warning(f"Auto-cropping failed, using full image: {e}")
+                final_image = main_image
             
-            # NEW: Multi-image processing for better article boundary detection
-            clipping = None
-            stitched_image = None
-            article_boundaries = []
-            
-            if len(all_images) > 1:
-                logger.info("Multiple images detected - attempting multi-image processing")
-                
-                try:
-                    # Extract just the images for stitching
-                    images_to_stitch = [img_data['image'] for img_data in all_images]
-                    
-                    # Stitch images together
-                    stitched_image = self.image_processor.stitch_newspaper_images(images_to_stitch)
-                    logger.info(f"Successfully stitched {len(images_to_stitch)} images into {stitched_image.size}")
-                    
-                    # Get the best article text for boundary detection
-                    article_text = overall_best['text']
-                    
-                    # Detect article boundaries across the stitched image
-                    article_boundaries = self.image_processor.detect_article_boundaries_across_images(
-                        images_to_stitch, article_text
-                    )
-                    
-                    if article_boundaries:
-                        # Crop the article from the stitched image using detected boundaries
-                        clipping = self.image_processor.crop_article_from_stitched_image(
-                            stitched_image, article_boundaries
-                        )
-                        logger.info(f"Successfully created article clipping from stitched image: {clipping.size}")
-                    else:
-                        logger.warning("No article boundaries detected, falling back to single image processing")
-                        
-                except Exception as e:
-                    logger.error(f"Multi-image processing failed: {str(e)}")
-                    logger.info("Falling back to single image processing")
-            
-            # Fallback to single image processing if multi-image failed or only one image
-            if clipping is None:
-                x, y, w, h = overall_best['region']
-                clipping = overall_best['image'].crop((x, y, x + w, y + h))
-                logger.info(f"Using single image clipping: {clipping.size}")
+            # Basic OCR for metadata extraction (optional, just for basic text preview)
+            try:
+                full_text = pytesseract.image_to_string(final_image)
+                logger.info(f"Extracted basic text for preview: {len(full_text)} characters")
+            except Exception as e:
+                logger.warning(f"OCR failed for text preview: {e}")
+                full_text = "Text extraction failed - manual review required"
             
             metadata = {
                 'title': image_metadata.get('title', 'Unknown Article'),
@@ -1761,19 +1711,19 @@ class NewspapersComExtractor:
                 'newspaper': image_metadata.get('publication_title', 'Unknown Newspaper'),
                 'location': image_metadata.get('location', 'Unknown Location'),
                 'url': url,
-                'sentiment_score': overall_best['analysis'].get('sentiment_score', 0),
-                'player_mentions': overall_best['analysis'].get('player_mentions', []),
-                'extraction_method': 'newspapers.com_enhanced',
-                'ocr_confidence': overall_best['confidence'],
-                'sports_score': overall_best['analysis'].get('sports_score', 0),
-                'word_count': len(overall_best['text'].split()),
+                'sentiment_score': 0,
+                'player_mentions': [],
+                'extraction_method': 'newspapers.com_full_clipping',
+                'ocr_confidence': 0,
+                'sports_score': 0,
+                'word_count': len(full_text.split()),
                 'extraction_timestamp': datetime.now().isoformat(),
                 'total_pages_found': len(all_images),
-                'selected_page': overall_best['page_number'],
-                'all_pages_analyzed': len(best_results)
+                'selected_page': 1,
+                'all_pages_analyzed': 1
             }
             
-            logger.info(f"Successfully extracted content from {len(all_images)} pages, selected page {overall_best['page_number']}.")
+            logger.info(f"Successfully captured full clipping from {len(all_images)} pages.")
             
             response = {
                 'success': True,
@@ -1781,30 +1731,14 @@ class NewspapersComExtractor:
                 'source': metadata['newspaper'],
                 'date': metadata['date'],
                 'location': metadata['location'],
-                'content': overall_best['text'][:500] + "..." if len(overall_best['text']) > 500 else overall_best['text'],
-                'image_data': clipping,
+                'content': full_text[:500] + "..." if len(full_text) > 500 else full_text,
+                'image_data': final_image,  # Return the auto-cropped clipping
                 'metadata': metadata,
-                'full_text': overall_best['text'],
-                'stitched_image': stitched_image,
-                'article_boundaries': article_boundaries,
-                'processing_method': 'multi_image' if len(all_images) > 1 and stitched_image else 'single_image'
+                'full_text': full_text,
+                'stitched_image': None,
+                'article_boundaries': [],
+                'processing_method': 'full_clipping'
             }
-            
-            if len(all_images) > 1:
-                response['multi_page_info'] = {
-                    'total_pages': len(all_images),
-                    'pages_with_content': len(best_results),
-                    'selected_page': overall_best['page_number'],
-                    'all_page_results': [
-                        {
-                            'page_number': r['page_number'],
-                            'confidence': r['confidence'],
-                            'text_preview': r['text'][:100] + "..." if len(r['text']) > 100 else r['text'],
-                            'sports_score': r['analysis'].get('sports_score', 0)
-                        }
-                        for r in best_results
-                    ]
-                }
             
             return response
             
@@ -2062,41 +1996,35 @@ class NewspapersComExtractor:
             
             time.sleep(5) # Give more time for page to fully render after initial waits
             
-            # Try to find the main article content area
-            article_selectors = [
-                '#image-layers'
-            ]
-            
-            article_element = None
-            for selector in article_selectors:
+            # Click the zoom-out button 6 times to capture the entire clipping
+            logger.info("Clicking zoom-out button 6 times to capture entire clipping...")
+            for i in range(6):
                 try:
-                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                    if elements:
-                        # Get the largest element that matches our criteria
-                        article_element = max(elements, key=lambda e: e.size['width'] * e.size['height'])
-                        logger.info(f"Found article element using selector '{selector}': {article_element.size}")
+                    zoom_out_button = driver.find_element(By.ID, 'btn-zoom-out')
+                    if zoom_out_button.is_displayed() and zoom_out_button.is_enabled():
+                        zoom_out_button.click()
+                        logger.info(f"Clicked zoom-out button {i + 1}/6")
+                        time.sleep(1)  # Wait between clicks
+                    else:
+                        logger.warning(f"Zoom-out button not available on click {i + 1}/6")
                         break
                 except Exception as e:
-                    logger.debug(f"Error with selector {selector}: {e}")
-                    continue
+                    logger.warning(f"Could not click zoom-out button on attempt {i + 1}/6: {e}")
+                    break
             
-            if article_element:
-                logger.info("Taking high-resolution screenshot of article content.")
-                # Scroll the element into view
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", article_element)
-                time.sleep(1) # Allow scroll to complete
-                
-                # Take screenshot of the element
-                screenshot_data = article_element.screenshot_as_png
-                image = Image.open(io.BytesIO(screenshot_data))
-                logger.info(f"Article screenshot captured: {image.size}")
-                return image
-            
-            logger.info("No specific article element found. Taking high-resolution full page screenshot...")
-            # Try to zoom out slightly to capture more if needed, then take full screenshot
-            driver.execute_script("document.body.style.zoom='75%'") # A bit less aggressive than 200%
+            # Wait for zoom changes to take effect
             time.sleep(2)
             
+            # Scroll down slightly to avoid bottom navigation bar blocking content
+            try:
+                driver.execute_script("window.scrollBy(0, 50);")
+                logger.info("Scrolled down 50px to avoid bottom navigation bar")
+                time.sleep(1)
+            except Exception as e:
+                logger.warning(f"Could not scroll down: {e}")
+            
+            # Take full page screenshot to capture the entire clipping
+            logger.info("Taking full page screenshot to capture entire clipping...")
             screenshot_data = driver.get_screenshot_as_png()
             full_screenshot = Image.open(io.BytesIO(screenshot_data))
             

@@ -18,6 +18,9 @@ from typing import List, Tuple, Optional
 from utils.storage_manager import StorageManager
 from utils.paragraph_formatter import format_article_paragraphs
 
+# Import capsule parser for typography specifications
+from utils.capsule_parser import get_typography_for_article
+
 # Setup logging
 logger = setup_logging(__name__)
 
@@ -837,6 +840,20 @@ def extract_from_url(url, project_name: str = "default"):
             logger.warning(f"Paragraph formatting failed for URL content, using original: {str(e)}")
             formatted_content = content  # Fallback to original content
         
+        # Calculate word count for capsule selection
+        word_count = len(formatted_content.split())
+        
+        # Get typography specifications from capsules
+        typography_capsule = None
+        try:
+            typography_capsule = get_typography_for_article(word_count, url)
+            if typography_capsule:
+                logger.info(f"Found typography capsule {typography_capsule.capsule_id} for {word_count} words ({typography_capsule.category})")
+            else:
+                logger.warning(f"No typography capsule found for {word_count} words")
+        except Exception as e:
+            logger.warning(f"Error getting typography capsule: {str(e)}")
+        
         # Create the article data dictionary
         article_data = {
             "success": True,
@@ -848,6 +865,8 @@ def extract_from_url(url, project_name: str = "default"):
             "url": url,
             "image_url": image_url,
             "structured_content": structured_content if 'structured_content' in locals() else None,
+            "word_count": word_count,
+            "typography_capsule": typography_capsule,
         }
         
         # Create a more descriptive filename

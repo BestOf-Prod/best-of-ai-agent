@@ -5,6 +5,7 @@ import requests
 import zipfile
 import io
 import random
+import time
 from urllib.parse import urlparse
 from docx import Document
 from docx.shared import Inches, Pt
@@ -17,6 +18,9 @@ from bs4 import BeautifulSoup
 import logging
 from datetime import datetime
 from utils.logger import setup_logging
+
+# Import capsule parser for typography specifications
+from utils.capsule_parser import get_typography_for_article, TypographySpec
 
 logger = setup_logging(__name__, log_level=logging.INFO)
 
@@ -344,6 +348,39 @@ def create_headline_style(paragraph, text, font_name=None):
     run.font.bold = True
     paragraph.space_after = Pt(6)
 
+def create_capsule_based_style(paragraph, text, typography_spec: TypographySpec, alignment=WD_ALIGN_PARAGRAPH.LEFT):
+    """Apply styling based on capsule typography specifications."""
+    if not typography_spec:
+        # Fallback to default styling
+        run = paragraph.add_run(text)
+        run.font.name = 'Times New Roman'
+        run.font.size = Pt(12)
+        return
+    
+    # Set alignment
+    paragraph.alignment = alignment
+    
+    # Set indentation if specified
+    if typography_spec.indent > 0:
+        paragraph.paragraph_format.left_indent = Inches(typography_spec.indent)
+    
+    # Create run and apply font specifications
+    run = paragraph.add_run(text)
+    run.font.name = typography_spec.font_family
+    run.font.size = Pt(typography_spec.font_size)
+    
+    # Apply font weight
+    if 'bold' in typography_spec.font_weight.lower():
+        run.font.bold = True
+    elif 'italic' in typography_spec.font_weight.lower():
+        run.font.italic = True
+    
+    # Set line spacing (leading)
+    paragraph.paragraph_format.line_spacing = Pt(typography_spec.leading)
+    
+    # Set spacing after paragraph
+    paragraph.space_after = Pt(3)
+
 def create_body_style(paragraph, text, font_name=None, indented=False):
     """Apply body text styling to a paragraph."""
     paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
@@ -396,14 +433,27 @@ def create_component_documents(article_data, temp_dir):
     """
     logger.info("Creating component documents from article data")
     
-    # Get font for this article's source
-    font_name = get_font_for_site(article_data.get('url', ''))
-    logger.info(f"Selected font: {font_name} for source: {article_data.get('source', 'unknown')}")
+    # Get typography capsule or fallback to font selection
+    typography_capsule = article_data.get('typography_capsule')
+    font_name = None
+    word_count = article_data.get('word_count', 0)
     
-    # Calculate word count for the article body
-    article_text = article_data.get('text', '')
-    word_count = calculate_word_count(article_text)
-    logger.info(f"Article word count: {word_count}")
+    if typography_capsule:
+        logger.info(f"Using typography capsule {typography_capsule.capsule_id} for {word_count} words ({typography_capsule.category})")
+        # Use the headline font as the primary font for directory naming
+        headline_spec = typography_capsule.typography_specs.get('headline')
+        if headline_spec:
+            font_name = headline_spec.font_family
+    else:
+        # Fallback to original font selection method
+        font_name = get_font_for_site(article_data.get('url', ''))
+        logger.info(f"No capsule available, selected font: {font_name} for source: {article_data.get('source', 'unknown')}")
+        
+        # Calculate word count if not already provided
+        if word_count == 0:
+            article_text = article_data.get('text', '')
+            word_count = calculate_word_count(article_text)
+            logger.info(f"Calculated word count: {word_count}")
     
     # Create directory name with word count, font, and title
     directory_name = create_directory_name(article_data, font_name, word_count)
@@ -413,25 +463,55 @@ def create_component_documents(article_data, temp_dir):
     headline = article_data.get('headline', '')
     structured_content = article_data.get('structured_content', [])
     
-    # Get images from article data directly (preferred) or extract from markdown text
+    # Get images from article data - handle both image_url and image_data
     images = []
-    if article_data.get('image_url'):
-        # Use the image URL directly from article data (from url_extractor)
+    
+    # Check for newspapers.com image_data (PIL Image object)
+    if article_data.get('image_data'):
+        # Save PIL Image to temp directory for processing
+        image_filename = f"newspapers_clipping_{int(time.time())}.png"
+        image_path = os.path.join(temp_dir, image_filename)
+        try:
+            article_data['image_data'].save(image_path, 'PNG')
+            images.append({
+                'alt_text': 'Newspapers.com Clipping',
+                'url': 'newspapers.com_clipping',  # Special marker for clipping images
+                'path': image_path,  # Direct path to image file
+                'is_clipping': True
+            })
+            logger.info(f"Using image_data from newspapers.com clipping: {image_path}")
+        except Exception as e:
+            logger.error(f"Failed to save newspapers.com image_data: {str(e)}")
+    
+    # Check for regular image URL (from url_extractor)
+    elif article_data.get('image_url'):
         images.append({
             'alt_text': 'Article Image',
             'url': article_data['image_url'],
-            'markdown': f"![Article Image]({article_data['image_url']})"
+            'markdown': f"![Article Image]({article_data['image_url']})",
+            'is_clipping': False
         })
         logger.info(f"Using image URL from article data: {article_data['image_url']}")
+    
+    # Fallback: try to extract from markdown text
     else:
-        # Fallback: try to extract from markdown text
-        images = extract_images_from_markdown(article_data.get('text', ''))
-        logger.info(f"Extracted {len(images)} images from markdown text")
+        extracted_images = extract_images_from_markdown(article_data.get('text', ''))
+        for img in extracted_images:
+            img['is_clipping'] = False
+        images.extend(extracted_images)
+        logger.info(f"Extracted {len(extracted_images)} images from markdown text")
     
     components = {
         'heading': None,
-        'blockquote': None,
+        'drophead': None,  # Subheading
+        'author': None,
+        'source': None, 
         'body': None,
+        'blockquote': None,
+        'caption': None,
+        'photo_credit': None,
+        'pullquote': None,
+        'attribution': None,
         'image': None,
         'metadata': {
             'font_name': font_name,
@@ -448,12 +528,73 @@ def create_component_documents(article_data, temp_dir):
         set_column_layout(heading_doc.sections[0], 1)  # Single column
         
         heading_para = heading_doc.add_paragraph()
-        create_headline_style(heading_para, headline, font_name)
+        
+        # Use capsule-based styling if available
+        if typography_capsule:
+            headline_spec = typography_capsule.typography_specs.get('headline')
+            if headline_spec:
+                create_capsule_based_style(heading_para, headline, headline_spec, WD_ALIGN_PARAGRAPH.CENTER)
+                logger.info(f"Applied capsule-based headline styling: {headline_spec.font_family} {headline_spec.font_size}pt")
+            else:
+                create_headline_style(heading_para, headline, font_name)
+        else:
+            create_headline_style(heading_para, headline, font_name)
         
         heading_path = os.path.join(temp_dir, 'heading.docx')
         heading_doc.save(heading_path)
         components['heading'] = heading_path
         logger.info(f"Created heading document: {heading_path}")
+    
+    # Create author document
+    author = article_data.get('author')
+    if author and author.strip() and author.strip() != "Unknown Author":
+        author_doc = Document()
+        apply_newspaper_styling(author_doc)
+        set_column_layout(author_doc.sections[0], 1)
+        
+        author_para = author_doc.add_paragraph()
+        if typography_capsule:
+            author_spec = typography_capsule.typography_specs.get('author')
+            if author_spec:
+                create_capsule_based_style(author_para, f"By {author}", author_spec, WD_ALIGN_PARAGRAPH.LEFT)
+                logger.info(f"Applied capsule-based author styling: {author_spec.font_family} {author_spec.font_size}pt")
+            else:
+                create_body_style(author_para, f"By {author}", font_name)
+        else:
+            create_body_style(author_para, f"By {author}", font_name)
+        
+        author_path = os.path.join(temp_dir, 'author.docx')
+        author_doc.save(author_path)
+        components['author'] = author_path
+        logger.info(f"Created author document: {author_path}")
+    
+    # Create source document
+    source = article_data.get('source')
+    date = article_data.get('date')
+    if source and source.strip() and source.strip() != "Unknown Source":
+        source_doc = Document()
+        apply_newspaper_styling(source_doc)
+        set_column_layout(source_doc.sections[0], 1)
+        
+        source_para = source_doc.add_paragraph()
+        source_text = f"{source}"
+        if date and date.strip() and date.strip() != "Unknown Date":
+            source_text += f" | {date}"
+            
+        if typography_capsule:
+            source_spec = typography_capsule.typography_specs.get('source')
+            if source_spec:
+                create_capsule_based_style(source_para, source_text, source_spec, WD_ALIGN_PARAGRAPH.LEFT)
+                logger.info(f"Applied capsule-based source styling: {source_spec.font_family} {source_spec.font_size}pt")
+            else:
+                create_body_style(source_para, source_text, font_name)
+        else:
+            create_body_style(source_para, source_text, font_name)
+        
+        source_path = os.path.join(temp_dir, 'source.docx')
+        source_doc.save(source_path)
+        components['source'] = source_path
+        logger.info(f"Created source document: {source_path}")
     
     # Separate blockquotes and body content
     blockquote_texts = []
@@ -483,7 +624,17 @@ def create_component_documents(article_data, temp_dir):
         
         for quote_text in blockquote_texts:
             quote_para = blockquote_doc.add_paragraph()
-            create_blockquote_style(quote_para, quote_text, font_name)
+            
+            # Use capsule-based styling if available
+            if typography_capsule:
+                pullquote_spec = typography_capsule.typography_specs.get('pullquote')
+                if pullquote_spec:
+                    create_capsule_based_style(quote_para, quote_text, pullquote_spec, WD_ALIGN_PARAGRAPH.JUSTIFY)
+                    logger.info(f"Applied capsule-based pullquote styling: {pullquote_spec.font_family} {pullquote_spec.font_size}pt")
+                else:
+                    create_blockquote_style(quote_para, quote_text, font_name)
+            else:
+                create_blockquote_style(quote_para, quote_text, font_name)
         
         blockquote_path = os.path.join(temp_dir, 'blockquote.docx')
         blockquote_doc.save(blockquote_path)
@@ -498,7 +649,17 @@ def create_component_documents(article_data, temp_dir):
         
         for body_item in body_texts:
             body_para = body_doc.add_paragraph()
-            create_body_style(body_para, body_item['text'], font_name, body_item['indented'])
+            
+            # Use capsule-based styling if available
+            if typography_capsule:
+                body_spec = typography_capsule.typography_specs.get('body')
+                if body_spec:
+                    create_capsule_based_style(body_para, body_item['text'], body_spec, WD_ALIGN_PARAGRAPH.JUSTIFY)
+                    logger.info(f"Applied capsule-based body styling: {body_spec.font_family} {body_spec.font_size}pt")
+                else:
+                    create_body_style(body_para, body_item['text'], font_name, body_item['indented'])
+            else:
+                create_body_style(body_para, body_item['text'], font_name, body_item['indented'])
         
         body_path = os.path.join(temp_dir, 'body.docx')
         body_doc.save(body_path)
@@ -510,27 +671,66 @@ def create_component_documents(article_data, temp_dir):
     if images:
         logger.info(f"Processing {len(images)} images for article: {article_data.get('headline', 'Unknown')}")
         for i, image in enumerate(images):
-            logger.info(f"Attempting to download image {i+1}: {image['url']}")
-            image_path = download_image(image['url'], temp_dir)
-            if image_path:
-                # Verify the downloaded file exists and has content
-                if os.path.exists(image_path) and os.path.getsize(image_path) > 0:
+            if image.get('is_clipping') and image.get('path'):
+                # This is a newspapers.com clipping already saved to disk
+                logger.info(f"Using newspapers.com clipping {i+1}: {image['path']}")
+                if os.path.exists(image['path']) and os.path.getsize(image['path']) > 0:
                     downloaded_images.append({
-                        'path': image_path,
+                        'path': image['path'],
                         'alt_text': image['alt_text'],
                         'url': image['url']
                     })
-                    logger.info(f"Successfully downloaded image {i+1}: {image_path} ({os.path.getsize(image_path)} bytes)")
+                    logger.info(f"Successfully added clipping image {i+1}: {image['path']} ({os.path.getsize(image['path'])} bytes)")
                 else:
-                    logger.error(f"Image file {image_path} is missing or empty after download")
+                    logger.error(f"Clipping image file {image['path']} is missing or empty")
             else:
-                logger.error(f"Failed to download image {i+1}: {image['url']}")
+                # This is a regular image URL that needs to be downloaded
+                logger.info(f"Attempting to download image {i+1}: {image['url']}")
+                image_path = download_image(image['url'], temp_dir)
+                if image_path:
+                    # Verify the downloaded file exists and has content
+                    if os.path.exists(image_path) and os.path.getsize(image_path) > 0:
+                        downloaded_images.append({
+                            'path': image_path,
+                            'alt_text': image['alt_text'],
+                            'url': image['url']
+                        })
+                        logger.info(f"Successfully downloaded image {i+1}: {image_path} ({os.path.getsize(image_path)} bytes)")
+                    else:
+                        logger.error(f"Image file {image_path} is missing or empty after download")
+                else:
+                    logger.error(f"Failed to download image {i+1}: {image['url']}")
     else:
         logger.info(f"No images found for article: {article_data.get('headline', 'Unknown')}")
     
     if downloaded_images:
         components['image'] = downloaded_images
         logger.info(f"Added {len(downloaded_images)} downloaded images to components")
+        
+        # Create caption document if we have images
+        caption_text = f"Image from {article_data.get('source', 'Unknown Source')}"
+        if date and date.strip() and date.strip() != "Unknown Date":
+            caption_text += f", {date}"
+            
+        caption_doc = Document()
+        apply_newspaper_styling(caption_doc)
+        set_column_layout(caption_doc.sections[0], 1)
+        
+        caption_para = caption_doc.add_paragraph()
+        if typography_capsule:
+            caption_spec = typography_capsule.typography_specs.get('caption')
+            if caption_spec:
+                create_capsule_based_style(caption_para, caption_text, caption_spec, WD_ALIGN_PARAGRAPH.CENTER)
+                logger.info(f"Applied capsule-based caption styling: {caption_spec.font_family} {caption_spec.font_size}pt")
+            else:
+                create_body_style(caption_para, caption_text, font_name)
+        else:
+            create_body_style(caption_para, caption_text, font_name)
+        
+        caption_path = os.path.join(temp_dir, 'caption.docx')
+        caption_doc.save(caption_path)
+        components['caption'] = caption_path
+        logger.info(f"Created caption document: {caption_path}")
     else:
         logger.warning(f"No images were successfully downloaded for article: {article_data.get('headline', 'Unknown')}")
     
@@ -654,7 +854,59 @@ def convert_articles_to_component_zip(articles_data, output_zip_path=None):
         for i, article_data in enumerate(articles_data):
             logger.info(f"Processing article {i+1}/{len(articles_data)}")
             
-            # Create component documents for this article
+            # Check if this is a newspapers.com article - if so, skip Word document generation
+            is_newspapers_com = 'newspapers.com' in article_data.get('url', '').lower()
+            
+            if is_newspapers_com:
+                logger.info(f"Skipping Word document generation for newspapers.com article: {article_data.get('title', 'Unknown')}")
+                # Only process the image for newspapers.com articles
+                metadata = {
+                    'directory_name': f"newspaper_clipping_{i+1}",
+                    'title': article_data.get('title', 'Unknown'),
+                    'url': article_data.get('url', ''),
+                    'date': article_data.get('date', ''),
+                    'source': 'newspapers.com'
+                }
+                
+                # Store directory info with just image
+                article_directories[metadata['directory_name']] = {
+                    'metadata': metadata,
+                    'components': [],
+                    'images': []
+                }
+                
+                # Process image if available
+                if 'image_data' in article_data and article_data['image_data']:
+                    try:
+                        image_data = article_data['image_data']
+                        image_filename = f"newspaper_clipping_{i+1}.png"
+                        
+                        # Save image to temp directory
+                        if hasattr(image_data, 'save'):
+                            image_path = os.path.join(temp_dir, image_filename)
+                            image_data.save(image_path)
+                            
+                            # Create image info with expected structure
+                            image_info = {
+                                'source_path': image_path,
+                                'clip_filename': image_filename,
+                                'directory': metadata['directory_name'],
+                                'url': 'newspapers.com_clipping',
+                                'alt_text': f'Newspaper clipping {i+1}'
+                            }
+                            
+                            all_images.append(image_info)
+                            article_directories[metadata['directory_name']]['images'].append(image_info)
+                            
+                            logger.info(f"Added newspaper clipping image: {image_filename} from {image_path}")
+                        else:
+                            logger.warning(f"Image data for article {i+1} is not a PIL Image object")
+                    except Exception as e:
+                        logger.error(f"Failed to process newspaper clipping image for article {i+1}: {str(e)}")
+                
+                continue  # Skip Word document generation for newspapers.com
+            
+            # Create component documents for this article (non-newspapers.com)
             components = create_component_documents(article_data, temp_dir)
             
             # Get metadata for directory organization

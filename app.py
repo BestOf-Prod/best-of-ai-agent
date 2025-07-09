@@ -97,14 +97,15 @@ def streamlined_sidebar_config():
     
     # Authentication section (collapsed by default)
     with st.sidebar.expander("🔐 Newspapers.com Login", expanded=False):
-        # email = st.text_input("Email", key="np_email")
-        # password = st.text_input("Password", type="password", key="np_password")
-        uploaded_cookies = st.file_uploader("Cookies File (Optional)", type=['json'])
+        uploaded_cookies = st.file_uploader("Cookies File (Required)", type=['json'], help="Upload your newspapers.com cookies JSON file")
         
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Login", key="init_auth"):
-                initialize_newspapers_authentication(email, password, uploaded_cookies)
+                if uploaded_cookies is not None:
+                    initialize_newspapers_authentication_with_cookies(uploaded_cookies)
+                else:
+                    st.warning("Please upload a cookies file to authenticate")
         with col2:
             if st.button("Test", key="test_auth"):
                 test_newspapers_authentication()
@@ -191,6 +192,51 @@ def initialize_newspapers_authentication(email: str, password: str, uploaded_coo
             else:
                 st.warning("⚠️ Authentication initialized but may have limited access")
                 logger.warning("Authentication partially successful")
+                
+        except Exception as e:
+            logger.error(f"Authentication initialization failed: {str(e)}")
+            st.error(f"❌ Authentication failed: {str(e)}")
+            return False
+            
+        return True
+
+def initialize_newspapers_authentication_with_cookies(uploaded_cookies):
+    """Initialize Newspapers.com authentication using only cookies"""
+    logger.info("Initializing Newspapers.com authentication with cookies only")
+    
+    with st.spinner("Initializing Newspapers.com authentication with cookies..."):
+        try:
+            # Initialize extractor with appropriate settings
+            extractor = NewspapersComExtractor(auto_auth=True)
+            
+            # Load cookies from uploaded file
+            try:
+                cookies_data = json.loads(uploaded_cookies.getvalue().decode())
+                # Convert list of cookie dictionaries to a single dictionary of name-value pairs
+                if isinstance(cookies_data, list):
+                    cookies_dict = {cookie['name']: cookie['value'] for cookie in cookies_data}
+                    extractor.cookie_manager.cookies = cookies_dict
+                else:
+                    extractor.cookie_manager.cookies = cookies_data
+                logger.info("Successfully loaded cookies from uploaded file")
+            except Exception as e:
+                logger.error(f"Failed to load cookies from file: {str(e)}")
+                st.error("Failed to load cookies from file. Please check the file format.")
+                return False
+            
+            # Try to authenticate using only cookies (no email/password)
+            success = extractor.initialize()
+            
+            # Store in session state
+            st.session_state.newspapers_extractor = extractor
+            st.session_state.authentication_status = extractor.get_authentication_status()
+            
+            if success:
+                st.success("✅ Newspapers.com authentication successful with cookies!")
+                logger.info("Authentication initialized successfully with cookies")
+            else:
+                st.warning("⚠️ Authentication initialized but may have limited access")
+                logger.warning("Authentication partially successful with cookies")
                 
         except Exception as e:
             logger.error(f"Authentication initialization failed: {str(e)}")
@@ -1057,9 +1103,10 @@ def convert_processed_articles_to_components(selected_indices, results):
                     'date': date,
                     'url': url,
                     'image_url': article.get('image_url'),  # Pass through the image URL from batch results
-                    # For now, we'll let the component converter parse the content into structured components
-                    # In the future, this could be enhanced to pre-parse blockquotes and paragraphs
-                    'structured_content': []
+                    'image_data': article.get('image_data'),  # Pass through PIL Image from newspapers.com
+                    'word_count': article.get('word_count', 0),  # Pass through word count for capsule selection
+                    'typography_capsule': article.get('typography_capsule'),  # Pass through capsule data
+                    'structured_content': article.get('structured_content', [])  # Pass through structured content
                 }
                 
                 articles_data.append(article_data)

@@ -140,22 +140,51 @@ class BatchProcessor:
                             full_content = getattr(result, 'content', '') or getattr(result, 'text', '')
                         content_preview = full_content[:200] + '...' if len(full_content) > 200 else full_content
                         
-                        result_dict = {
-                            'url': url,
-                            'success': True,
-                            'headline': result.get('headline', '') if isinstance(result, dict) else getattr(result, 'headline', ''),
-                            'source': result.get('source', '') if isinstance(result, dict) else getattr(result, 'source', ''),
-                            'date': result.get('date', '') if isinstance(result, dict) else getattr(result, 'date', ''),
-                            'content': content_preview,  # Keep truncated for display
-                            'full_content': full_content,  # Add full content for ICML conversion
-                            'markdown_path': result.get('markdown_path', '') if isinstance(result, dict) else getattr(result, 'markdown_path', ''),
-                            'processing_time_seconds': result.get('processing_time_seconds', 0.0) if isinstance(result, dict) else getattr(result, 'processing_time_seconds', 0.0),
-                            'upload_result': upload_result,
-                            'metadata': result.get('metadata', {}) if isinstance(result, dict) else getattr(result, 'metadata', {}),
-                            'image_data': result.get('image_data') if isinstance(result, dict) else getattr(result, 'image_data', None),  # Preserve newspaper clipping images
-                            'image_url': result.get('image_url') if isinstance(result, dict) else getattr(result, 'image_url', None),  # Preserve original image URL
-                            'stitched_image': result.get('stitched_image') if isinstance(result, dict) else getattr(result, 'stitched_image', None)  # Preserve stitched images
-                        }
+                        # Check if this is a newspaper.com URL - if so, only include the enhanced image
+                        is_newspaper_com = 'newspapers.com' in url.lower()
+                        
+                        if is_newspaper_com:
+                            # For newspaper.com articles, only include the enhanced image with intelligent cropping
+                            result_dict = {
+                                'url': url,
+                                'success': True,
+                                'headline': result.get('headline', '') if isinstance(result, dict) else getattr(result, 'headline', ''),
+                                'source': result.get('source', '') if isinstance(result, dict) else getattr(result, 'source', ''),
+                                'date': result.get('date', '') if isinstance(result, dict) else getattr(result, 'date', ''),
+                                'content': '',  # No text content for newspaper clippings
+                                'full_content': '',  # No text content for newspaper clippings
+                                'markdown_path': '',  # No markdown for newspaper clippings
+                                'processing_time_seconds': result.get('processing_time_seconds', 0.0) if isinstance(result, dict) else getattr(result, 'processing_time_seconds', 0.0),
+                                'upload_result': upload_result,
+                                'metadata': result.get('metadata', {}) if isinstance(result, dict) else getattr(result, 'metadata', {}),
+                                'image_data': result.get('image_data') if isinstance(result, dict) else getattr(result, 'image_data', None),  # Enhanced image with intelligent cropping
+                                'image_url': result.get('image_url') if isinstance(result, dict) else getattr(result, 'image_url', None),  # Original image URL for reference
+                                'stitched_image': result.get('stitched_image') if isinstance(result, dict) else getattr(result, 'stitched_image', None),  # Stitched image if multi-page
+                                'word_count': 0,  # No word count for image-only clippings
+                                'typography_capsule': None,  # No typography capsule for image-only clippings
+                                'structured_content': []  # No structured content for image-only clippings
+                            }
+                        else:
+                            # For other URLs, include full content as before
+                            result_dict = {
+                                'url': url,
+                                'success': True,
+                                'headline': result.get('headline', '') if isinstance(result, dict) else getattr(result, 'headline', ''),
+                                'source': result.get('source', '') if isinstance(result, dict) else getattr(result, 'source', ''),
+                                'date': result.get('date', '') if isinstance(result, dict) else getattr(result, 'date', ''),
+                                'content': content_preview,  # Keep truncated for display
+                                'full_content': full_content,  # Add full content for ICML conversion
+                                'markdown_path': result.get('markdown_path', '') if isinstance(result, dict) else getattr(result, 'markdown_path', ''),
+                                'processing_time_seconds': result.get('processing_time_seconds', 0.0) if isinstance(result, dict) else getattr(result, 'processing_time_seconds', 0.0),
+                                'upload_result': upload_result,
+                                'metadata': result.get('metadata', {}) if isinstance(result, dict) else getattr(result, 'metadata', {}),
+                                'image_data': result.get('image_data') if isinstance(result, dict) else getattr(result, 'image_data', None),  # Preserve newspaper clipping images
+                                'image_url': result.get('image_url') if isinstance(result, dict) else getattr(result, 'image_url', None),  # Preserve original image URL
+                                'stitched_image': result.get('stitched_image') if isinstance(result, dict) else getattr(result, 'stitched_image', None),  # Preserve stitched images
+                                'word_count': result.get('word_count', 0) if isinstance(result, dict) else getattr(result, 'word_count', 0),  # Preserve word count for capsule selection
+                                'typography_capsule': result.get('typography_capsule') if isinstance(result, dict) else getattr(result, 'typography_capsule', None),  # Preserve capsule data
+                                'structured_content': result.get('structured_content', []) if isinstance(result, dict) else getattr(result, 'structured_content', [])  # Preserve structured content
+                            }
                         results.append(result_dict)
                         self.total_successful += 1
                         logger.info(f"Successfully processed: {url}")
@@ -272,6 +301,9 @@ class BatchProcessor:
                     self.image_url = None  # Add image_url field
                     self.metadata = {}
                     self.markdown_path = None
+                    self.word_count = 0  # Add word count for capsule selection
+                    self.typography_capsule = None  # Add capsule data
+                    self.structured_content = []  # Add structured content
                     
             return SimpleResult(
                 success=False,
@@ -290,9 +322,20 @@ class BatchProcessor:
         logger.debug(f"Processing Newspapers.com URL: {url}")
         
         if self.newspapers_extractor and enable_advanced_processing:
-            # Use enhanced extractor with auto-authentication
-            logger.debug("Using enhanced Newspapers.com extractor")
-            return self.newspapers_extractor.extract_from_url(url, player_name=player_name, project_name=project_name)
+            # Create a separate extractor instance for thread safety during batch processing
+            # The shared extractor instance might have concurrency issues with image processing
+            logger.debug("Using enhanced Newspapers.com extractor (thread-safe copy)")
+            
+            from extractors.newspapers_extractor import NewspapersComExtractor
+            
+            # Create a new extractor instance for this thread
+            thread_extractor = NewspapersComExtractor(auto_auth=True, project_name=project_name)
+            
+            # Copy authentication state from the main extractor
+            thread_extractor.cookie_manager = self.newspapers_extractor.cookie_manager
+            
+            # Use the thread-safe extractor instance
+            return thread_extractor.extract_from_url(url, player_name=player_name, project_name=project_name)
         else:
             # Fall back to standard extraction
             logger.debug("Using standard Newspapers.com extraction")
@@ -321,6 +364,9 @@ class BatchProcessor:
                 self.image_url = None  # Add image_url field
                 self.metadata = {}
                 self.markdown_path = None
+                self.word_count = 0  # Add word count for capsule selection
+                self.typography_capsule = None  # Add capsule data
+                self.structured_content = []  # Add structured content
         
         try:
             # Use existing URL extractor for non-newspapers.com URLs
@@ -337,6 +383,9 @@ class BatchProcessor:
                 simple_result.image_url = result.get('image_url')  # Store the original image URL
                 logger.info(f"Markdown path in batch processor: {result.get('markdown_path')}")
                 simple_result.markdown_path = result.get('markdown_path')
+                simple_result.word_count = result.get('word_count', 0)  # Pass through word count
+                simple_result.typography_capsule = result.get('typography_capsule')  # Pass through capsule data
+                simple_result.structured_content = result.get('structured_content', [])  # Pass through structured content
                 simple_result.metadata = {
                     'url': url,
                     'extraction_method': 'general',
