@@ -259,11 +259,40 @@ def get_typography_for_article(word_count: int, source_url: str = "") -> Optiona
     """
     parser = get_capsule_parser()
     
-    # Determine if we should prefer web templates based on source
-    prefer_web = False
+    # Import font matrix from newspaper converter
+    try:
+        from utils.newspaper_converter import FONT_MATRIX
+    except ImportError:
+        logger.warning("Could not import FONT_MATRIX from newspaper_converter")
+        # Fallback to web capsules as default
+        return parser.get_capsule_for_word_count(word_count, prefer_web=True)
+    
+    # Determine if we should prefer web templates based on source using font matrix
+    prefer_web = True  # Default to web capsules when determination isn't possible
+    
     if source_url:
-        # Simple heuristic: if it's a common web news site, prefer web templates
-        web_domains = ['espn.com', 'cnn.com', 'bbc.com', 'techcrunch.com', 'wired.com']
-        prefer_web = any(domain in source_url.lower() for domain in web_domains)
+        from urllib.parse import urlparse
+        domain = urlparse(source_url).netloc.replace('www.', '').lower()
+        
+        # Check if it's a newspaper site based on font matrix
+        newspaper_domains = FONT_MATRIX.get('newspaper_sites', {}).get('domains', [])
+        if any(news_domain in domain for news_domain in newspaper_domains):
+            prefer_web = False
+            logger.debug(f"Detected newspaper site from domain {domain}, using newspaper capsules")
+        
+        # Check if it's a web news site based on font matrix
+        web_domains = FONT_MATRIX.get('web_news_sites', {}).get('domains', [])
+        if any(web_domain in domain for web_domain in web_domains):
+            prefer_web = True
+            logger.debug(f"Detected web news site from domain {domain}, using web capsules")
+        
+        # If domain is not found in either category, default to web capsules
+        if not any(news_domain in domain for news_domain in newspaper_domains) and \
+           not any(web_domain in domain for web_domain in web_domains):
+            prefer_web = True
+            logger.debug(f"Domain {domain} not found in font matrix, defaulting to web capsules")
+    else:
+        # No URL provided, default to web capsules
+        logger.debug("No source URL provided, defaulting to web capsules")
     
     return parser.get_capsule_for_word_count(word_count, prefer_web)
