@@ -97,9 +97,36 @@ class SeleniumLoginManager:
         chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36')
         chrome_options.add_argument('--lang=en-US')
         
+        # Add Replit-specific Chrome options to prevent timeout issues
+        if self.is_replit:
+            chrome_options.add_argument('--disable-background-timer-throttling')
+            chrome_options.add_argument('--disable-backgrounding-occluded-windows')
+            chrome_options.add_argument('--disable-renderer-backgrounding')
+            chrome_options.add_argument('--disable-features=TranslateUI')
+            chrome_options.add_argument('--disable-ipc-flooding-protection')
+            chrome_options.add_argument('--disable-background-networking')
+            chrome_options.add_argument('--disable-default-apps')
+            chrome_options.add_argument('--disable-hang-monitor')
+            chrome_options.add_argument('--disable-prompt-on-repost')
+            chrome_options.add_argument('--disable-sync')
+            chrome_options.add_argument('--disable-web-security')
+            chrome_options.add_argument('--metrics-recording-only')
+            chrome_options.add_argument('--no-first-run')
+            chrome_options.add_argument('--safebrowsing-disable-auto-update')
+            chrome_options.add_argument('--enable-automation')
+            chrome_options.add_argument('--password-store=basic')
+            chrome_options.add_argument('--use-mock-keychain')
+            chrome_options.add_argument('--single-process')
+            chrome_options.add_argument('--disable-features=VizDisplayCompositor')
+        
         try:
             self.driver = webdriver.Chrome(options=chrome_options)
-            self.driver.set_page_load_timeout(30)
+            # Set longer timeouts for Replit environment
+            page_load_timeout = 120 if self.is_replit else 30
+            self.driver.set_page_load_timeout(page_load_timeout)
+            # Set implicit wait for element finding
+            implicit_wait = 20 if self.is_replit else 10
+            self.driver.implicitly_wait(implicit_wait)
             return True
         except WebDriverException as e:
             logger.error(f"Failed to initialize Chrome driver: {str(e)}")
@@ -141,7 +168,8 @@ class SeleniumLoginManager:
                 
                 # Wait for the 'ncom' object and its 'isloggedin' property to be accessible and true
                 try:
-                    WebDriverWait(self.driver, 30).until(
+                    wait_timeout = 90 if self.is_replit else 30
+                    WebDriverWait(self.driver, wait_timeout).until(
                         EC.presence_of_element_located((By.CSS_SELECTOR, "span.MemberNavigation_Subscription__RU0Cu"))
                     )
                     logger.info("Authentication verified via cookies: Subscription element found.")
@@ -156,7 +184,8 @@ class SeleniumLoginManager:
 
             # Wait for either (1) email field to appear OR (2) Cloudflare CAPTCHA to appear
             try:
-                WebDriverWait(self.driver, 20).until(
+                wait_timeout = 60 if self.is_replit else 20
+                WebDriverWait(self.driver, wait_timeout).until(
                     EC.presence_of_element_located((By.ID, "email"))
                 )
                 logger.info("Login page loaded and email field found.")
@@ -208,7 +237,8 @@ class SeleniumLoginManager:
             login_successful = False
             try:
                 # Wait for either successful login indicators or error messages
-                WebDriverWait(self.driver, 30).until(
+                wait_timeout = 90 if self.is_replit else 30
+                WebDriverWait(self.driver, wait_timeout).until(
                     lambda d: (
                         d.execute_script("return window.ncom && window.ncom.statsiguser && window.ncom.statsiguser.custom && window.ncom.statsiguser.custom.isloggedin;") or
                         "incorrect email or password" in d.page_source.lower() or
@@ -292,6 +322,49 @@ class SeleniumLoginManager:
             logger.warning(f"Error checking for Cloudflare CAPTCHA elements: {e}")
             return False
 
+    def _save_debug_html(self, driver, url: str) -> None:
+        """Saves debug HTML and a summary of the page."""
+        try:
+            debug_dir = "debug_html"
+            os.makedirs(debug_dir, exist_ok=True)
+            
+            page_html = driver.page_source
+            
+            url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"debug_page_{timestamp}_{url_hash}.html"
+            filepath = os.path.join(debug_dir, filename)
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(page_html)
+            
+            logger.info(f"Debug HTML saved to {filepath}")
+            
+            # Also save a summary
+            summary_filename = f"debug_summary_{timestamp}_{url_hash}.txt"
+            summary_filepath = os.path.join(debug_dir, summary_filename)
+            
+            with open(summary_filepath, 'w', encoding='utf-8') as f:
+                f.write(f"URL: {url}\n")
+                f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+                f.write(f"Page Title: {driver.title}\n")
+                f.write(f"Current URL: {driver.current_url}\n")
+                f.write(f"Page source length: {len(page_html)} characters\n")
+                f.write(f"HTML file: {filename}\n")
+                
+                # Check for common paywall indicators
+                paywall_indicators = ['subscription', 'sign in to view', 'upgrade your access', 'paywall']
+                found_indicators = [ind for ind in paywall_indicators if ind in page_html.lower()]
+                if found_indicators:
+                    f.write(f"Paywall indicators found: {found_indicators}\n")
+                else:
+                    f.write("No paywall indicators found\n")
+            
+            logger.info(f"Debug summary saved to {summary_filepath}")
+            
+        except Exception as e:
+            logger.error(f"Failed to save debug HTML for {url}: {e}")
+
 class AutoCookieManager:
     """Automatically extract and manage cookies from user's browser, preferring Selenium login."""
     
@@ -362,7 +435,8 @@ class AutoCookieManager:
             driver.get(test_url)
 
             # Wait for the 'ncom' object and its 'isloggedin' property to be accessible and true
-            WebDriverWait(driver, 30).until(
+            wait_timeout = 90 if self.selenium_login_manager.is_replit else 30
+            WebDriverWait(driver, wait_timeout).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "span.MemberNavigation_Subscription__RU0Cu"))
             )
             logger.info("Authentication verified: window.ncom.statsiguser.custom.isloggedin is true.")
@@ -1173,7 +1247,8 @@ class NewspaperImageProcessor:
                 ocr_thread.daemon = True
                 ocr_thread.start()
                 
-                ocr_thread.join(timeout=15.0)
+                ocr_timeout = 45.0 if self.cookie_manager.selenium_login_manager.is_replit else 15.0
+                ocr_thread.join(timeout=ocr_timeout)
                 
                 if ocr_thread.is_alive():
                     logger.warning(f"OCR extraction timed out for region {region}")
@@ -1590,7 +1665,8 @@ class NewspapersComExtractor:
                 
                 try:
                     logger.info(f"Non-Newspapers.com URL detected. Attempting to fetch content using requests.Session for URL: {url}")
-                    response = self.cookie_manager.session.get(url, headers=headers, timeout=30)
+                    request_timeout = 90 if self.cookie_manager.selenium_login_manager.is_replit else 30
+                    response = self.cookie_manager.session.get(url, headers=headers, timeout=request_timeout)
                     response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
                     response_text = response.text
                     logger.info(f"Successfully fetched non-Newspapers.com page with requests ({len(response_text)} bytes).")
@@ -1781,12 +1857,14 @@ class NewspapersComExtractor:
             
             # --- START REVISED WAIT CONDITIONS ---
             # Wait for main page body to load, then for key elements of a logged-in page
-            WebDriverWait(driver, 60).until( # Increased to 60 seconds
+            wait_timeout = 180 if self.cookie_manager.selenium_login_manager.is_replit else 60
+            WebDriverWait(driver, wait_timeout).until( # Increased timeout for Replit
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
             
             # Complex wait condition to ensure paywall is gone and content is loaded
-            WebDriverWait(driver, 60).until( # Increased to 60 seconds
+            wait_timeout = 180 if self.cookie_manager.selenium_login_manager.is_replit else 60
+            WebDriverWait(driver, wait_timeout).until( # Increased timeout for Replit
                 EC.any_of(
                     # Scenario 1: Paywall element becomes invisible
                     EC.invisibility_of_element_located((By.XPATH, "//*[contains(text(), 'subscription') or contains(text(), 'sign in to view') or contains(text(), 'upgrade your access')]")),
@@ -1822,7 +1900,7 @@ class NewspapersComExtractor:
                  if any(ind in driver.page_source.lower() for ind in paywall_indicators) or \
                     driver.find_elements(By.CSS_SELECTOR, '.paywall-modal[style*="display: block"], .subscription-overlay[style*="display: block"]'):
                      logger.warning("Selenium still encountering paywall after attempting to close modal. This is a hard paywall.")
-                     self._save_debug_html(driver, url) # Save debug HTML if paywall persists
+                     self.cookie_manager.selenium_login_manager._save_debug_html(driver, url) # Save debug HTML if paywall persists
                      return None # Indicate failure
 
             page_html = driver.page_source
@@ -1837,18 +1915,55 @@ class NewspapersComExtractor:
 
             if is_paywalled_by_selenium:
                 logger.warning("Selenium also encountered paywall after navigating to article and final checks.")
-                self._save_debug_html(driver, url) # Save debug HTML if paywall persists
+                self.cookie_manager.selenium_login_manager._save_debug_html(driver, url) # Save debug HTML if paywall persists
                 return None # Indicate failure
             
-            self._save_debug_html(driver, url) # Save debug HTML for inspection
+            self.cookie_manager.selenium_login_manager._save_debug_html(driver, url) # Save debug HTML for inspection
             logger.info(f"Selenium successfully captured HTML content: {len(page_html)} bytes.")
             return page_html
 
         except TimeoutException:
             logger.error(f"Selenium page load/paywall disappearance timed out for URL: {url}. This indicates a persistent paywall or very slow loading.")
+            
+            # In Replit environment, try one more time with longer timeout
+            if self.cookie_manager.selenium_login_manager.is_replit:
+                logger.info("Replit environment detected - attempting one retry with extended timeout...")
+                try:
+                    time.sleep(10)  # Give system a moment to recover
+                    
+                    # Try one more time to wait for paywall to disappear
+                    WebDriverWait(driver, 240).until(  # 4 minutes for Replit
+                        EC.any_of(
+                            EC.invisibility_of_element_located((By.XPATH, "//*[contains(text(), 'subscription') or contains(text(), 'sign in to view') or contains(text(), 'upgrade your access')]")),
+                            EC.invisibility_of_element_located((By.CSS_SELECTOR, '.paywall-modal, .subscription-overlay, .modal-dialog[aria-modal="true"]')),
+                            EC.visibility_of_element_located((By.CSS_SELECTOR, 'img[src*="img.newspapers.com"]')),
+                            EC.visibility_of_element_located((By.CSS_SELECTOR, '.newspaper-image-viewer')),
+                            EC.presence_of_element_located((By.CSS_SELECTOR, '.account-menu-link, .my-account-link, #user-tools-dropdown, .logout-button'))
+                        )
+                    )
+                    
+                    logger.info("Replit retry successful - paywall cleared on second attempt")
+                    time.sleep(15)  # Extra time for Replit to fully render
+                    
+                    # Get the page HTML after successful retry
+                    page_html = driver.page_source
+                    logger.info(f"Selenium successfully captured HTML content after retry: {len(page_html)} bytes.")
+                    return page_html
+                    
+                except TimeoutException:
+                    logger.error("Replit retry also timed out - proceeding with available content")
+                    # Try to get whatever content is available
+                    try:
+                        page_html = driver.page_source
+                        if page_html and len(page_html) > 1000:  # If we have substantial content
+                            logger.info("Using available content despite timeout")
+                            return page_html
+                    except Exception as e:
+                        logger.error(f"Failed to get content after retry: {e}")
+            
             try:
                 if driver:
-                    self._save_debug_html(driver, url) # Save debug HTML on timeout
+                    self.cookie_manager.selenium_login_manager._save_debug_html(driver, url) # Save debug HTML on timeout
             except Exception as debug_e:
                 logger.error(f"Failed to save debug HTML on timeout: {debug_e}")
             return None
@@ -1859,7 +1974,7 @@ class NewspapersComExtractor:
                 if driver:
                     logger.info(f"Debug: Page source snippet: {driver.page_source[:500]}...")
                     logger.info(f"Debug: Page title: {driver.title}")
-                    self._save_debug_html(driver, url) # Save debug HTML on unexpected error
+                    self.cookie_manager.selenium_login_manager._save_debug_html(driver, url) # Save debug HTML on unexpected error
             except Exception as debug_e:
                 logger.error(f"Failed to get debug info: {debug_e}")
             return None
@@ -1949,7 +2064,8 @@ class NewspapersComExtractor:
             
             driver = webdriver.Chrome(options=chrome_options)
             
-            driver.set_page_load_timeout(30)
+            page_load_timeout = 120 if self.cookie_manager.selenium_login_manager.is_replit else 30
+            driver.set_page_load_timeout(page_load_timeout)
             
             logger.info("Loading main site to set cookies for Selenium image download...")
             driver.get('https://www.newspapers.com/')
@@ -1972,7 +2088,8 @@ class NewspapersComExtractor:
             # 1. The subscription element is present (indicating logged in)
             # 2. The newspaper image viewer is present
             try:
-                WebDriverWait(driver, 30).until(
+                wait_timeout = 90 if self.cookie_manager.selenium_login_manager.is_replit else 30
+                WebDriverWait(driver, wait_timeout).until(
                     EC.any_of(
                         EC.presence_of_element_located((By.CSS_SELECTOR, "span.MemberNavigation_Subscription__RU0Cu")),
                         EC.presence_of_element_located((By.CSS_SELECTOR, "svg[id*='svg-viewer']")),
@@ -1981,6 +2098,22 @@ class NewspapersComExtractor:
                 )
             except TimeoutException:
                 logger.warning("Initial wait timed out, checking page state...")
+                
+                # For Replit environment, give it one more chance
+                if self.cookie_manager.selenium_login_manager.is_replit:
+                    logger.info("Replit environment detected - attempting extended wait...")
+                    try:
+                        time.sleep(20)  # Give more time for slow Replit response
+                        WebDriverWait(driver, 120).until(
+                            EC.any_of(
+                                EC.presence_of_element_located((By.CSS_SELECTOR, ".newspaper-image-viewer")),
+                                EC.presence_of_element_located((By.TAG_NAME, "body"))
+                            )
+                        )
+                        logger.info("Replit extended wait successful")
+                    except TimeoutException:
+                        logger.warning("Replit extended wait also timed out - proceeding with available content")
+                
                 # Check if we're actually on the right page
                 if "newspapers.com" not in driver.current_url:
                     logger.error(f"Redirected to unexpected URL: {driver.current_url}")
@@ -2049,63 +2182,6 @@ class NewspapersComExtractor:
                 except:
                     pass
     
-    def _save_debug_html(self, driver, url: str) -> None:
-        """Saves debug HTML and a summary of the page."""
-        try:
-            debug_dir = "debug_html"
-            os.makedirs(debug_dir, exist_ok=True)
-            
-            page_html = driver.page_source
-            
-            url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f"debug_page_{timestamp}_{url_hash}.html"
-            filepath = os.path.join(debug_dir, filename)
-            
-            # Use StorageManager for debug files if available
-            if hasattr(self, 'storage_manager') and self.storage_manager:
-                self.storage_manager.store_file(f"debug/{filename}", page_html.encode('utf-8'))
-            else:
-                # Fallback to local storage
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write(page_html)
-            
-            logger.info(f"Saved debug HTML to: {filepath}")
-            
-            summary_filename = f"debug_summary_{timestamp}_{url_hash}.json"
-            summary_filepath = os.path.join(debug_dir, summary_filename)
-            
-            summary_data = {
-                'url': url,
-                'timestamp': datetime.now().isoformat(),
-                'html_file': filename,
-                'page_title': driver.title,
-                'cookies_count': len(self.cookie_manager.cookies),
-                'page_size_bytes': len(page_html),
-                'user_agent': driver.execute_script("return navigator.userAgent;"),
-                'viewport_size': driver.get_window_size(),
-                'elements_found': {
-                    'images': len(driver.find_elements(By.TAG_NAME, 'img')),
-                    'scripts': len(driver.find_elements(By.TAG_NAME, 'script')),
-                    'divs': len(driver.find_elements(By.TAG_NAME, 'div')),
-                    'total_elements': len(driver.find_elements(By.XPATH, '//*'))
-                }
-            }
-            
-            # Use StorageManager for summary files if available
-            if hasattr(self, 'storage_manager') and self.storage_manager:
-                summary_content = json.dumps(summary_data, indent=2, ensure_ascii=False)
-                self.storage_manager.store_file(f"debug/{summary_filename}", summary_content.encode('utf-8'))
-            else:
-                # Fallback to local storage
-                with open(summary_filepath, 'w', encoding='utf-8') as f:
-                    json.dump(summary_data, f, indent=2, ensure_ascii=False)
-            
-            logger.info(f"Saved debug summary to: {summary_filepath}")
-            
-        except Exception as e:
-            logger.error(f"Failed to save debug HTML: {e}")
-
     def _get_possible_image_urls(self, metadata: Dict) -> List[str]:
         logger.info("Generating possible image URLs with focus on high resolution...")
         
