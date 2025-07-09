@@ -76,6 +76,22 @@ class SeleniumLoginManager:
         self.last_login = None
         self.login_credentials = None
         self.is_replit = 'REPL_ID' in os.environ or 'REPL_SLUG' in os.environ
+        # Detect if we're in a Replit deployment (more restrictive than IDE)
+        self.is_replit_deployment = (
+            self.is_replit and 
+            ('REPL_DEPLOYMENT' in os.environ or 
+             'REPLIT_DEPLOYMENT' in os.environ or
+             os.environ.get('REPL_ENVIRONMENT') == 'production' or
+             os.environ.get('REPLIT_ENVIRONMENT') == 'production' or
+             # Check for deployment-specific environment variables
+             'REPL_DEPLOYMENT_ID' in os.environ or
+             'REPLIT_DEPLOYMENT_ID' in os.environ or
+             # Check if we're running on a deployment URL pattern
+             os.environ.get('REPL_SLUG', '').endswith('.repl.co') or
+             # Check for reduced resource indicators
+             os.environ.get('REPL_MEMORY_LIMIT') == '1024' or
+             os.environ.get('REPLIT_MEMORY_LIMIT') == '1024')
+        )
     
     def set_credentials(self, email: str, password: str):
         """Set login credentials"""
@@ -118,78 +134,138 @@ class SeleniumLoginManager:
             chrome_options.add_argument('--use-mock-keychain')
             chrome_options.add_argument('--single-process')
             chrome_options.add_argument('--disable-features=VizDisplayCompositor')
+            
+            # Add deployment-specific options for even more resource constraints
+            if self.is_replit_deployment:
+                chrome_options.add_argument('--memory-pressure-off')
+                chrome_options.add_argument('--max_old_space_size=512')
+                chrome_options.add_argument('--disable-background-mode')
+                chrome_options.add_argument('--disable-plugins')
+                chrome_options.add_argument('--disable-java')
+                chrome_options.add_argument('--disable-component-extensions-with-background-pages')
+                chrome_options.add_argument('--disable-software-rasterizer')
+                chrome_options.add_argument('--disable-accelerated-2d-canvas')
+                chrome_options.add_argument('--disable-accelerated-video-decode')
+                chrome_options.add_argument('--disable-accelerated-video-encode')
+                chrome_options.add_argument('--disable-threaded-scrolling')
+                chrome_options.add_argument('--disable-smooth-scrolling')
+                chrome_options.add_argument('--window-size=800,600')  # Smaller window for deployment
+                chrome_options.add_argument('--remote-debugging-port=9222')  # Enable remote debugging
+                logger.info("Applied deployment-specific Chrome options for resource constraints")
         
         try:
             # Try multiple approaches to initialize Chrome driver
             driver = None
             
-            # First try: Standard Chrome WebDriver
-            try:
-                driver = webdriver.Chrome(options=chrome_options)
-                logger.info("Successfully initialized Chrome WebDriver")
-            except WebDriverException as e:
-                logger.warning(f"Standard Chrome WebDriver failed: {str(e)}")
+            # Deployment environments need special handling - try undetected-chromedriver first
+            if self.is_replit_deployment:
+                logger.info("Detected Replit deployment environment - using optimized driver initialization")
                 
-                # Second try: Use WebDriverManager for automatic driver management
+                # First try: undetected-chromedriver for deployment (most compatible)
                 try:
-                    from webdriver_manager.chrome import ChromeDriverManager
-                    from selenium.webdriver.chrome.service import Service
+                    import undetected_chromedriver as uc
                     
-                    service = Service(ChromeDriverManager().install())
-                    driver = webdriver.Chrome(service=service, options=chrome_options)
-                    logger.info("Successfully initialized Chrome WebDriver with WebDriverManager")
+                    # Convert Chrome options to undetected_chromedriver format
+                    uc_options = uc.ChromeOptions()
+                    for arg in chrome_options.arguments:
+                        uc_options.add_argument(arg)
+                    
+                    # Use version_main parameter to ensure compatibility
+                    driver = uc.Chrome(options=uc_options, headless=True, version_main=None)
+                    logger.info("Successfully initialized undetected Chrome WebDriver for deployment")
                 except Exception as e:
-                    logger.warning(f"WebDriverManager Chrome failed: {str(e)}")
+                    logger.warning(f"Undetected Chrome WebDriver failed in deployment: {str(e)}")
                     
-                    # Third try: Use undetected-chromedriver for Replit environments
+                    # Second try: WebDriverManager with longer timeout for deployment
                     try:
-                        import undetected_chromedriver as uc
+                        from webdriver_manager.chrome import ChromeDriverManager
+                        from selenium.webdriver.chrome.service import Service
                         
-                        # Convert Chrome options to undetected_chromedriver format
-                        uc_options = uc.ChromeOptions()
-                        for arg in chrome_options.arguments:
-                            uc_options.add_argument(arg)
-                        
-                        driver = uc.Chrome(options=uc_options, headless=True)
-                        logger.info("Successfully initialized undetected Chrome WebDriver")
+                        # Increase timeout for deployment environment
+                        service = Service(ChromeDriverManager().install())
+                        driver = webdriver.Chrome(service=service, options=chrome_options)
+                        logger.info("Successfully initialized Chrome WebDriver with WebDriverManager for deployment")
                     except Exception as e:
-                        logger.error(f"Undetected Chrome WebDriver failed: {str(e)}")
+                        logger.warning(f"WebDriverManager Chrome failed in deployment: {str(e)}")
+            
+            # Standard initialization order for IDE or if deployment methods failed
+            if not driver:
+                # First try: Standard Chrome WebDriver
+                try:
+                    driver = webdriver.Chrome(options=chrome_options)
+                    logger.info("Successfully initialized Chrome WebDriver")
+                except WebDriverException as e:
+                    logger.warning(f"Standard Chrome WebDriver failed: {str(e)}")
+                    
+                    # Second try: Use WebDriverManager for automatic driver management
+                    try:
+                        from webdriver_manager.chrome import ChromeDriverManager
+                        from selenium.webdriver.chrome.service import Service
                         
-                        # Fourth try: Try to find Chrome binary manually
+                        service = Service(ChromeDriverManager().install())
+                        driver = webdriver.Chrome(service=service, options=chrome_options)
+                        logger.info("Successfully initialized Chrome WebDriver with WebDriverManager")
+                    except Exception as e:
+                        logger.warning(f"WebDriverManager Chrome failed: {str(e)}")
+                        
+                        # Third try: Use undetected-chromedriver for Replit environments
                         try:
-                            import shutil
-                            chrome_paths = [
-                                '/usr/bin/google-chrome',
-                                '/usr/bin/google-chrome-stable',
-                                '/usr/bin/chromium-browser',
-                                '/usr/bin/chromium',
-                                '/snap/bin/chromium',
-                                '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-                            ]
+                            import undetected_chromedriver as uc
                             
-                            chrome_binary = None
-                            for path in chrome_paths:
-                                if shutil.which(path) or os.path.exists(path):
-                                    chrome_binary = path
-                                    break
+                            # Convert Chrome options to undetected_chromedriver format
+                            uc_options = uc.ChromeOptions()
+                            for arg in chrome_options.arguments:
+                                uc_options.add_argument(arg)
                             
-                            if chrome_binary:
-                                chrome_options.binary_location = chrome_binary
-                                driver = webdriver.Chrome(options=chrome_options)
-                                logger.info(f"Successfully initialized Chrome WebDriver with binary: {chrome_binary}")
-                            else:
-                                logger.error("No Chrome binary found on system")
-                                
+                            driver = uc.Chrome(options=uc_options, headless=True)
+                            logger.info("Successfully initialized undetected Chrome WebDriver")
                         except Exception as e:
-                            logger.error(f"Manual Chrome binary detection failed: {str(e)}")
+                            logger.error(f"Undetected Chrome WebDriver failed: {str(e)}")
+                            
+                            # Fourth try: Try to find Chrome binary manually
+                            try:
+                                import shutil
+                                chrome_paths = [
+                                    '/usr/bin/google-chrome',
+                                    '/usr/bin/google-chrome-stable',
+                                    '/usr/bin/chromium-browser',
+                                    '/usr/bin/chromium',
+                                    '/snap/bin/chromium',
+                                    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+                                ]
+                                
+                                chrome_binary = None
+                                for path in chrome_paths:
+                                    if shutil.which(path) or os.path.exists(path):
+                                        chrome_binary = path
+                                        break
+                                
+                                if chrome_binary:
+                                    chrome_options.binary_location = chrome_binary
+                                    driver = webdriver.Chrome(options=chrome_options)
+                                    logger.info(f"Successfully initialized Chrome WebDriver with binary: {chrome_binary}")
+                                else:
+                                    logger.error("No Chrome binary found on system")
+                                    
+                            except Exception as e:
+                                logger.error(f"Manual Chrome binary detection failed: {str(e)}")
             
             if driver:
                 self.driver = driver
-                # Set longer timeouts for Replit environment
-                page_load_timeout = 120 if self.is_replit else 30
+                # Set deployment-specific timeouts
+                if self.is_replit_deployment:
+                    page_load_timeout = 180  # Even longer for deployment
+                    implicit_wait = 30
+                    logger.info("Applied deployment-specific timeouts (180s page load, 30s implicit wait)")
+                elif self.is_replit:
+                    page_load_timeout = 120
+                    implicit_wait = 20
+                    logger.info("Applied Replit IDE timeouts (120s page load, 20s implicit wait)")
+                else:
+                    page_load_timeout = 30
+                    implicit_wait = 10
+                
                 self.driver.set_page_load_timeout(page_load_timeout)
-                # Set implicit wait for element finding
-                implicit_wait = 20 if self.is_replit else 10
                 self.driver.implicitly_wait(implicit_wait)
                 return True
             else:
@@ -197,8 +273,10 @@ class SeleniumLoginManager:
                 
         except WebDriverException as e:
             logger.error(f"Failed to initialize Chrome driver: {str(e)}")
-            if self.is_replit:
-                st.error(f"Chrome WebDriver failed in Replit environment. Please install Chrome/Chromium or use a different browser. Error: {str(e)}")
+            if self.is_replit_deployment:
+                st.error(f"Chrome WebDriver failed in Replit deployment environment. This may be due to resource constraints or missing Chrome installation. Try redeploying or contact support. Error: {str(e)}")
+            elif self.is_replit:
+                st.error(f"Chrome WebDriver failed in Replit IDE environment. Please install Chrome/Chromium or use a different browser. Error: {str(e)}")
             else:
                 st.error(f"Failed to initialize web browser. Please ensure Chrome is installed and updated: {str(e)}")
             return False
