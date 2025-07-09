@@ -90,15 +90,16 @@ class OptimizedNewspapersExtractor:
                 chrome_options.add_argument('--single-process')
                 chrome_options.add_argument('--disable-features=VizDisplayCompositor')
                 chrome_options.add_argument('--disable-background-timer-throttling')
-                chrome_options.add_argument('--renderer-timeout=30000')
-                logger.info("Applied Replit optimizations")
+                chrome_options.add_argument('--renderer-timeout=60000')  # Increased to 60 seconds
+                chrome_options.add_argument('--ipc-timeout=60000')  # Added IPC timeout
+                logger.info("Applied Replit optimizations with extended timeouts")
             
             self.driver = webdriver.Chrome(options=chrome_options)
             
-            # Set timeouts
-            timeout = 120 if self.is_replit else 30
+            # Set timeouts - significantly increased for stability
+            timeout = 300 if self.is_replit else 60  # 5 minutes for Replit, 1 minute for standard
             self.driver.set_page_load_timeout(timeout)
-            self.driver.implicitly_wait(20 if self.is_replit else 10)
+            self.driver.implicitly_wait(60 if self.is_replit else 30)  # 1 minute for Replit, 30s for standard
             
             return True
             
@@ -126,15 +127,16 @@ class OptimizedNewspapersExtractor:
         
         # Refresh to apply cookies
         self.driver.refresh()
-        time.sleep(2)
+        time.sleep(5)  # Increased wait time for cookie application
     
     def _zoom_out(self, zoom_clicks: int = 3):
         """Zoom out to get full article view"""
         try:
             for i in range(zoom_clicks):
                 self.driver.execute_script("document.body.style.zoom='0.7'")
-                time.sleep(1)
+                time.sleep(2)  # Increased wait between zoom operations
             logger.info(f"Applied {zoom_clicks} zoom out operations")
+            time.sleep(3)  # Additional wait after all zoom operations
         except Exception as e:
             logger.warning(f"Zoom out failed: {e}")
     
@@ -204,11 +206,12 @@ class OptimizedNewspapersExtractor:
             logger.info(f"Navigating to: {url}")
             self.driver.get(url)
             
-            # Wait for page to load
-            WebDriverWait(self.driver, 30).until(
+            # Wait for page to load with extended timeout
+            wait_timeout = 120 if self.is_replit else 60  # 2 minutes for Replit, 1 minute for standard
+            WebDriverWait(self.driver, wait_timeout).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
-            time.sleep(3)  # Additional wait for content to render
+            time.sleep(10)  # Extended wait for content to fully render
             
             # Zoom out for better article view
             self._zoom_out()

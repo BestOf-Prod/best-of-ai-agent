@@ -125,7 +125,7 @@ class BatchProcessor:
                 processed_count += 1
                 
                 try:
-                    result = future.result(timeout=180)  # Reduced timeout from 300 to 180 seconds (3 minutes)
+                    result = future.result(timeout=600)  # Increased timeout to 600 seconds (10 minutes)
                     
                     # Handle both dictionary and object results
                     is_success = False
@@ -209,8 +209,8 @@ class BatchProcessor:
                 except concurrent.futures.TimeoutError:
                     error_dict = {
                         'url': url,
-                        'error': "Processing timed out after 3 minutes",
-                        'processing_time_seconds': 180.0
+                        'error': "Processing timed out after 10 minutes",
+                        'processing_time_seconds': 600.0
                     }
                     errors.append(error_dict)
                     self.total_failed += 1
