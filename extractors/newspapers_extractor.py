@@ -94,7 +94,14 @@ class OptimizedNewspapersExtractor:
                 chrome_options.add_argument('--ipc-timeout=60000')  # Added IPC timeout
                 logger.info("Applied Replit optimizations with extended timeouts")
             
-            self.driver = webdriver.Chrome(options=chrome_options)
+            # Create service with extended timeouts for HTTP connections
+            from selenium.webdriver.chrome.service import Service
+            service = Service()
+            
+            # Set service timeout to prevent HTTP connection timeouts
+            service.timeout = 600  # 10 minutes timeout for service connection
+            
+            self.driver = webdriver.Chrome(options=chrome_options, service=service)
             
             # Set timeouts - significantly increased for stability
             timeout = 300 if self.is_replit else 60  # 5 minutes for Replit, 1 minute for standard
