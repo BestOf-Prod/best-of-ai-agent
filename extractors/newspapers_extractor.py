@@ -48,6 +48,34 @@ from utils.paragraph_formatter import format_article_paragraphs
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+class TimeoutConfig:
+    """Configuration for timeouts based on environment"""
+    
+    def __init__(self):
+        self.is_replit = 'REPL_ID' in os.environ or 'REPL_SLUG' in os.environ
+        
+        if self.is_replit:
+            # Replit-optimized timeouts
+            self.selenium_page_load = 20
+            self.selenium_wait = 30
+            self.ocr_timeout = 10
+            self.batch_timeout = 180
+            self.sleep_short = 0.5
+            self.sleep_medium = 1
+            self.sleep_long = 3
+        else:
+            # Standard timeouts
+            self.selenium_page_load = 30
+            self.selenium_wait = 60
+            self.ocr_timeout = 15
+            self.batch_timeout = 300
+            self.sleep_short = 1
+            self.sleep_medium = 2
+            self.sleep_long = 5
+
+# Global timeout configuration
+timeout_config = TimeoutConfig()
+
 @dataclass
 class ArticleMetadata:
     title: str
@@ -300,6 +328,10 @@ class AutoCookieManager:
         self.session = requests.Session()
         self.last_extraction = None
         self.selenium_login_manager = SeleniumLoginManager() # Renamed to avoid confusion
+        # Check if running in Replit environment
+        self.is_replit = 'REPL_ID' in os.environ or 'REPL_SLUG' in os.environ
+        if self.is_replit:
+            logger.info("Running in Replit environment - applying optimizations")
         
     def set_login_credentials(self, email: str, password: str):
         """Set login credentials for Selenium authentication"""
@@ -393,6 +425,26 @@ class AutoCookieManager:
         
         logger.info("Authentication is current and valid.")
         return True
+    
+    def cleanup_for_replit(self):
+        """Perform cleanup operations for Replit environment"""
+        if self.is_replit:
+            logger.info("Performing Replit-specific cleanup")
+            # Force garbage collection
+            import gc
+            gc.collect()
+            
+            # Clear any cached data
+            if hasattr(self, 'session'):
+                self.session.cookies.clear()
+            
+            # Close any open drivers if they exist
+            if hasattr(self, 'selenium_login_manager') and self.selenium_login_manager.driver:
+                try:
+                    self.selenium_login_manager.driver.quit()
+                    self.selenium_login_manager.driver = None
+                except:
+                    pass
 
 class NewspaperImageProcessor:
     """Advanced image processing for newspaper clippings"""
@@ -1152,43 +1204,15 @@ class NewspaperImageProcessor:
                 logger.error(f"Tesseract not available: {e}")
                 return "", 0.0
             
+            # Use direct OCR without threading for Replit environment
             try:
-                result_queue = queue.Queue()
-                exception_queue = queue.Queue()
-                
-                def ocr_worker():
-                    try:
-                        logger.debug("Starting OCR extraction...")
-                        data = pytesseract.image_to_data(
-                            enhanced, 
-                            output_type=pytesseract.Output.DICT,
-                            config='--psm 6'
-                        )
-                        logger.debug("OCR extraction completed successfully")
-                        result_queue.put(data)
-                    except Exception as e:
-                        exception_queue.put(e)
-                
-                ocr_thread = threading.Thread(target=ocr_worker)
-                ocr_thread.daemon = True
-                ocr_thread.start()
-                
-                ocr_thread.join(timeout=15.0)
-                
-                if ocr_thread.is_alive():
-                    logger.warning(f"OCR extraction timed out for region {region}")
-                    return "", 0.0
-                
-                if not exception_queue.empty():
-                    ocr_exception = exception_queue.get()
-                    logger.error(f"Error during OCR: {ocr_exception}")
-                    return "", 0.0
-                
-                if result_queue.empty():
-                    logger.error("OCR completed but no result available")
-                    return "", 0.0
-                
-                data = result_queue.get()
+                logger.debug("Starting OCR extraction...")
+                data = pytesseract.image_to_data(
+                    enhanced, 
+                    output_type=pytesseract.Output.DICT,
+                    config='--psm 6'
+                )
+                logger.debug("OCR extraction completed successfully")
                 
                 confidences = [int(conf) for conf in data['conf'] if int(conf) > self.text_confidence_threshold]
                 words = [word for word, conf in zip(data['text'], data['conf']) if int(conf) > self.text_confidence_threshold]
@@ -1206,7 +1230,7 @@ class NewspaperImageProcessor:
                 return text.strip(), avg_confidence
                 
             except Exception as e:
-                logger.error(f"Unexpected error during OCR: {e}")
+                logger.error(f"Error during OCR: {e}")
                 return "", 0.0
                 
         except Exception as e:
@@ -1779,14 +1803,14 @@ class NewspapersComExtractor:
             logger.info(f"Loading target page with Selenium: {url}")
             driver.get(url)
             
-            # --- START REVISED WAIT CONDITIONS ---
+            # Reduced timeouts for Replit environment
             # Wait for main page body to load, then for key elements of a logged-in page
-            WebDriverWait(driver, 60).until( # Increased to 60 seconds
+            WebDriverWait(driver, 30).until( # Reduced from 60 to 30 seconds
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
             
             # Complex wait condition to ensure paywall is gone and content is loaded
-            WebDriverWait(driver, 60).until( # Increased to 60 seconds
+            WebDriverWait(driver, 30).until( # Reduced from 60 to 30 seconds
                 EC.any_of(
                     # Scenario 1: Paywall element becomes invisible
                     EC.invisibility_of_element_located((By.XPATH, "//*[contains(text(), 'subscription') or contains(text(), 'sign in to view') or contains(text(), 'upgrade your access')]")),
@@ -1798,9 +1822,7 @@ class NewspapersComExtractor:
                     EC.presence_of_element_located((By.CSS_SELECTOR, '.account-menu-link, .my-account-link, #user-tools-dropdown, .logout-button'))
                 )
             )
-            time.sleep(10) # Final, longer wait for JS to render and paywall to truly vanish
-
-            # --- END REVISED WAIT CONDITIONS ---
+            time.sleep(5) # Reduced from 10 to 5 seconds for Replit
 
             # Check if an explicit paywall modal or overlay is still visible
             # Added a stricter check for display: none style
@@ -1813,12 +1835,17 @@ class NewspapersComExtractor:
                          if btn.is_displayed() and btn.is_enabled():
                              btn.click()
                              logger.info("Clicked a close button on paywall modal.")
-                             time.sleep(5) # Give more time for modal to disappear
+                             time.sleep(3) # Reduced from 5 to 3 seconds
                              break
                  except Exception as close_e:
                      logger.warning(f"Failed to click close button: {close_e}")
                  
                  # Re-check for paywall indicators after attempting to close
+                 paywall_indicators = [
+                     'you need a subscription', 'start a 7-day free trial', 'sign in to view this page',
+                     'already have an account', 'paywall', 'please sign in', 'log in to view', 'upgrade your access',
+                     'digital subscription', 'access to this content requires a subscription'
+                 ]
                  if any(ind in driver.page_source.lower() for ind in paywall_indicators) or \
                     driver.find_elements(By.CSS_SELECTOR, '.paywall-modal[style*="display: block"], .subscription-overlay[style*="display: block"]'):
                      logger.warning("Selenium still encountering paywall after attempting to close modal. This is a hard paywall.")
@@ -1939,8 +1966,8 @@ class NewspapersComExtractor:
             chrome_options.add_argument('--no-sandbox')
             chrome_options.add_argument('--disable-dev-shm-usage')
             chrome_options.add_argument('--disable-gpu')
-            chrome_options.add_argument('--window-size=2560,1440') # High resolution window
-            chrome_options.add_argument('--force-device-scale-factor=2') # Scale up for higher quality elements
+            chrome_options.add_argument('--window-size=1920,1080') # Reduced resolution for Replit
+            chrome_options.add_argument('--force-device-scale-factor=1') # Reduced scale for Replit
             chrome_options.add_argument('--high-dpi-support=1')
             chrome_options.add_argument('--disable-blink-features=AutomationControlled')
             chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
@@ -1949,7 +1976,7 @@ class NewspapersComExtractor:
             
             driver = webdriver.Chrome(options=chrome_options)
             
-            driver.set_page_load_timeout(30)
+            driver.set_page_load_timeout(20) # Reduced from 30 to 20 seconds
             
             logger.info("Loading main site to set cookies for Selenium image download...")
             driver.get('https://www.newspapers.com/')
@@ -1972,7 +1999,7 @@ class NewspapersComExtractor:
             # 1. The subscription element is present (indicating logged in)
             # 2. The newspaper image viewer is present
             try:
-                WebDriverWait(driver, 30).until(
+                WebDriverWait(driver, 20).until( # Reduced from 30 to 20 seconds
                     EC.any_of(
                         EC.presence_of_element_located((By.CSS_SELECTOR, "span.MemberNavigation_Subscription__RU0Cu")),
                         EC.presence_of_element_located((By.CSS_SELECTOR, "svg[id*='svg-viewer']")),
@@ -1994,32 +2021,32 @@ class NewspapersComExtractor:
                 # If we get here, try to proceed anyway - the page might be loaded but with different elements
                 logger.info("Proceeding with article extraction despite timeout...")
             
-            time.sleep(5) # Give more time for page to fully render after initial waits
+            time.sleep(3) # Reduced from 5 to 3 seconds
             
-            # Click the zoom-out button 6 times to capture the entire clipping
-            logger.info("Clicking zoom-out button 6 times to capture entire clipping...")
-            for i in range(6):
+            # Click the zoom-out button 3 times instead of 6 for Replit
+            logger.info("Clicking zoom-out button 3 times to capture entire clipping...")
+            for i in range(3): # Reduced from 6 to 3 clicks
                 try:
                     zoom_out_button = driver.find_element(By.ID, 'btn-zoom-out')
                     if zoom_out_button.is_displayed() and zoom_out_button.is_enabled():
                         zoom_out_button.click()
-                        logger.info(f"Clicked zoom-out button {i + 1}/6")
-                        time.sleep(1)  # Wait between clicks
+                        logger.info(f"Clicked zoom-out button {i + 1}/3")
+                        time.sleep(0.5)  # Reduced wait between clicks
                     else:
-                        logger.warning(f"Zoom-out button not available on click {i + 1}/6")
+                        logger.warning(f"Zoom-out button not available on click {i + 1}/3")
                         break
                 except Exception as e:
-                    logger.warning(f"Could not click zoom-out button on attempt {i + 1}/6: {e}")
+                    logger.warning(f"Could not click zoom-out button on attempt {i + 1}/3: {e}")
                     break
             
             # Wait for zoom changes to take effect
-            time.sleep(2)
+            time.sleep(1) # Reduced from 2 to 1 second
             
             # Scroll down slightly to avoid bottom navigation bar blocking content
             try:
                 driver.execute_script("window.scrollBy(0, 50);")
                 logger.info("Scrolled down 50px to avoid bottom navigation bar")
-                time.sleep(1)
+                time.sleep(0.5) # Reduced wait
             except Exception as e:
                 logger.warning(f"Could not scroll down: {e}")
             
