@@ -7,6 +7,7 @@ packages = ["apt", "geckodriver", "glibcLocales", "libGL", "libGLU", "tesseract"
 
 [deployment]
 run = ["sh", "-c", "streamlit run app.py --server.address 0.0.0.0 --server.headless true --server.enableCORS=false --server.enableWebsocketCompression=false"]
+deploymentTarget = "cloudrun"
 
 [[ports]]
 localPort = 8501
