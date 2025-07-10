@@ -416,9 +416,15 @@ def generate_markdown_content(article_data: dict, image_path: Optional[str] = No
     # Add content
     content = article_data.get('text', '')
     if content:
-        # Split content into paragraphs and add proper spacing
+        # Split content into paragraphs and add proper spacing with manual indentation
         paragraphs = content.split('\n\n')
-        markdown.extend([p.strip() + '\n' for p in paragraphs if p.strip()])
+        processed_paragraphs = []
+        for p in paragraphs:
+            if p.strip():
+                # Add manual indentation (4 spaces) at the beginning of each paragraph
+                indented_paragraph = '    ' + p.strip()
+                processed_paragraphs.append(indented_paragraph + '\n')
+        markdown.extend(processed_paragraphs)
     
     # Add source and URL
     markdown.append(f"\n---\n*Source: {article_data.get('source', 'Unknown Source')}*")
@@ -682,16 +688,30 @@ def extract_from_url(url, project_name: str = "default"):
                         'indented': elem.get('indented', False)
                     })
             
-            # Also store original content for backward compatibility
-            content = "\n\n".join([elem['text'] for elem in content_elements])
+            # Also store original content for backward compatibility with manual indentation
+            content_paragraphs = []
+            for i, elem in enumerate(content_elements):
+                # Add manual indentation (4 spaces) at the beginning of each paragraph
+                indented_text = '    ' + elem['text']
+                content_paragraphs.append(indented_text)
+                logger.info(f"INDENT_DEBUG_STEP1: Paragraph {i+1} - Original: '{elem['text'][:50]}...'")
+                logger.info(f"INDENT_DEBUG_STEP1: Paragraph {i+1} - After indentation: '{indented_text[:54]}...'")
+            content = "\n\n".join(content_paragraphs)
+            logger.info(f"INDENT_DEBUG_STEP1: Final content has {len(content_paragraphs)} paragraphs")
+            logger.info(f"INDENT_DEBUG_STEP1: Content preview:\n{content[:500]}...")
             logger.debug(f"Extracted content length: {len(content)} characters")
         else:
             # Last resort - try to get any paragraphs that seem to be content
             logger.warning("No article body container found, trying fallback extraction")
             all_paragraphs = soup.find_all('p')
             
-            # Filter out very short paragraphs that are likely not main content
-            content_paragraphs = [p.text.strip() for p in all_paragraphs if len(p.text.strip()) > 40]
+            # Filter out very short paragraphs that are likely not main content and add indentation
+            content_paragraphs = []
+            for p in all_paragraphs:
+                if len(p.text.strip()) > 40:
+                    # Add manual indentation (4 spaces) at the beginning of each paragraph
+                    indented_text = '    ' + p.text.strip()
+                    content_paragraphs.append(indented_text)
             content = "\n\n".join(content_paragraphs)
             logger.debug(f"Fallback extraction found {len(content_paragraphs)} paragraphs")
         
@@ -828,13 +848,16 @@ def extract_from_url(url, project_name: str = "default"):
             }
             
             # Apply paragraph formatting using LLM or fallback methods
+            logger.info(f"INDENT_DEBUG_STEP2: Before paragraph formatting:\n{content[:500]}...")
             formatted_content = format_article_paragraphs(content, context)
             
             if formatted_content and formatted_content != content:
                 logger.info(f"Applied paragraph formatting to URL content (original: {len(content)} chars, formatted: {len(formatted_content)} chars)")
+                logger.info(f"INDENT_DEBUG_STEP2: After paragraph formatting:\n{formatted_content[:500]}...")
             else:
                 logger.debug("URL content already has adequate paragraph formatting or formatting failed")
                 formatted_content = content  # Use original if formatting didn't improve it
+                logger.info(f"INDENT_DEBUG_STEP2: Using original content:\n{formatted_content[:500]}...")
                 
         except Exception as e:
             logger.warning(f"Paragraph formatting failed for URL content, using original: {str(e)}")
@@ -855,6 +878,7 @@ def extract_from_url(url, project_name: str = "default"):
             logger.warning(f"Error getting typography capsule: {str(e)}")
         
         # Create the article data dictionary
+        logger.info(f"INDENT_DEBUG_STEP3: Final formatted content going into article_data:\n{formatted_content[:500]}...")
         article_data = {
             "success": True,
             "headline": headline_text,

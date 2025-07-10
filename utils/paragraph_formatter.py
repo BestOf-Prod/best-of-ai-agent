@@ -175,6 +175,8 @@ class ParagraphFormatter:
 4. Maintain the original text content exactly - only add paragraph breaks
 5. Don't add any additional text, comments, or explanations
 6. Return only the formatted text
+7. IMPORTANT: Preserve any existing indentation (spaces at the beginning of lines) exactly as it appears in the original text
+8. Lines that start with 4 spaces should remain indented in the output
 
 The text appears to be from a newspaper or magazine article that was extracted using OCR, so it may lack proper paragraph structure."""
 
@@ -241,12 +243,38 @@ The text appears to be from a newspaper or magazine article that was extracted u
         
         # Start with the original text
         formatted = text.strip()
+        logger.info(f"INDENT_DEBUG_FORMATTER: Input text:\n{formatted[:500]}...")
         
         # Replace single newlines with spaces (in case text has random line breaks)
-        formatted = re.sub(r'(?<!\n)\n(?!\n)', ' ', formatted)
+        # But preserve indentation by keeping lines that start with spaces
+        lines = formatted.split('\n')
+        processed_lines = []
+        for i, line in enumerate(lines):
+            if i == 0:
+                processed_lines.append(line)
+            elif line.startswith('    '):  # Preserve indented lines
+                processed_lines.append('\n' + line)
+            elif lines[i-1].startswith('    ') and not line.strip():  # Keep empty lines after indented content
+                processed_lines.append('\n' + line)
+            else:
+                processed_lines.append(' ' + line)
+        formatted = ''.join(processed_lines)
         
-        # Fix multiple spaces
-        formatted = re.sub(r' +', ' ', formatted)
+        # Fix multiple spaces but preserve indentation (4 spaces at start of lines)
+        # Split into lines and process each line separately
+        lines = formatted.split('\n')
+        processed_lines = []
+        for line in lines:
+            if line.startswith('    '):
+                # For indented lines, only fix multiple spaces after the indentation
+                indented_part = line[:4]  # Keep the 4-space indentation
+                rest_of_line = line[4:]   # Rest of the line
+                rest_of_line = re.sub(r' +', ' ', rest_of_line)  # Fix multiple spaces in the rest
+                processed_lines.append(indented_part + rest_of_line)
+            else:
+                # For non-indented lines, fix multiple spaces normally
+                processed_lines.append(re.sub(r' +', ' ', line))
+        formatted = '\n'.join(processed_lines)
         
         # Add paragraph breaks at common patterns
         patterns = [
@@ -279,6 +307,7 @@ The text appears to be from a newspaper or magazine article that was extracted u
         formatted = formatted.strip()
         
         logger.debug("Applied fallback paragraph formatting")
+        logger.info(f"INDENT_DEBUG_FORMATTER: Output text:\n{formatted[:500]}...")
         return formatted
 
 

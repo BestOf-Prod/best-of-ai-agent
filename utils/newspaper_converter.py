@@ -348,8 +348,9 @@ def create_headline_style(paragraph, text, font_name=None):
     run.font.bold = True
     paragraph.space_after = Pt(6)
 
-def create_capsule_based_style(paragraph, text, typography_spec: TypographySpec, alignment=WD_ALIGN_PARAGRAPH.LEFT):
+def create_capsule_based_style(paragraph, text, typography_spec: TypographySpec, alignment=WD_ALIGN_PARAGRAPH.LEFT, force_indent=True):
     """Apply styling based on capsule typography specifications."""
+    logger.info(f"INDENT_DEBUG_STYLE: create_capsule_based_style called - force_indent={force_indent}, text='{text[:60]}...'")
     if not typography_spec:
         # Fallback to default styling
         run = paragraph.add_run(text)
@@ -360,9 +361,13 @@ def create_capsule_based_style(paragraph, text, typography_spec: TypographySpec,
     # Set alignment
     paragraph.alignment = alignment
     
-    # Set indentation if specified
-    if typography_spec.indent > 0:
-        paragraph.paragraph_format.left_indent = Inches(typography_spec.indent)
+    # Set indentation if specified in typography_spec OR if forced (for paragraph indentation)
+    if typography_spec.indent > 0 or force_indent:
+        indent_amount = typography_spec.indent if typography_spec.indent > 0 else 0.5
+        paragraph.paragraph_format.first_line_indent = Inches(indent_amount)
+        logger.info(f"INDENT_DEBUG_STYLE: Applied {indent_amount} inch first line indent (capsule-based)!")
+    else:
+        logger.info(f"INDENT_DEBUG_STYLE: No indentation applied (capsule-based)")
     
     # Create run and apply font specifications
     run = paragraph.add_run(text)
@@ -381,11 +386,15 @@ def create_capsule_based_style(paragraph, text, typography_spec: TypographySpec,
     # Set spacing after paragraph
     paragraph.space_after = Pt(3)
 
-def create_body_style(paragraph, text, font_name=None, indented=False):
+def create_body_style(paragraph, text, font_name=None, indented=True):
     """Apply body text styling to a paragraph."""
+    logger.info(f"INDENT_DEBUG_STYLE: create_body_style called - indented={indented}, text='{text[:60]}...'")
     paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
     if indented:
-        paragraph.paragraph_format.left_indent = Inches(0.5)
+        paragraph.paragraph_format.first_line_indent = Inches(0.5)
+        logger.info(f"INDENT_DEBUG_STYLE: Applied 0.5 inch first line indent!")
+    else:
+        logger.info(f"INDENT_DEBUG_STYLE: No indentation applied")
     run = paragraph.add_run(text)
     run.font.name = font_name or 'Times New Roman'
     run.font.size = Pt(14)  # Fixed body text size
@@ -403,20 +412,41 @@ def create_blockquote_style(paragraph, text, font_name=None):
     paragraph.space_after = Pt(6)
 
 def process_markdown_to_text(md_content):
-    """Convert markdown to plain text and extract structure."""
-    # Convert markdown to HTML first
-    html = markdown.markdown(md_content)
-    soup = BeautifulSoup(html, 'html.parser')
+    """Convert markdown to plain text and extract structure, preserving indentation."""
+    logger.info(f"INDENT_DEBUG_CONVERTER_A: Input markdown content:\n{md_content[:500]}...")
     
-    # Extract headline (first h1 or h2)
+    # First, let's try to preserve the structure by parsing the markdown directly
+    # instead of converting to HTML first
+    
+    lines = md_content.split('\n')
     headline = None
-    headline_tag = soup.find(['h1', 'h2'])
-    if headline_tag:
-        headline = headline_tag.get_text().strip()
-        headline_tag.decompose()  # Remove from soup
+    body_lines = []
     
-    # Get remaining text as body
-    body_text = soup.get_text().strip()
+    for line in lines:
+        # Check for headlines
+        if line.startswith('# ') and headline is None:
+            headline = line[2:].strip()
+        elif line.startswith('## ') and headline is None:
+            headline = line[3:].strip()
+        # Include all non-headline lines (including empty lines for paragraph breaks)
+        elif not line.startswith('#'):
+            body_lines.append(line)
+    
+    # Reconstruct body content preserving paragraph breaks and indentation
+    body_content = '\n'.join(body_lines)
+    
+    # Split by double newlines to get paragraphs, but preserve indentation
+    paragraphs = body_content.split('\n\n')
+    cleaned_paragraphs = []
+    
+    for para in paragraphs:
+        if para.strip():
+            cleaned_paragraphs.append(para)
+    
+    body_text = '\n\n'.join(cleaned_paragraphs)
+    
+    logger.info(f"INDENT_DEBUG_CONVERTER_A: Output headline: '{headline}'")
+    logger.info(f"INDENT_DEBUG_CONVERTER_A: Output body text:\n{body_text[:500]}...")
     
     return headline, body_text
 
@@ -611,10 +641,15 @@ def create_component_documents(article_data, temp_dir):
                 })
     else:
         # Fallback: split regular content by paragraphs
+        logger.info(f"INDENT_DEBUG_CONVERTER_B: Using fallback - original text from article_data:\n{article_data.get('text', '')[:500]}...")
         paragraphs = article_data.get('text', '').split('\n\n')
-        for para in paragraphs:
+        logger.info(f"INDENT_DEBUG_CONVERTER_B: Split into {len(paragraphs)} paragraphs")
+        for i, para in enumerate(paragraphs):
             if para.strip():
-                body_texts.append({'text': para.strip(), 'indented': False})
+                # Check if paragraph starts with spaces (indented)
+                is_indented = para.startswith('    ')
+                logger.info(f"INDENT_DEBUG_CONVERTER_B: Paragraph {i+1} - indented={is_indented}, text='{para[:60]}...'")
+                body_texts.append({'text': para.rstrip(), 'indented': is_indented})
     
     # Create blockquote document
     if blockquote_texts:
@@ -651,15 +686,16 @@ def create_component_documents(article_data, temp_dir):
             body_para = body_doc.add_paragraph()
             
             # Use capsule-based styling if available
+            logger.info(f"INDENT_DEBUG_CONVERTER_C: Creating paragraph - indented={body_item['indented']}, text='{body_item['text'][:60]}...'")
             if typography_capsule:
                 body_spec = typography_capsule.typography_specs.get('body')
                 if body_spec:
-                    create_capsule_based_style(body_para, body_item['text'], body_spec, WD_ALIGN_PARAGRAPH.JUSTIFY)
+                    create_capsule_based_style(body_para, body_item['text'], body_spec, WD_ALIGN_PARAGRAPH.JUSTIFY, True)
                     logger.info(f"Applied capsule-based body styling: {body_spec.font_family} {body_spec.font_size}pt")
                 else:
-                    create_body_style(body_para, body_item['text'], font_name, body_item['indented'])
+                    create_body_style(body_para, body_item['text'], font_name, True)
             else:
-                create_body_style(body_para, body_item['text'], font_name, body_item['indented'])
+                create_body_style(body_para, body_item['text'], font_name, True)
         
         body_path = os.path.join(temp_dir, 'body.docx')
         body_doc.save(body_path)
@@ -796,11 +832,16 @@ def create_newspaper_document(md_content, temp_dir):
         img_para.space_after = Pt(6)
     
     # Add body text with paragraph breaks and indentation preserved
+    logger.info(f"INDENT_DEBUG_SIMPLE: Body text for simple conversion:\n{body_text[:500]}...")
     body_paragraphs = body_text.split('\n\n')
-    for para_text in body_paragraphs:
+    logger.info(f"INDENT_DEBUG_SIMPLE: Split into {len(body_paragraphs)} paragraphs")
+    for i, para_text in enumerate(body_paragraphs):
         if para_text.strip():
             body_para = doc.add_paragraph()
-            create_body_style(body_para, para_text.strip(), font_name)
+            # Check if paragraph starts with spaces (indented)
+            is_indented = para_text.startswith('    ')
+            logger.info(f"INDENT_DEBUG_SIMPLE: Paragraph {i+1} - indented={is_indented}, text='{para_text[:60]}...'")
+            create_body_style(body_para, para_text.rstrip(), font_name, True)
     
     return doc
 
