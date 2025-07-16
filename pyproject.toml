@@ -15,6 +15,7 @@ dependencies = [
     "python-docx-replace==0.4.4",
     "replit-object-storage==1.0.2",
     "requests==2.32.3",
+    "selenium-wire==5.1.0",
     "selenium==4.27.1",
     "setuptools==75.6.0",
     "streamlit==1.40.2",
