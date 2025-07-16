@@ -197,7 +197,7 @@ CLICK_SELECTORS = [
 ]
             """)
         
-        extraction_method = "download_clicks" if use_download_method else "viewport_screenshot"
+        # Using optimized download_clicks method only
     
     # Display auth status compactly
     if st.session_state.get('authentication_status', {}).get('authenticated'):
@@ -211,7 +211,7 @@ CLICK_SELECTORS = [
         'max_workers': max_workers,
         'delay_between_requests': delay_between_requests,
         'date_range': date_range,
-        'extraction_method': extraction_method,
+        # extraction_method parameter removed - using optimized download_clicks only
         'enable_clipboard': enable_clipboard
     }
 
@@ -557,8 +557,8 @@ def start_enhanced_batch_processing(config):
         storage_manager=storage_manager, 
         max_workers=config['max_workers'],
         newspapers_cookies=config.get('newspapers_cookies', ''),
-        newspapers_extractor=st.session_state.newspapers_extractor,
-        extraction_method=config.get('extraction_method', 'viewport_screenshot')
+        newspapers_extractor=st.session_state.newspapers_extractor
+        # extraction_method parameter removed - using optimized download_clicks only
     )
     
     # Enhanced progress tracking
@@ -881,8 +881,8 @@ def handle_article_test(config):
             try:
                 result = st.session_state.newspapers_extractor.extract_from_url(
                     url=article_url,
-                    player_name=player_name if player_name else None,
-                    extraction_method=config.get('extraction_method', 'viewport_screenshot')
+                    player_name=player_name if player_name else None
+                    # extraction_method parameter removed - using optimized download_clicks only
                 )
                 
                 if result['success']:

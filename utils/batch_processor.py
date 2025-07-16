@@ -20,12 +20,12 @@ class BatchProcessor:
     """Enhanced batch processor with auto-authentication support"""
     
     def __init__(self, storage_manager, max_workers: int = 3, newspapers_cookies: str = "", 
-                 newspapers_extractor: Optional = None, extraction_method: str = "viewport_screenshot"):
+                 newspapers_extractor: Optional = None):
         self.storage_manager = storage_manager
         self.max_workers = max_workers
         self.newspapers_cookies = newspapers_cookies
         self.newspapers_extractor = newspapers_extractor
-        self.extraction_method = extraction_method
+        # extraction_method parameter removed - using optimized download_clicks only
         self.total_processed = 0
         self.total_successful = 0
         self.total_failed = 0
@@ -345,7 +345,7 @@ class BatchProcessor:
             thread_extractor.cookie_manager = self.newspapers_extractor.cookie_manager
             
             # Use the thread-safe extractor instance
-            return thread_extractor.extract_from_url(url, player_name=player_name, project_name=project_name, extraction_method=self.extraction_method)
+            return thread_extractor.extract_from_url(url, player_name=player_name, project_name=project_name)
         else:
             # Fall back to standard extraction
             logger.debug("Using standard Newspapers.com extraction")
@@ -398,7 +398,7 @@ class BatchProcessor:
                 simple_result.structured_content = result.get('structured_content', [])  # Pass through structured content
                 simple_result.metadata = {
                     'url': url,
-                    'extraction_method': 'general',
+                    'extraction_method': 'general',  # This is for general extraction, not newspapers
                     'player_name': player_name,
                     'timestamp': datetime.now().isoformat()
                 }
@@ -443,7 +443,7 @@ class BatchProcessor:
                     'headline': result.headline,
                     'source': result.source,
                     'date': result.date,
-                    'processing_method': result.metadata.get('extraction_method', 'unknown') if result.metadata else 'unknown',
+                    'processing_method': result.metadata.get('extraction_method', 'download_clicks') if result.metadata else 'download_clicks',
                     'upload_timestamp': datetime.now().isoformat(),
                     'image_type': 'article_clipping'
                 }
