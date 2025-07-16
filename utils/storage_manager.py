@@ -50,9 +50,21 @@ class StorageManager:
         else:
             logger.info("Storage manager initialized in development mode (no uploads)")
     
-    def _get_project_path(self, filename: str) -> str:
+    def get_project_path(self, filename: str) -> str:
         """
         Get the full path for a file within the project folder
+        
+        Args:
+            filename (str): The filename to get the path for
+            
+        Returns:
+            str: The full path including project folder
+        """
+        return f"{self.project_name}/{filename}"
+    
+    def _get_project_path(self, filename: str) -> str:
+        """
+        Get the full path for a file within the project folder (private method for internal use)
         
         Args:
             filename (str): The filename to get the path for

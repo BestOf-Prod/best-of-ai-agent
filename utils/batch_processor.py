@@ -491,7 +491,6 @@ class BatchProcessor:
                         png_upload_result = self.storage_manager.upload_image(
                             image_data=png_data,
                             filename=png_filename,
-                            content_type='image/png',
                             metadata={
                                 'url': url,
                                 'headline': result.headline,
@@ -500,7 +499,8 @@ class BatchProcessor:
                                 'processing_method': 'multi_image_stitched',
                                 'upload_timestamp': datetime.now().isoformat(),
                                 'image_type': 'stitched_full_article',
-                                'dimensions': f"{result.stitched_image.width}x{result.stitched_image.height}"
+                                'dimensions': f"{result.stitched_image.width}x{result.stitched_image.height}",
+                                'content_type': 'image/png'
                             }
                         )
                         upload_results.append(png_upload_result)

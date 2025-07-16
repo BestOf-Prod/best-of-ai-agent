@@ -1363,7 +1363,7 @@ class NewspaperImageProcessor:
                 filename = f"{filename}.png"
             
             # Upload to storage
-            result = storage_manager.upload_image(png_data, filename, 'image/png')
+            result = storage_manager.upload_image(png_data, filename, {'content_type': 'image/png'})
             
             if result.get('success'):
                 logger.info(f"Successfully uploaded PNG to storage: {filename}")

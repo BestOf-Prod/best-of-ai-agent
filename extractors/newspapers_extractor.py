@@ -1372,7 +1372,7 @@ class NewspaperImageProcessor:
                 filename = f"{filename}.png"
             
             # Upload to storage
-            result = storage_manager.upload_image(png_data, filename, 'image/png')
+            result = storage_manager.upload_image(png_data, filename, {'content_type': 'image/png'})
             
             if result.get('success'):
                 logger.info(f"Successfully uploaded PNG to storage: {filename}")
@@ -2769,12 +2769,16 @@ class NewspapersComExtractor:
                     # Handle storage based on environment
                     if self.cookie_manager.selenium_login_manager.is_replit:
                         # Save to Replit object storage
-                        file_path = storage_manager.save_file(
+                        result = storage_manager.store_file(
                             filename=filename,
-                            content=file_data['content'],
-                            content_type=content_type
+                            content=file_data['content']
                         )
-                        logger.info(f"Saved to Replit storage: {file_path}")
+                        if result.get('success'):
+                            file_path = result.get('path', filename)
+                            logger.info(f"Saved to Replit storage: {file_path}")
+                        else:
+                            logger.error(f"Failed to save to Replit storage: {result.get('error')}")
+                            file_path = filename
                     else:
                         # Save to local directory
                         local_dir = Path(f"downloads/{project_name}")

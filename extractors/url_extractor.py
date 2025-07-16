@@ -465,7 +465,7 @@ def download_image(image_url: str, output_dir: str, storage_manager: StorageMana
             source = parsed_url.netloc.replace('www.', '')
             image_filename = f"images/{source}/{filename}"
             storage_manager.store_file(image_filename, image_data)
-            output_path = storage_manager._get_project_path(image_filename)
+            output_path = storage_manager.get_project_path(image_filename)
             logger.info(f"Successfully stored image using StorageManager: {output_path}")
         else:
             # Fallback to local storage
@@ -912,7 +912,7 @@ def extract_from_url(url, project_name: str = "default"):
         storage_manager = StorageManager(project_name=project_name)
         
         # Use storage manager for file path
-        markdown_path = storage_manager._get_project_path(markdown_filename)
+        markdown_path = storage_manager.get_project_path(markdown_filename)
         
         # Add markdown path to article data before generating content
         article_data["markdown_path"] = markdown_path
@@ -922,7 +922,7 @@ def extract_from_url(url, project_name: str = "default"):
         if image_url:
             # Use storage manager for image path
             image_filename = os.path.basename(urlparse(image_url).path) or f"image_{int(time.time())}.jpg"
-            image_path = storage_manager._get_project_path(f"images/{source}/{image_filename}")
+            image_path = storage_manager.get_project_path(f"images/{source}/{image_filename}")
             image_path = download_image(image_url, os.path.dirname(image_path), storage_manager)
         
         # Generate markdown content
