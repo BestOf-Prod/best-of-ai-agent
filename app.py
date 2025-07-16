@@ -1,6 +1,7 @@
 # app.py
 # Enhanced main application with auto-cookie authentication
 import streamlit as st
+import streamlit.components.v1
 import pandas as pd
 import logging
 from datetime import datetime
@@ -58,7 +59,7 @@ def main():
     
     with tab2:
         st.subheader("📊 Processing Results")
-        display_batch_results()
+        display_batch_results(config)
         st.divider()
         st.subheader("📰 Newspaper Format")
         handle_newspaper_conversion()
@@ -89,6 +90,35 @@ def initialize_session_state():
         if key not in st.session_state:
             st.session_state[key] = default_value
             logger.info(f"Initialized {key} session state")
+
+def create_copy_button(text_content: str, label: str, key: str, help_text: str = None):
+    """Create a copy button for clipboard functionality"""
+    if st.button(f"📋 {label}", key=key, help=help_text or f"Copy {label.lower()} to clipboard"):
+        # Use streamlit's built-in clipboard functionality through JavaScript
+        js_code = f"""
+        <script>
+        async function copyToClipboard() {{
+            try {{
+                await navigator.clipboard.writeText({json.dumps(text_content)});
+                console.log('Copied to clipboard successfully');
+            }} catch (err) {{
+                console.error('Failed to copy to clipboard:', err);
+                // Fallback method
+                const textArea = document.createElement('textarea');
+                textArea.value = {json.dumps(text_content)};
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+            }}
+        }}
+        copyToClipboard();
+        </script>
+        """
+        st.components.v1.html(js_code, height=0)
+        st.success(f"✅ {label} copied to clipboard!")
+        return True
+    return False
 
 def streamlined_sidebar_config():
     """Streamlined sidebar configuration"""
@@ -135,6 +165,40 @@ def streamlined_sidebar_config():
             ["Any", "2020-2025", "2010-2019", "2000-2009", "1990-1999", "1980-1989"]
         )
     
+    # Clipboard functionality toggle
+    with st.sidebar.expander("📋 Clipboard Features", expanded=False):
+        enable_clipboard = st.checkbox(
+            "Enable Clipboard Copy",
+            value=True,
+            help="Add copy buttons to article components for easy clipboard access"
+        )
+        
+        if enable_clipboard:
+            st.info("Copy buttons will appear in article previews")
+        else:
+            st.info("Clipboard features disabled")
+    
+    # Extraction method settings
+    with st.sidebar.expander("🔧 Extraction Method", expanded=False):
+        use_download_method = st.checkbox(
+            "Use Download Method (Experimental)",
+            value=False,
+            help="Use 3-click download approach instead of viewport screenshots. Faster but requires manual selector configuration."
+        )
+        
+        if use_download_method:
+            st.info("⚠️ Download method requires manual HTML selector configuration in the code.")
+            st.code("""
+# Configure selectors in newspapers_extractor.py
+CLICK_SELECTORS = [
+    {"selector": "your-download-button", "description": "..."},
+    {"selector": "your-format-option", "description": "..."},
+    {"selector": "your-confirm-button", "description": "..."}
+]
+            """)
+        
+        extraction_method = "download_clicks" if use_download_method else "viewport_screenshot"
+    
     # Display auth status compactly
     if st.session_state.get('authentication_status', {}).get('authenticated'):
         st.sidebar.success("✅ Logged in")
@@ -146,7 +210,9 @@ def streamlined_sidebar_config():
         'project_name': project_name,
         'max_workers': max_workers,
         'delay_between_requests': delay_between_requests,
-        'date_range': date_range
+        'date_range': date_range,
+        'extraction_method': extraction_method,
+        'enable_clipboard': enable_clipboard
     }
 
 def initialize_newspapers_authentication(email: str, password: str, uploaded_cookies=None):
@@ -491,7 +557,8 @@ def start_enhanced_batch_processing(config):
         storage_manager=storage_manager, 
         max_workers=config['max_workers'],
         newspapers_cookies=config.get('newspapers_cookies', ''),
-        newspapers_extractor=st.session_state.newspapers_extractor
+        newspapers_extractor=st.session_state.newspapers_extractor,
+        extraction_method=config.get('extraction_method', 'viewport_screenshot')
     )
     
     # Enhanced progress tracking
@@ -567,7 +634,7 @@ def test_storage_connection(bucket_name, project_name):
         logger.error(f"Enhanced storage test error: {str(e)}")
         st.sidebar.error(f"❌ Enhanced storage test error: {str(e)}")
 
-def display_batch_results():
+def display_batch_results(config):
     """Enhanced display of batch processing results"""
     if not st.session_state.batch_results:
         st.info("📊 No results yet. Process URLs first.")
@@ -654,6 +721,8 @@ def display_batch_results():
                     with preview_col1:
                         st.write("#### Markdown Preview")
                         markdown_path = selected_article.get('markdown_path')
+                        markdown_content = None
+                        
                         if markdown_path:
                             logger.debug(f"Attempting to read markdown file: {markdown_path}")
                             try:
@@ -671,6 +740,75 @@ def display_batch_results():
                         else:
                             logger.warning("No markdown path available for selected article")
                             st.warning("No markdown file available for preview")
+                        
+                        # Add clipboard functionality if enabled
+                        if config and config.get('enable_clipboard', True) and markdown_content:
+                            st.divider()
+                            st.write("#### 📋 Copy Options")
+                            
+                            # Extract components from the article
+                            headline = selected_article.get('headline', 'Unknown')
+                            source = selected_article.get('source', 'Unknown')
+                            date = selected_article.get('date', 'Unknown')
+                            content = selected_article.get('content', '') or selected_article.get('full_content', '')
+                            url = selected_article.get('url', '')
+                            
+                            # Create copy buttons in columns
+                            copy_col1, copy_col2, copy_col3 = st.columns(3)
+                            
+                            with copy_col1:
+                                create_copy_button(
+                                    headline, 
+                                    "Headline", 
+                                    f"copy_headline_{selected_idx}",
+                                    "Copy article headline"
+                                )
+                            
+                            with copy_col2:
+                                create_copy_button(
+                                    content, 
+                                    "Content", 
+                                    f"copy_content_{selected_idx}",
+                                    "Copy article content/body text"
+                                )
+                            
+                            with copy_col3:
+                                create_copy_button(
+                                    markdown_content, 
+                                    "Full Markdown", 
+                                    f"copy_markdown_{selected_idx}",
+                                    "Copy complete markdown with formatting"
+                                )
+                            
+                            # Additional copy options in a second row
+                            copy_col4, copy_col5, copy_col6 = st.columns(3)
+                            
+                            with copy_col4:
+                                metadata_text = f"Source: {source}\nDate: {date}\nURL: {url}"
+                                create_copy_button(
+                                    metadata_text, 
+                                    "Metadata", 
+                                    f"copy_metadata_{selected_idx}",
+                                    "Copy article metadata (source, date, URL)"
+                                )
+                            
+                            with copy_col5:
+                                citation_text = f"{headline}. {source}, {date}. {url}"
+                                create_copy_button(
+                                    citation_text, 
+                                    "Citation", 
+                                    f"copy_citation_{selected_idx}",
+                                    "Copy formatted citation"
+                                )
+                            
+                            with copy_col6:
+                                structured_text = f"# {headline}\n\n**Source:** {source}\n**Date:** {date}\n**URL:** {url}\n\n{content}"
+                                create_copy_button(
+                                    structured_text, 
+                                    "Structured", 
+                                    f"copy_structured_{selected_idx}",
+                                    "Copy article in structured format"
+                                )
                     
                     with preview_col2:
                         st.write("#### Image Preview")
@@ -743,7 +881,8 @@ def handle_article_test(config):
             try:
                 result = st.session_state.newspapers_extractor.extract_from_url(
                     url=article_url,
-                    player_name=player_name if player_name else None
+                    player_name=player_name if player_name else None,
+                    extraction_method=config.get('extraction_method', 'viewport_screenshot')
                 )
                 
                 if result['success']:

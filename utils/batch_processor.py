@@ -20,11 +20,12 @@ class BatchProcessor:
     """Enhanced batch processor with auto-authentication support"""
     
     def __init__(self, storage_manager, max_workers: int = 3, newspapers_cookies: str = "", 
-                 newspapers_extractor: Optional = None):
+                 newspapers_extractor: Optional = None, extraction_method: str = "viewport_screenshot"):
         self.storage_manager = storage_manager
         self.max_workers = max_workers
         self.newspapers_cookies = newspapers_cookies
         self.newspapers_extractor = newspapers_extractor
+        self.extraction_method = extraction_method
         self.total_processed = 0
         self.total_successful = 0
         self.total_failed = 0
@@ -344,7 +345,7 @@ class BatchProcessor:
             thread_extractor.cookie_manager = self.newspapers_extractor.cookie_manager
             
             # Use the thread-safe extractor instance
-            return thread_extractor.extract_from_url(url, player_name=player_name, project_name=project_name)
+            return thread_extractor.extract_from_url(url, player_name=player_name, project_name=project_name, extraction_method=self.extraction_method)
         else:
             # Fall back to standard extraction
             logger.debug("Using standard Newspapers.com extraction")

@@ -10,6 +10,11 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.support import expected_conditions as EC
+try:
+    from seleniumwire import webdriver as wire_webdriver
+    SELENIUM_WIRE_AVAILABLE = True
+except ImportError:
+    SELENIUM_WIRE_AVAILABLE = False
 import cv2
 import pytesseract
 from PIL import Image, ImageEnhance
@@ -47,6 +52,10 @@ from utils.paragraph_formatter import format_article_paragraphs
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Log selenium-wire availability after logger is configured
+if not SELENIUM_WIRE_AVAILABLE:
+    logger.warning("selenium-wire not available. Download capture features will be disabled.")
 
 @dataclass
 class ArticleMetadata:
@@ -1802,8 +1811,16 @@ class NewspapersComExtractor:
             logger.error(f"Error extracting article data from element: {e}")
             return None
     
-    def extract_from_url(self, url: str, player_name: Optional[str] = None, extract_multi_page: bool = True, project_name: str = "default") -> Dict:
+    def extract_from_url(self, url: str, player_name: Optional[str] = None, extract_multi_page: bool = True, project_name: str = "default", extraction_method: str = "viewport_screenshot") -> Dict:
         try:
+            # Route to download method if requested
+            if extraction_method == "download_clicks":
+                logger.info(f"Using download extraction method for URL: {url}")
+                return self.extract_via_download_clicks(url, player_name, project_name)
+            
+            # Continue with original viewport screenshot method
+            logger.info(f"Using viewport screenshot extraction method for URL: {url}")
+            
             if not self.cookie_manager.refresh_cookies_if_needed():
                 logger.error("Failed to refresh authentication cookies for article extraction.")
                 return {'success': False, 'error': "Authentication failed or expired. Please re-initialize."}
@@ -2480,6 +2497,369 @@ class NewspapersComExtractor:
         except Exception as e:
             logger.error(f"Error finding multi-page images: {e}")
             return []
+
+    def extract_via_download_clicks(self, url: str, player_name: Optional[str] = None, project_name: str = "default") -> Dict:
+        """
+        Alternative extraction method using 2-click + GET request approach.
+        This method performs 2 clicks to open the download menu and select format,
+        then makes a direct GET request to the JPG download href URL.
+        
+        Args:
+            url: The newspapers.com URL to extract from
+            player_name: Optional player name for filtering
+            project_name: Project name for storage organization
+            
+        Returns:
+            Dict with extraction results including downloaded files
+        """
+        if not SELENIUM_WIRE_AVAILABLE:
+            logger.error("selenium-wire is not available. Cannot use download capture method.")
+            return {'success': False, 'error': "selenium-wire not installed. Use: pip install selenium-wire"}
+        
+        try:
+            # Refresh cookies if needed
+            if not self.cookie_manager.refresh_cookies_if_needed():
+                logger.error("Failed to refresh authentication cookies for download extraction.")
+                return {'success': False, 'error': "Authentication failed or expired. Please re-initialize."}
+            
+            # Configure selenium-wire options
+            wire_options = {
+                'port': 0,  # Use random port
+                'disable_encoding': True,  # Don't decode responses
+                'request_storage_base_dir': tempfile.gettempdir(),
+                'suppress_connection_errors': True,
+            }
+            
+            # Setup Chrome options for download capture
+            chrome_options = Options()
+            chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--window-size=1920,1080")
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
+            
+            # Add user agent to avoid detection
+            chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+            
+            # Configure download behavior
+            prefs = {
+                "download.default_directory": tempfile.gettempdir(),
+                "download.prompt_for_download": False,
+                "download.directory_upgrade": True,
+                "safebrowsing.enabled": True
+            }
+            chrome_options.add_experimental_option("prefs", prefs)
+            
+            # Initialize selenium-wire driver
+            driver = wire_webdriver.Chrome(options=chrome_options, seleniumwire_options=wire_options)
+            
+            try:
+                # Add cookies for authentication
+                driver.get("https://www.newspapers.com")
+                
+                # Wait for initial page load and potential Cloudflare challenge
+                WebDriverWait(driver, 60).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+                
+                # Add cookies after initial page load
+                for name, value in self.cookie_manager.cookies.items():
+                    try:
+                        cookie_dict = {
+                            'name': name,
+                            'value': value,
+                            'domain': '.newspapers.com',
+                            'path': '/'
+                        }
+                        driver.add_cookie(cookie_dict)
+                        logger.debug(f"Added cookie: {name}")
+                    except Exception as e:
+                        logger.warning(f"Could not add cookie {name} to wire driver: {e}")
+                
+                # Navigate to the target URL
+                logger.info(f"Navigating to URL: {url}")
+                driver.get(url)
+                
+                # Wait for page to load completely and handle any Cloudflare challenges
+                WebDriverWait(driver, 90).until(
+                    EC.any_of(
+                        EC.presence_of_element_located((By.ID, "btn-print")),
+                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+                    )
+                )
+                
+                # Additional wait for JavaScript to settle
+                time.sleep(5)
+                
+                # Configure selectors for the 2-click path (no third click needed)
+                CLICK_SELECTORS = [
+                    # First click - open download menu
+                    {"selector": "[id='btn-print']", "description": "Download button"},
+                    # Second click - select format
+                    {"selector": "[aria-labelledby='entireP']", "description": "Entire Page Button"}
+                ]
+                
+                downloaded_files = []
+                
+                # Execute the 2-click sequence
+                for i, click_config in enumerate(CLICK_SELECTORS, 1):
+                    try:
+                        logger.info(f"Click {i}: {click_config['description']}")
+                        
+                        # Wait for element to be clickable
+                        element = WebDriverWait(driver, 10).until(
+                            EC.element_to_be_clickable((By.CSS_SELECTOR, click_config["selector"]))
+                        )
+                        
+                        # Clear any captured requests before clicking
+                        driver.requests.clear()
+                        
+                        # Regular click for both buttons
+                        element.click()
+                        
+                        # Wait a moment for any downloads to start
+                        time.sleep(2)
+                        
+                        # Check for download requests from selenium-wire
+                        for request in driver.requests:
+                            if request.response and request.response.headers.get('content-disposition'):
+                                # This looks like a file download
+                                content_type = request.response.headers.get('content-type', '')
+                                
+                                # Only save JPG files
+                                if not ('jpeg' in content_type.lower() or 'jpg' in content_type.lower()):
+                                    logger.info(f"Skipping non-JPG file type: {content_type}")
+                                    continue
+                                
+                                downloaded_files.append({
+                                    'url': request.url,
+                                    'content': request.response.body,
+                                    'content_type': content_type,
+                                    'headers': dict(request.response.headers),
+                                    'click_step': i
+                                })
+                                logger.info(f"Captured JPG download from click {i}: {content_type}")
+                        
+                    except TimeoutException:
+                        logger.warning(f"Timeout waiting for click {i} element: {click_config['description']}")
+                        continue
+                    except Exception as e:
+                        logger.error(f"Error during click {i}: {str(e)}")
+                        continue
+                
+                # After the 2 clicks, find the JPG download button and make direct GET request
+                try:
+                    logger.info("Looking for JPG download button to extract href URL")
+                    
+                    # Wait for the JPG download button to appear
+                    jpg_button = WebDriverWait(driver, 10).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, "a.btn.btn-outline-light.border-primary.jpg"))
+                    )
+                    
+                    # Get the href URL from the button
+                    href_url = jpg_button.get_attribute("href")
+                    if href_url:
+                        logger.info(f"Found JPG download href URL: {href_url}")
+                        
+                        # Extract filename from original URL
+                        from urllib.parse import urlparse, parse_qs, urlencode
+                        parsed_url = urlparse(href_url)
+                        params = parse_qs(parsed_url.query)
+                        
+                        # Get filename from the original URL parameters
+                        filename = None
+                        if 'filename' in params:
+                            filename = params['filename'][0] + '.jpg'
+                        else:
+                            # Fallback filename based on article ID
+                            article_id = params.get('id', ['unknown'])[0]
+                            filename = f"newspaper_article_{article_id}.jpg"
+                        
+                        logger.info(f"Extracted filename: {filename}")
+                        
+                        # Keep only essential parameters, remove problematic ones
+                        essential_params = ['institutionId', 'id', 'user', 'iat']
+                        filtered_params = {k: v for k, v in params.items() if k in essential_params}
+                        
+                        # Reconstruct the URL with filtered parameters
+                        filtered_query = urlencode(filtered_params, doseq=True)
+                        filtered_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}?{filtered_query}"
+                        
+                        logger.info(f"Filtered URL: {filtered_url}")
+                        
+                        # Make a GET request to the filtered URL to download the image
+                        try:
+                            # Add proper headers that newspapers.com expects
+                            headers = {
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                                'Accept': 'image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                                'Accept-Language': 'en-US,en;q=0.9',
+                                'Accept-Encoding': 'gzip, deflate, br',
+                                'Referer': url,  # Use the current article URL as referrer
+                                'Connection': 'keep-alive',
+                                'Sec-Fetch-Dest': 'image',
+                                'Sec-Fetch-Mode': 'no-cors',
+                                'Sec-Fetch-Site': 'same-origin',
+                            }
+                            
+                            # Use the session with cookies for authentication
+                            response = self.cookie_manager.session.get(filtered_url, headers=headers, timeout=30)
+                            response.raise_for_status()
+                            
+                            # Create a download file entry - only save JPG files
+                            content_type = response.headers.get('content-type', 'image/jpeg')
+                            if 'jpeg' in content_type.lower() or 'jpg' in content_type.lower():
+                                downloaded_files.append({
+                                    'url': href_url,
+                                    'content': response.content,
+                                    'content_type': content_type,
+                                    'headers': dict(response.headers),
+                                    'click_step': 3,  # Mark as step 3 for consistency
+                                    'filename': filename
+                                })
+                                logger.info(f"Successfully downloaded JPG via GET request: {content_type}, filename: {filename}")
+                            else:
+                                logger.info(f"Skipping non-JPG file: {content_type}")
+                        except Exception as req_e:
+                            logger.error(f"Failed to download via GET request: {req_e}")
+                    else:
+                        logger.warning("No href found in JPG download button")
+                        
+                except Exception as e:
+                    logger.error(f"Error finding JPG download button: {str(e)}")
+                
+                # Process downloaded files
+                if downloaded_files:
+                    return self._process_downloaded_files(downloaded_files, url, player_name, project_name)
+                else:
+                    return {'success': False, 'error': "No files were downloaded during the process"}
+                
+            finally:
+                driver.quit()
+                
+        except Exception as e:
+            logger.error(f"Error in download extraction: {str(e)}")
+            return {'success': False, 'error': f"Download extraction failed: {str(e)}"}
+    
+    def _process_downloaded_files(self, downloaded_files: List[Dict], url: str, player_name: Optional[str], project_name: str) -> Dict:
+        """
+        Process downloaded files captured from the 3-click sequence.
+        Handles storage for both local and Replit environments.
+        """
+        try:
+            storage_manager = StorageManager(project_name)
+            processed_files = []
+            
+            for i, file_data in enumerate(downloaded_files):
+                try:
+                    # Generate filename based on content type and URL
+                    content_type = file_data['content_type']
+                    file_extension = self._get_file_extension(content_type)
+                    
+                    # Use filename from href URL if available, otherwise create with timestamp
+                    if 'filename' in file_data and file_data['filename']:
+                        filename = file_data['filename']
+                    else:
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        filename = f"newspaper_download_{timestamp}_{i+1}{file_extension}"
+                    
+                    # Handle storage based on environment
+                    if self.cookie_manager.selenium_login_manager.is_replit:
+                        # Save to Replit object storage
+                        file_path = storage_manager.save_file(
+                            filename=filename,
+                            content=file_data['content'],
+                            content_type=content_type
+                        )
+                        logger.info(f"Saved to Replit storage: {file_path}")
+                    else:
+                        # Save to local directory
+                        local_dir = Path(f"downloads/{project_name}")
+                        local_dir.mkdir(parents=True, exist_ok=True)
+                        local_path = local_dir / filename
+                        
+                        with open(local_path, 'wb') as f:
+                            f.write(file_data['content'])
+                        
+                        file_path = str(local_path)
+                        logger.info(f"Saved to local storage: {file_path}")
+                    
+                    # Extract metadata if it's an image
+                    metadata = None
+                    if 'image' in content_type.lower():
+                        try:
+                            image = Image.open(io.BytesIO(file_data['content']))
+                            metadata = {
+                                'size': image.size,
+                                'format': image.format,
+                                'mode': image.mode
+                            }
+                        except Exception as e:
+                            logger.warning(f"Could not process image metadata: {e}")
+                    
+                    processed_files.append({
+                        'filename': filename,
+                        'path': file_path,
+                        'content_type': content_type,
+                        'size': len(file_data['content']),
+                        'click_step': file_data['click_step'],
+                        'metadata': metadata,
+                        'url': file_data['url'],
+                        'content': file_data['content']  # Add image content for preview
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"Error processing downloaded file {i}: {str(e)}")
+                    continue
+            
+            # Add image data for UI preview (use first image if available)
+            image_data = None
+            if processed_files:
+                first_file = processed_files[0]
+                if 'image' in first_file.get('content_type', '').lower():
+                    image_data = first_file['content']
+            
+            return {
+                'success': True,
+                'method': 'download_clicks',
+                'url': url,
+                'files': processed_files,
+                'player_name': player_name,
+                'project_name': project_name,
+                'timestamp': datetime.now().isoformat(),
+                'image_data': image_data,  # Add image data for UI preview
+                'headline': f"Downloaded from {url}",
+                'source': 'newspapers.com',
+                'date': datetime.now().strftime('%Y-%m-%d')
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing downloaded files: {str(e)}")
+            return {'success': False, 'error': f"File processing failed: {str(e)}"}
+    
+    def _get_file_extension(self, content_type: str) -> str:
+        """Get appropriate file extension based on content type."""
+        content_type = content_type.lower()
+        
+        if 'pdf' in content_type:
+            return '.pdf'
+        elif 'jpeg' in content_type or 'jpg' in content_type:
+            return '.jpg'
+        elif 'png' in content_type:
+            return '.png'
+        elif 'gif' in content_type:
+            return '.gif'
+        elif 'tiff' in content_type:
+            return '.tiff'
+        elif 'bmp' in content_type:
+            return '.bmp'
+        elif 'webp' in content_type:
+            return '.webp'
+        else:
+            return '.bin'  # Generic binary file
 
 
 # The main() function in newspapers_extractor.py is for standalone testing of the scraper.
