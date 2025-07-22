@@ -18,6 +18,7 @@ from bs4 import BeautifulSoup
 import logging
 from datetime import datetime
 from utils.logger import setup_logging
+from utils.google_drive_manager import GoogleDriveManager
 
 # Import capsule parser for typography specifications
 from utils.capsule_parser import get_typography_for_article, TypographySpec
@@ -895,59 +896,23 @@ def convert_articles_to_component_zip(articles_data, output_zip_path=None):
         for i, article_data in enumerate(articles_data):
             logger.info(f"Processing article {i+1}/{len(articles_data)}")
             
-            # Check if this is a newspapers.com article - if so, skip Word document generation
+            # Check if this is a newspapers.com article - treat like normal articles now
             is_newspapers_com = 'newspapers.com' in article_data.get('url', '').lower()
             
             if is_newspapers_com:
-                logger.info(f"Skipping Word document generation for newspapers.com article: {article_data.get('title', 'Unknown')}")
-                # Only process the image for newspapers.com articles
-                metadata = {
-                    'directory_name': f"newspaper_clipping_{i+1}",
-                    'title': article_data.get('title', 'Unknown'),
-                    'url': article_data.get('url', ''),
-                    'date': article_data.get('date', ''),
-                    'source': 'newspapers.com'
-                }
-                
-                # Store directory info with just image
-                article_directories[metadata['directory_name']] = {
-                    'metadata': metadata,
-                    'components': [],
-                    'images': []
-                }
-                
-                # Process image if available
-                if 'image_data' in article_data and article_data['image_data']:
-                    try:
-                        image_data = article_data['image_data']
-                        image_filename = f"newspaper_clipping_{i+1}.png"
-                        
-                        # Save image to temp directory
-                        if hasattr(image_data, 'save'):
-                            image_path = os.path.join(temp_dir, image_filename)
-                            image_data.save(image_path)
-                            
-                            # Create image info with expected structure
-                            image_info = {
-                                'source_path': image_path,
-                                'clip_filename': image_filename,
-                                'directory': metadata['directory_name'],
-                                'url': 'newspapers.com_clipping',
-                                'alt_text': f'Newspaper clipping {i+1}'
-                            }
-                            
-                            all_images.append(image_info)
-                            article_directories[metadata['directory_name']]['images'].append(image_info)
-                            
-                            logger.info(f"Added newspaper clipping image: {image_filename} from {image_path}")
-                        else:
-                            logger.warning(f"Image data for article {i+1} is not a PIL Image object")
-                    except Exception as e:
-                        logger.error(f"Failed to process newspaper clipping image for article {i+1}: {str(e)}")
-                
-                continue  # Skip Word document generation for newspapers.com
+                logger.info(f"Processing newspapers.com article normally: {article_data.get('title', 'Unknown')}")
+                # Create a simple title component for newspapers.com articles since they have less structured content
+                if not article_data.get('structured_content'):
+                    # Create minimal structured content for newspapers.com articles
+                    article_data['structured_content'] = [
+                        {'type': 'paragraph', 'text': f"Directory path where image is stored: article_images/ (exported with Word document)", 'indented': False}
+                    ]
+                    if article_data.get('headline'):
+                        article_data['structured_content'].insert(0, 
+                            {'type': 'paragraph', 'text': article_data['headline'], 'indented': False})
+                    logger.info("Added structured content for newspapers.com article to show directory path")
             
-            # Create component documents for this article (non-newspapers.com)
+            # Create component documents for this article
             components = create_component_documents(article_data, temp_dir)
             
             # Get metadata for directory organization
@@ -1272,6 +1237,312 @@ def convert_multiple_markdown_to_newspaper_zip(markdown_contents, output_zip_pat
     
     except Exception as e:
         logger.error(f"Error creating newspaper zip: {str(e)}")
+        raise
+    
+    finally:
+        # Clean up temporary directory
+        try:
+            import shutil
+            shutil.rmtree(temp_dir)
+        except Exception as e:
+            logger.warning(f"Failed to clean up temp directory: {str(e)}")
+
+def create_single_word_document_with_images(articles_data, output_path=None, original_url_order=None, upload_to_drive=True):
+    """
+    Create a single Word document with all articles in original order and export all images to a separate folder.
+    Optionally upload to Google Drive.
+    
+    Args:
+        articles_data: List of article data dictionaries
+        output_path: Optional path to save the document
+        original_url_order: Optional list of URLs in original document order for preservation
+        upload_to_drive: Whether to upload the result to Google Drive (default: True)
+        
+    Returns:
+        dict: Dictionary containing document path, images folder path, summary, and Google Drive info
+    """
+    logger.info(f"Creating single Word document with {len(articles_data)} articles")
+    
+    # Preserve original URL order if provided
+    if original_url_order:
+        logger.info(f"Preserving original URL order from {len(original_url_order)} URLs")
+        # Create a URL to article mapping
+        url_to_article = {}
+        for article in articles_data:
+            url = article.get('url', '')
+            if url:
+                url_to_article[url] = article
+        
+        # Reorder articles based on original URL order
+        ordered_articles = []
+        for url in original_url_order:
+            if url in url_to_article:
+                ordered_articles.append(url_to_article[url])
+            else:
+                logger.warning(f"URL not found in processed articles: {url}")
+        
+        # Add any remaining articles that weren't in the original order
+        processed_urls = set(original_url_order)
+        for article in articles_data:
+            url = article.get('url', '')
+            if url and url not in processed_urls:
+                ordered_articles.append(article)
+                logger.info(f"Added article not in original order: {url}")
+        
+        articles_data = ordered_articles
+        logger.info(f"Successfully ordered {len(articles_data)} articles based on original URL order")
+    
+    # Create main document
+    doc = Document()
+    apply_newspaper_styling(doc)
+    
+    # Set single column layout
+    section = doc.sections[0]
+    set_column_layout(section, 1)
+    
+    # Create temp directory for processing
+    temp_dir = tempfile.mkdtemp()
+    
+    try:
+        # Collections for export
+        all_images = []
+        processed_articles = []
+        
+        # Process each article
+        for i, article_data in enumerate(articles_data):
+            logger.info(f"Processing article {i+1}/{len(articles_data)}: {article_data.get('headline', 'Unknown')}")
+            
+            # Extract article information
+            headline = article_data.get('headline', 'Unknown Article')
+            source = article_data.get('source', 'Unknown Source')
+            date = article_data.get('date', 'Unknown Date')
+            content = article_data.get('full_content') or article_data.get('content', 'No content available')
+            url = article_data.get('url', '')
+            
+            # Get font for this article
+            font_name = get_font_for_site(url)
+            
+            # Add article separator if not the first article
+            if i > 0:
+                doc.add_page_break()
+            
+            # Add headline
+            headline_para = doc.add_paragraph()
+            create_headline_style(headline_para, headline, font_name)
+            
+            # Add drophead (subheading) if available
+            drophead = article_data.get('drophead') or article_data.get('subheading')
+            if drophead and drophead.strip():
+                drophead_para = doc.add_paragraph()
+                drophead_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = drophead_para.add_run(drophead)
+                run.font.name = font_name
+                run.font.size = Pt(16)
+                run.font.italic = True
+                drophead_para.space_after = Pt(6)
+            
+            # Add source and date with enhanced formatting
+            if source != 'Unknown Source' or date != 'Unknown Date':
+                source_para = doc.add_paragraph()
+                source_text = f"Source: {source}"
+                if date != 'Unknown Date':
+                    source_text += f" | Date: {date}"
+                create_body_style(source_para, source_text, font_name, False)
+                source_para.space_after = Pt(12)
+            
+            # Handle article images
+            article_images = []
+            
+            # Check for newspapers.com image_data (PIL Image)
+            if article_data.get('image_data'):
+                try:
+                    # Enhanced naming: article_{index}_{source}_{headline}.{extension}
+                    clean_source = sanitize_filename(source) if source != 'Unknown Source' else 'newspapers'
+                    clean_headline = sanitize_filename(headline)
+                    image_filename = f"article_{i+1}_{clean_source}_{clean_headline}.png"
+                    image_path = os.path.join(temp_dir, image_filename)
+                    article_data['image_data'].save(image_path, 'PNG')
+                    
+                    article_images.append({
+                        'path': image_path,
+                        'filename': image_filename,
+                        'source': 'newspapers.com',
+                        'alt_text': f'Newspaper clipping for {headline}'
+                    })
+                    logger.info(f"Saved newspapers.com image: {image_filename}")
+                except Exception as e:
+                    logger.error(f"Failed to save newspapers.com image: {str(e)}")
+            
+            # Check for regular image URL
+            elif article_data.get('image_url'):
+                try:
+                    # Enhanced naming: article_{index}_{source}_{headline}.{extension}
+                    clean_source = sanitize_filename(source) if source != 'Unknown Source' else 'web'
+                    clean_headline = sanitize_filename(headline)
+                    file_ext = os.path.splitext(urlparse(article_data['image_url']).path)[1] or '.jpg'
+                    image_filename = f"article_{i+1}_{clean_source}_{clean_headline}{file_ext}"
+                    image_path = download_image(article_data['image_url'], temp_dir)
+                    
+                    if image_path:
+                        # Rename to our standardized filename
+                        new_image_path = os.path.join(temp_dir, image_filename)
+                        os.rename(image_path, new_image_path)
+                        
+                        article_images.append({
+                            'path': new_image_path,
+                            'filename': image_filename,
+                            'source': 'url',
+                            'alt_text': f'Image for {headline}'
+                        })
+                        logger.info(f"Downloaded image: {image_filename}")
+                except Exception as e:
+                    logger.error(f"Failed to download image: {str(e)}")
+            
+            # Add images to document
+            if article_images:
+                for img in article_images:
+                    try:
+                        img_para = doc.add_paragraph()
+                        img_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        run = img_para.add_run()
+                        
+                        # Add image with appropriate sizing
+                        run.add_picture(img['path'], width=Inches(4))
+                        img_para.space_after = Pt(6)
+                        
+                        # Add to collection for export
+                        all_images.append(img)
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to add image to document: {str(e)}")
+            
+            # Add article content
+            if content:
+                # Split content into paragraphs
+                paragraphs = content.split('\n\n')
+                for para_text in paragraphs:
+                    if para_text.strip():
+                        content_para = doc.add_paragraph()
+                        create_body_style(content_para, para_text.strip(), font_name, True)
+            
+            # Add directory path information for newspapers.com articles
+            is_newspapers_com = 'newspapers.com' in url.lower() if url else False
+            if is_newspapers_com and article_images:
+                directory_para = doc.add_paragraph()
+                directory_text = "Directory path where newspaper image is stored: article_images/ (exported with this document)"
+                create_body_style(directory_para, directory_text, font_name, False)
+                directory_para.space_after = Pt(12)
+            
+            # Add URL reference
+            if url:
+                url_para = doc.add_paragraph()
+                create_body_style(url_para, f"URL: {url}", font_name, False)
+                url_para.space_after = Pt(18)
+            
+            processed_articles.append({
+                'headline': headline,
+                'source': source,
+                'date': date,
+                'url': url,
+                'images': len(article_images)
+            })
+        
+        # Save the document to current directory if no path specified
+        if output_path is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = f"all_articles_{timestamp}.docx"
+        
+        doc.save(output_path)
+        logger.info(f"Single Word document created: {output_path}")
+        
+        # Create images folder
+        images_dir = os.path.join(os.path.dirname(output_path), "article_images")
+        os.makedirs(images_dir, exist_ok=True)
+        
+        # Copy all images to the images folder
+        exported_images = []
+        for img in all_images:
+            try:
+                dest_path = os.path.join(images_dir, img['filename'])
+                
+                # Copy image to destination
+                import shutil
+                shutil.copy2(img['path'], dest_path)
+                
+                exported_images.append({
+                    'filename': img['filename'],
+                    'source': img['source'],
+                    'alt_text': img['alt_text'],
+                    'path': dest_path
+                })
+                
+                logger.info(f"Exported image: {img['filename']}")
+            except Exception as e:
+                logger.error(f"Failed to export image {img['filename']}: {str(e)}")
+        
+        # Create base summary
+        summary = {
+            'document_path': output_path,
+            'images_folder': images_dir,
+            'articles_count': len(processed_articles),
+            'images_count': len(exported_images),
+            'articles': processed_articles,
+            'images': exported_images,
+            'document_size': os.path.getsize(output_path) if os.path.exists(output_path) else 0,
+            'google_drive': None
+        }
+        
+        # Upload to Google Drive if requested
+        if upload_to_drive:
+            logger.info("Attempting to upload to Google Drive...")
+            try:
+                drive_manager = GoogleDriveManager(auto_init=False)
+                
+                # Try to initialize from existing credentials first
+                init_result = drive_manager.initialize_if_ready()
+                
+                if init_result['success']:
+                    # Generate project name based on timestamp and article count
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    project_name = f"Article_Export_{len(processed_articles)}_articles_{timestamp}"
+                    
+                    # Upload document and images to Google Drive
+                    drive_result = drive_manager.upload_document_and_images(
+                        document_path=output_path,
+                        images_folder_path=images_dir,
+                        project_name=project_name
+                    )
+                    
+                    if drive_result['success']:
+                        logger.info(f"Successfully uploaded to Google Drive project: {project_name}")
+                        summary['google_drive'] = drive_result
+                        
+                        # Set folder to be publicly accessible
+                        try:
+                            drive_manager.set_file_permissions(
+                                file_id=drive_result['project_folder_id'],
+                                role='reader',
+                                type='anyone'
+                            )
+                            logger.info("Set Google Drive folder to be publicly accessible")
+                        except Exception as e:
+                            logger.warning(f"Failed to set public permissions: {str(e)}")
+                    else:
+                        logger.error(f"Failed to upload to Google Drive: {drive_result.get('error', 'Unknown error')}")
+                        summary['google_drive'] = {'success': False, 'error': drive_result.get('error', 'Upload failed')}
+                else:
+                    logger.warning("Google Drive not configured or available")
+                    summary['google_drive'] = {'success': False, 'error': 'Google Drive not configured'}
+                    
+            except Exception as e:
+                logger.error(f"Google Drive upload failed: {str(e)}")
+                summary['google_drive'] = {'success': False, 'error': str(e)}
+        
+        logger.info(f"Successfully created single Word document with {len(processed_articles)} articles and {len(exported_images)} images")
+        return summary
+        
+    except Exception as e:
+        logger.error(f"Error creating single Word document: {str(e)}")
         raise
     
     finally:

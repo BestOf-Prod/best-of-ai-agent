@@ -22,7 +22,9 @@ from utils.processor import process_article
 from utils.document_processor import extract_urls_from_docx, validate_document_format
 from utils.storage_manager import StorageManager
 from utils.batch_processor import BatchProcessor
-from utils.newspaper_converter import convert_markdown_to_newspaper, convert_multiple_markdown_to_newspaper_zip, convert_articles_to_component_zip
+from utils.newspaper_converter import convert_markdown_to_newspaper, convert_multiple_markdown_to_newspaper_zip, convert_articles_to_component_zip, create_single_word_document_with_images
+from utils.google_drive_manager import GoogleDriveManager
+from utils.credential_manager import CredentialManager
 
 # Setup logging
 logger = setup_logging(__name__, log_level=logging.INFO)
@@ -83,47 +85,80 @@ def initialize_session_state():
         'newspapers_extractor': None,
         'authentication_status': {},
         'search_results': [],
-        'selected_articles': []
+        'selected_articles': [],
+        'credential_manager': None
     }
     
     for key, default_value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = default_value
             logger.info(f"Initialized {key} session state")
+    
+    # Initialize credential manager
+    if st.session_state.credential_manager is None:
+        st.session_state.credential_manager = CredentialManager()
+        logger.info("Initialized credential manager")
+        
+        # Auto-load newspapers.com cookies if available
+        auto_load_newspapers_credentials()
+        
+        # Auto-initialize Google Drive if credentials are available
+        auto_initialize_google_drive()
 
-def create_copy_button(text_content: str, label: str, key: str, help_text: str = None):
-    """Create a copy button for clipboard functionality"""
-    if st.button(f"📋 {label}", key=key, help=help_text or f"Copy {label.lower()} to clipboard"):
-        # Use streamlit's built-in clipboard functionality through JavaScript
-        js_code = f"""
-        <script>
-        async function copyToClipboard() {{
-            try {{
-                await navigator.clipboard.writeText({json.dumps(text_content)});
-                console.log('Copied to clipboard successfully');
-            }} catch (err) {{
-                console.error('Failed to copy to clipboard:', err);
-                // Fallback method
-                const textArea = document.createElement('textarea');
-                textArea.value = {json.dumps(text_content)};
-                document.body.appendChild(textArea);
-                textArea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textArea);
-            }}
-        }}
-        copyToClipboard();
-        </script>
-        """
-        st.components.v1.html(js_code, height=0)
-        st.success(f"✅ {label} copied to clipboard!")
-        return True
-    return False
+def auto_load_newspapers_credentials():
+    """Auto-load newspapers.com credentials if available"""
+    try:
+        cred_manager = st.session_state.credential_manager
+        cookies_result = cred_manager.load_newspapers_cookies()
+        
+        if cookies_result['success']:
+            logger.info(f"Auto-loaded newspapers.com cookies: {cookies_result['metadata']['cookie_count']} cookies")
+            
+            # Initialize extractor with loaded cookies
+            extractor = NewspapersComExtractor(auto_auth=True)
+            extractor.cookie_manager.cookies = cookies_result['cookies']
+            
+            # Try to initialize
+            success = extractor.initialize()
+            
+            # Store in session state
+            st.session_state.newspapers_extractor = extractor
+            st.session_state.authentication_status = extractor.get_authentication_status()
+            
+            if success:
+                logger.info("Auto-initialized newspapers.com authentication from saved cookies")
+            else:
+                logger.warning("Newspapers.com auto-authentication partially successful")
+        else:
+            logger.info("No saved newspapers.com cookies found for auto-load")
+            
+    except Exception as e:
+        logger.error(f"Failed to auto-load newspapers.com credentials: {str(e)}")
+
+def auto_initialize_google_drive():
+    """Auto-initialize Google Drive if credentials are available"""
+    try:
+        cred_manager = st.session_state.credential_manager
+        google_status = cred_manager.get_google_credentials_status()
+        
+        if google_status['ready_for_auth']:
+            logger.info("Auto-initializing Google Drive from saved credentials")
+            # This will be handled by the existing GoogleDriveManager logic
+        else:
+            logger.info("No Google Drive credentials available for auto-initialization")
+            
+    except Exception as e:
+        logger.error(f"Failed to auto-initialize Google Drive: {str(e)}")
+
 
 def streamlined_sidebar_config():
     """Streamlined sidebar configuration"""
     logger.info("Setting up sidebar")
     st.sidebar.header("⚙️ Settings")
+    
+    # Get credential manager status for UI
+    cred_manager = st.session_state.credential_manager
+    newspapers_status = cred_manager.get_newspapers_status()
     
     # Authentication section (collapsed by default)
     with st.sidebar.expander("🔐 Newspapers.com Login", expanded=False):
@@ -139,6 +174,83 @@ def streamlined_sidebar_config():
         with col2:
             if st.button("Test", key="test_auth"):
                 test_newspapers_authentication()
+        
+        # Show credential management options
+        if newspapers_status['has_cookies']:
+            st.divider()
+            st.caption("🔧 Credential Management")
+            if st.button("Clear Saved Cookies", key="clear_cookies", help="Remove saved cookies from persistent storage"):
+                clear_result = cred_manager.clear_newspapers_cookies()
+                if clear_result['success']:
+                    st.success("✅ Cookies cleared!")
+                    st.session_state.newspapers_extractor = None
+                    st.session_state.authentication_status = {}
+                    st.rerun()
+                else:
+                    st.error(f"❌ {clear_result['error']}")
+    
+    # Google Drive section
+    with st.sidebar.expander("🌐 Google Drive Integration", expanded=False):
+        display_google_drive_status()
+        
+        uploaded_credentials = st.file_uploader(
+            "Google Drive Credentials", 
+            type=['json'], 
+            key="gdrive_creds",
+            help="Upload your Google Drive API credentials.json file from Google Cloud Console"
+        )
+        
+        if uploaded_credentials is not None:
+            if st.button("Configure Google Drive", key="setup_gdrive"):
+                setup_google_drive_credentials(uploaded_credentials)
+        
+        # Show credential management for Google Drive
+        google_status = cred_manager.get_google_credentials_status()
+        if google_status['has_credentials'] or google_status['has_token']:
+            st.divider()
+            st.caption("🔧 Credential Management")
+            if st.button("Clear Google Credentials", key="clear_google", help="Remove saved Google Drive credentials and tokens"):
+                clear_result = cred_manager.clear_google_credentials()
+                if clear_result['success']:
+                    st.success(f"✅ {clear_result['message']}")
+                    st.rerun()
+                else:
+                    st.error(f"❌ {clear_result['error']}")
+        
+        # Show different authentication options based on environment
+        if google_status['has_credentials']:
+            is_replit = bool(os.environ.get('REPL_ID'))
+            
+            # Show redirect URI setup info
+            if st.button("Show Setup Instructions", key="show_setup"):
+                show_redirect_uri_setup()
+            
+            if is_replit:
+                st.write("**Replit Authentication:**")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if st.button("Get Auth URL", key="get_auth_url"):
+                        get_google_drive_auth_url()
+                
+                with col2:
+                    if st.button("Test Connection", key="test_gdrive"):
+                        test_google_drive_connection()
+                
+                # Manual auth code input for Replit
+                auth_code = st.text_input(
+                    "Authorization Code", 
+                    key="auth_code",
+                    help="Paste the authorization code from the OAuth flow",
+                    type="password"
+                )
+                
+                if auth_code and st.button("Authenticate", key="manual_auth"):
+                    authenticate_with_manual_code(auth_code)
+            else:
+                # Local development
+                if st.button("Test Google Drive", key="test_gdrive"):
+                    test_google_drive_connection()
     
     # Project settings
     project_name = st.sidebar.text_input(
@@ -165,54 +277,30 @@ def streamlined_sidebar_config():
             ["Any", "2020-2025", "2010-2019", "2000-2009", "1990-1999", "1980-1989"]
         )
     
-    # Clipboard functionality toggle
-    with st.sidebar.expander("📋 Clipboard Features", expanded=False):
-        enable_clipboard = st.checkbox(
-            "Enable Clipboard Copy",
-            value=True,
-            help="Add copy buttons to article components for easy clipboard access"
-        )
-        
-        if enable_clipboard:
-            st.info("Copy buttons will appear in article previews")
-        else:
-            st.info("Clipboard features disabled")
     
-    # Extraction method settings
-    with st.sidebar.expander("🔧 Extraction Method", expanded=False):
-        use_download_method = st.checkbox(
-            "Use Download Method (Experimental)",
-            value=False,
-            help="Use 3-click download approach instead of viewport screenshots. Faster but requires manual selector configuration."
-        )
-        
-        if use_download_method:
-            st.info("⚠️ Download method requires manual HTML selector configuration in the code.")
-            st.code("""
-# Configure selectors in newspapers_extractor.py
-CLICK_SELECTORS = [
-    {"selector": "your-download-button", "description": "..."},
-    {"selector": "your-format-option", "description": "..."},
-    {"selector": "your-confirm-button", "description": "..."}
-]
-            """)
-        
-        # Using optimized download_clicks method only
+    # Display auth status compactly with persistent credential info
+    auth_status = st.session_state.get('authentication_status', {})
+    cred_manager = st.session_state.credential_manager
+    newspapers_status = cred_manager.get_newspapers_status()
     
-    # Display auth status compactly
-    if st.session_state.get('authentication_status', {}).get('authenticated'):
+    if auth_status.get('authenticated'):
         st.sidebar.success("✅ Logged in")
+        if newspapers_status['has_cookies']:
+            st.sidebar.caption(f"🍪 {newspapers_status['cookie_count']} cookies saved")
+    elif newspapers_status['has_cookies']:
+        st.sidebar.info("ℹ️ Cookies saved - Auto-login attempted")
+        st.sidebar.caption(f"🍪 {newspapers_status['cookie_count']} cookies from {newspapers_status['saved_at'][:10] if newspapers_status.get('saved_at') else 'unknown date'}")
     else:
         st.sidebar.info("ℹ️ Login for newspapers.com")
+        st.sidebar.caption("📋 No saved cookies")
     
     return {
         'bucket_name': bucket_name,
         'project_name': project_name,
         'max_workers': max_workers,
         'delay_between_requests': delay_between_requests,
-        'date_range': date_range,
+        'date_range': date_range
         # extraction_method parameter removed - using optimized download_clicks only
-        'enable_clipboard': enable_clipboard
     }
 
 def initialize_newspapers_authentication(email: str, password: str, uploaded_cookies=None):
@@ -278,6 +366,17 @@ def initialize_newspapers_authentication_with_cookies(uploaded_cookies):
             # Load cookies from uploaded file
             try:
                 cookies_data = json.loads(uploaded_cookies.getvalue().decode())
+                
+                # Save cookies using credential manager
+                cred_manager = st.session_state.credential_manager
+                save_result = cred_manager.save_newspapers_cookies(cookies_data)
+                
+                if save_result['success']:
+                    st.success(f"✅ Saved {save_result['cookie_count']} cookies for future sessions!")
+                    logger.info(f"Saved cookies to persistent storage: {save_result['cookie_count']} cookies")
+                else:
+                    st.warning(f"⚠️ Failed to save cookies: {save_result['error']}")
+                
                 # Convert list of cookie dictionaries to a single dictionary of name-value pairs
                 if isinstance(cookies_data, list):
                     cookies_dict = {cookie['name']: cookie['value'] for cookie in cookies_data}
@@ -720,95 +819,67 @@ def display_batch_results(config):
                     
                     with preview_col1:
                         st.write("#### Markdown Preview")
-                        markdown_path = selected_article.get('markdown_path')
                         markdown_content = None
                         
+                        # Try to get markdown content from different sources
+                        # First try the markdown_path if it exists
+                        markdown_path = selected_article.get('markdown_path')
                         if markdown_path:
                             logger.debug(f"Attempting to read markdown file: {markdown_path}")
                             try:
                                 if os.path.exists(markdown_path):
                                     with open(markdown_path, 'r', encoding='utf-8') as f:
                                         markdown_content = f.read()
-                                    logger.debug(f"Successfully read markdown content, length: {len(markdown_content)}")
-                                    st.markdown(markdown_content)
+                                    logger.debug(f"Successfully read markdown content from file, length: {len(markdown_content)}")
                                 else:
-                                    logger.error(f"Markdown file not found: {markdown_path}")
-                                    st.error(f"Markdown file not found at: {markdown_path}")
+                                    logger.warning(f"Markdown file not found: {markdown_path}")
                             except Exception as e:
                                 logger.error(f"Error reading markdown file: {str(e)}")
-                                st.error(f"Error reading markdown file: {str(e)}")
-                        else:
-                            logger.warning("No markdown path available for selected article")
-                            st.warning("No markdown file available for preview")
                         
-                        # Add clipboard functionality if enabled
-                        if config and config.get('enable_clipboard', True) and markdown_content:
-                            st.divider()
-                            st.write("#### 📋 Copy Options")
-                            
-                            # Extract components from the article
-                            headline = selected_article.get('headline', 'Unknown')
-                            source = selected_article.get('source', 'Unknown')
-                            date = selected_article.get('date', 'Unknown')
-                            content = selected_article.get('content', '') or selected_article.get('full_content', '')
-                            url = selected_article.get('url', '')
-                            
-                            # Create copy buttons in columns
-                            copy_col1, copy_col2, copy_col3 = st.columns(3)
-                            
-                            with copy_col1:
-                                create_copy_button(
-                                    headline, 
-                                    "Headline", 
-                                    f"copy_headline_{selected_idx}",
-                                    "Copy article headline"
-                                )
-                            
-                            with copy_col2:
-                                create_copy_button(
-                                    content, 
-                                    "Content", 
-                                    f"copy_content_{selected_idx}",
-                                    "Copy article content/body text"
-                                )
-                            
-                            with copy_col3:
-                                create_copy_button(
-                                    markdown_content, 
-                                    "Full Markdown", 
-                                    f"copy_markdown_{selected_idx}",
-                                    "Copy complete markdown with formatting"
-                                )
-                            
-                            # Additional copy options in a second row
-                            copy_col4, copy_col5, copy_col6 = st.columns(3)
-                            
-                            with copy_col4:
-                                metadata_text = f"Source: {source}\nDate: {date}\nURL: {url}"
-                                create_copy_button(
-                                    metadata_text, 
-                                    "Metadata", 
-                                    f"copy_metadata_{selected_idx}",
-                                    "Copy article metadata (source, date, URL)"
-                                )
-                            
-                            with copy_col5:
-                                citation_text = f"{headline}. {source}, {date}. {url}"
-                                create_copy_button(
-                                    citation_text, 
-                                    "Citation", 
-                                    f"copy_citation_{selected_idx}",
-                                    "Copy formatted citation"
-                                )
-                            
-                            with copy_col6:
-                                structured_text = f"# {headline}\n\n**Source:** {source}\n**Date:** {date}\n**URL:** {url}\n\n{content}"
-                                create_copy_button(
-                                    structured_text, 
-                                    "Structured", 
-                                    f"copy_structured_{selected_idx}",
-                                    "Copy article in structured format"
-                                )
+                        # If no markdown from file, try to construct from article content
+                        if not markdown_content:
+                            logger.debug("No markdown file found, constructing from article content")
+                            try:
+                                # Construct markdown from article components
+                                markdown_parts = []
+                                
+                                # Add headline
+                                headline = selected_article.get('headline', '')
+                                if headline:
+                                    markdown_parts.append(f"# {headline}\n")
+                                
+                                # Add source and date
+                                source = selected_article.get('source', '')
+                                date = selected_article.get('date', '')
+                                if source or date:
+                                    metadata_line = f"**Source:** {source}"
+                                    if date:
+                                        metadata_line += f" | **Date:** {date}"
+                                    markdown_parts.append(f"{metadata_line}\n")
+                                
+                                # Add content
+                                content = selected_article.get('content', '')
+                                if content:
+                                    markdown_parts.append(f"\n{content}")
+                                
+                                # Add image if available
+                                image_url = selected_article.get('image_url', '')
+                                if image_url:
+                                    markdown_parts.append(f"\n![Article Image]({image_url})")
+                                
+                                markdown_content = '\n'.join(markdown_parts)
+                                logger.debug(f"Constructed markdown content, length: {len(markdown_content)}")
+                                
+                            except Exception as e:
+                                logger.error(f"Error constructing markdown from article: {str(e)}")
+                                markdown_content = f"Error constructing markdown preview: {str(e)}"
+                        
+                        # Display the markdown content
+                        if markdown_content:
+                            st.markdown(markdown_content)
+                        else:
+                            st.warning("No content available for preview")
+                        
                     
                     with preview_col2:
                         st.write("#### Image Preview")
@@ -1022,39 +1093,23 @@ def handle_processed_articles_conversion():
             st.write(f"**Combined content length:** {total_content_length} characters")
             st.write(f"**Estimated layout:** {determine_layout_display(total_content_length)}")
             
-            # Show conversion options
-            st.write("### 🔄 Choose Conversion Type")
+            # Single Word Document Option (Featured)
+            st.write("### 📄 Download Single Word Document")
             
-            col_info1, col_info2 = st.columns(2)
+            st.info("""
+            **📄 Enhanced Single Word Document**
+            - All articles combined in one professional document
+            - Articles in exact original order  
+            - Images embedded and exported to separate folder
+            - Complete newspaper-style formatting with dropheads
+            - Enhanced image naming with article index and source
+            - **Automatically uploaded to Google Drive for easy sharing**
+            - Ready for immediate use
+            """)
             
-            with col_info1:
-                st.info("""
-                **📰 Standard Newspaper Format**
-                - Single Word document per article
-                - Complete newspaper-style layout
-                - Images embedded in document
-                - Ready for immediate use
-                """)
-            
-            with col_info2:
-                st.info("""
-                **📦 Component Documents**
-                - Separate documents for each element
-                - Organized by word count, font & title
-                - Individual heading, body, blockquote files
-                - Professional font selection by source
-                """)
-            
-            # Create two columns for conversion buttons
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if st.button("🔄 Convert Selected Articles", type="primary"):
-                    convert_processed_articles(selected_articles, successful_results)
-            
-            with col2:
-                if st.button("📦 Convert to Components", type="secondary", help="Create separate Word documents for each article component (heading, body, blockquote) organized by word count, font, and title"):
-                    convert_processed_articles_to_components(selected_articles, successful_results)
+            # Single featured button
+            if st.button("📄 Download Single Word Document", type="primary", use_container_width=True, help="Create one Word document with all articles and export images to a separate folder"):
+                convert_to_single_word_document(selected_articles, successful_results)
 
 def determine_layout_display(content_length):
     """Return display string for layout type"""
@@ -1082,7 +1137,13 @@ def convert_uploaded_markdown_files(uploaded_files):
                 return
             
             # Convert to zip file with individual documents
+            logger.info(f"Converting {len(markdown_contents)} markdown files to newspaper format")
             result = convert_multiple_markdown_to_newspaper_zip(markdown_contents)
+            
+            logger.info(f"Conversion result: {result is not None}")
+            if result:
+                logger.info(f"Result keys: {list(result.keys())}")
+                logger.info(f"Zip data size: {len(result.get('zip_data', b''))} bytes")
             
             if result and result.get('zip_data'):
                 st.success(f"✅ Successfully converted {result['document_count']} files to newspaper format!")
@@ -1099,6 +1160,8 @@ def convert_uploaded_markdown_files(uploaded_files):
                     st.write(f"📦 **{zip_filename}** ({result['total_size']:,} bytes)")
                     st.write(f"Contains {result['document_count']} individual Word documents")
                 with col2:
+                    # Add debug info
+                    logger.info(f"Creating download button with {len(result['zip_data'])} bytes")
                     st.download_button(
                         label="📥 Download Zip",
                         data=result['zip_data'],
@@ -1127,7 +1190,15 @@ def convert_uploaded_markdown_files(uploaded_files):
                     st.write("• Professional newspaper styling")
                     st.write("• Scraped images saved in clippings/ directory")
             else:
-                st.error("❌ Failed to create newspaper zip file")
+                if not result:
+                    st.error("❌ Failed to create newspaper zip file - conversion returned None")
+                    logger.error("Conversion function returned None")
+                elif not result.get('zip_data'):
+                    st.error("❌ Failed to create newspaper zip file - no zip data in result")
+                    logger.error(f"Result keys: {list(result.keys()) if result else 'None'}")
+                else:
+                    st.error("❌ Failed to create newspaper zip file - unknown error")
+                    logger.error(f"Unknown error with result: {result}")
                 
         except Exception as e:
             logger.error(f"Markdown conversion error: {str(e)}")
@@ -1166,7 +1237,13 @@ def convert_processed_articles(selected_indices, results):
             # Convert to zip file with individual documents
             # Pass the selected articles so images can be extracted from image_data
             selected_articles_data = [results[idx] for idx in selected_indices]
+            logger.info(f"Converting {len(markdown_contents)} processed articles to newspaper format")
             result = convert_multiple_markdown_to_newspaper_zip(markdown_contents, processed_articles=selected_articles_data)
+            
+            logger.info(f"Processed articles conversion result: {result is not None}")
+            if result:
+                logger.info(f"Result keys: {list(result.keys())}")
+                logger.info(f"Zip data size: {len(result.get('zip_data', b''))} bytes")
             
             if result and result.get('zip_data'):
                 st.success(f"✅ Successfully converted {len(selected_indices)} articles to individual newspaper documents!")
@@ -1213,7 +1290,15 @@ def convert_processed_articles(selected_indices, results):
                     st.write("• Source and date information preserved")
                     st.write("• Scraped images saved in clippings/ directory")
             else:
-                st.error("❌ Failed to create newspaper zip file")
+                if not result:
+                    st.error("❌ Failed to create newspaper zip file - conversion returned None")
+                    logger.error("Processed articles conversion function returned None")
+                elif not result.get('zip_data'):
+                    st.error("❌ Failed to create newspaper zip file - no zip data in result")
+                    logger.error(f"Processed articles result keys: {list(result.keys()) if result else 'None'}")
+                else:
+                    st.error("❌ Failed to create newspaper zip file - unknown error")
+                    logger.error(f"Processed articles unknown error with result: {result}")
                 
         except Exception as e:
             logger.error(f"Article conversion error: {str(e)}")
@@ -1256,7 +1341,13 @@ def convert_processed_articles_to_components(selected_indices, results):
                 return
             
             # Convert to component zip file
+            logger.info(f"Converting {len(articles_data)} articles to component format")
             result = convert_articles_to_component_zip(articles_data)
+            
+            logger.info(f"Component conversion result: {result is not None}")
+            if result:
+                logger.info(f"Result keys: {list(result.keys())}")
+                logger.info(f"Zip data size: {len(result.get('zip_data', b''))} bytes")
             
             if result and result.get('zip_data'):
                 st.success(f"✅ Successfully created component documents from {len(selected_indices)} articles!")
@@ -1322,11 +1413,510 @@ def convert_processed_articles_to_components(selected_indices, results):
                     st.write("• **Image handling**: Downloads and organizes images by article")
                     st.write("• **Metadata tracking**: Includes article info file with processing details")
             else:
-                st.error("❌ Failed to create component zip file")
+                if not result:
+                    st.error("❌ Failed to create component zip file - conversion returned None")
+                    logger.error("Component conversion function returned None")
+                elif not result.get('zip_data'):
+                    st.error("❌ Failed to create component zip file - no zip data in result")
+                    logger.error(f"Component conversion result keys: {list(result.keys()) if result else 'None'}")
+                else:
+                    st.error("❌ Failed to create component zip file - unknown error")
+                    logger.error(f"Component conversion unknown error with result: {result}")
                 
         except Exception as e:
             logger.error(f"Component conversion error: {str(e)}")
             st.error(f"Component conversion error: {str(e)}")
+
+def convert_to_single_word_document(selected_indices, results):
+    """Convert processed articles to a single Word document with separate images folder"""
+    
+    # Add progress feedback
+    progress_placeholder = st.empty()
+    status_text = st.empty()
+    
+    with st.spinner("Creating enhanced single Word document with all articles and images..."):
+        try:
+            # Update progress
+            status_text.text("📝 Preparing articles for document creation...")
+            progress_placeholder.progress(0.1)
+            
+            # Transform processed articles into the format expected by the converter
+            articles_data = []
+            
+            for idx in selected_indices:
+                article = results[idx]
+                headline = article.get('headline', 'Untitled Article')
+                source = article.get('source', 'Unknown Source')
+                date = article.get('date', 'Unknown Date')
+                content = article.get('full_content') or article.get('content', 'No content available')
+                url = article.get('url', '')
+                
+                # Create article data for the converter
+                article_data = {
+                    'headline': headline,
+                    'source': source,
+                    'date': date,
+                    'content': content,
+                    'full_content': content,
+                    'url': url,
+                    'image_url': article.get('image_url'),
+                    'image_data': article.get('image_data')
+                }
+                
+                articles_data.append(article_data)
+                logger.info(f"Prepared article for single document: {headline}")
+            
+            if not articles_data:
+                st.error("❌ No valid articles to convert")
+                return
+            
+            # Update progress
+            status_text.text("🔄 Preserving original article order...")
+            progress_placeholder.progress(0.3)
+            
+            # Get original URL order from session state for order preservation
+            original_url_order = st.session_state.get('extracted_urls', [])
+            
+            # Update progress
+            status_text.text("📰 Creating enhanced Word document with professional formatting...")
+            progress_placeholder.progress(0.5)
+            
+            # Create single Word document with images and order preservation
+            logger.info(f"Converting {len(articles_data)} articles to single Word document with original URL order")
+            result = create_single_word_document_with_images(articles_data, original_url_order=original_url_order)
+            
+            # Update progress
+            status_text.text("✅ Document creation completed!")
+            progress_placeholder.progress(1.0)
+            
+            if result:
+                st.balloons()
+                st.success(f"✅ Document creation completed!")
+                
+                # Generate download filename
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                doc_filename = f"enhanced_articles_{timestamp}.docx"
+                
+                # Show success message with green background
+                with st.container():
+                    col1, col2 = st.columns([1, 1])
+                    with col1:
+                        st.success(f"✅ Successfully created enhanced single Word document with {result['articles_count']} articles in original order!")
+                    with col2:
+                        st.info(f"Contains {result['articles_count']} articles with {result['images_count']} images")
+                
+                # Featured download button
+                with st.container():
+                    # Read the document for download
+                    with open(result['document_path'], 'rb') as f:
+                        doc_data = f.read()
+                    
+                    st.write("### 📄 Download Single Word Document")
+                    st.write(f"📄 **{doc_filename}** ({result['document_size']:,} bytes)")
+                    
+                    st.download_button(
+                        label="📥 Download Single Word Document",
+                        data=doc_data,
+                        file_name=doc_filename,
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        type="primary",
+                        use_container_width=True
+                    )
+                
+                # Show Google Drive links if available
+                if result.get('google_drive') and result['google_drive'].get('success'):
+                    drive_info = result['google_drive']
+                    st.success("🌐 Successfully uploaded to Google Drive!")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown(f"**📁 [Open Google Drive Folder]({drive_info['project_folder_url']})**")
+                        st.caption(f"Project: {drive_info['project_name']}")
+                    
+                    with col2:
+                        st.markdown(f"**📄 [Open Document]({drive_info['document']['file_url']})**")
+                        st.markdown(f"**🖼️ [Download Images]({drive_info['images_zip']['file_url']})**")
+                
+                elif result.get('google_drive') and not result['google_drive'].get('success'):
+                    st.warning(f"⚠️ Google Drive upload failed: {result['google_drive'].get('error', 'Unknown error')}")
+                    st.info("💡 Document and images are still available for local download above.")
+                
+                # Show document details
+                with st.expander("📄 Document Details"):
+                    st.write(f"**Document:** {doc_filename}")
+                    st.write(f"**Size:** {result['document_size']:,} bytes")
+                    st.write(f"**Articles:** {result['articles_count']}")
+                    st.write(f"**Images:** {result['images_count']}")
+                    st.write(f"**Images folder:** {os.path.basename(result['images_folder'])}")
+                    
+                    # Google Drive details if available
+                    if result.get('google_drive') and result['google_drive'].get('success'):
+                        st.write("**Google Drive:**")
+                        drive_info = result['google_drive']
+                        st.write(f"  • Project folder: {drive_info['project_name']}")
+                        st.write(f"  • Document: {drive_info['document']['file_name']} ({int(drive_info['document']['file_size']):,} bytes)")
+                        st.write(f"  • Images zip: {drive_info['images_zip']['file_name']} ({int(drive_info['images_zip']['file_size']):,} bytes)")
+                    
+                    st.write("**Articles included:**")
+                    for i, article in enumerate(result['articles']):
+                        st.write(f"  {i+1}. **{article['headline']}** - {article['source']} ({article['images']} images)")
+                    
+                    if result['images']:
+                        st.write("**Images exported:**")
+                        for img in result['images']:
+                            st.write(f"  • {img['filename']} ({img['source']})")
+                    
+                    st.write("**Enhanced Features:**")
+                    st.write("• Articles in exact original document order")
+                    st.write("• Professional newspaper-style formatting with dropheads")
+                    st.write("• Enhanced image naming with article index and source")
+                    st.write("• All images embedded in the document")
+                    st.write("• Separate images folder with descriptive filenames")
+                    st.write("• Page breaks between articles for clean separation")
+                    st.write("• Complete source and date information")
+                    st.write("• URL references for verification and attribution")
+                    if result.get('google_drive') and result['google_drive'].get('success'):
+                        st.write("• **Automatically uploaded to Google Drive with public access**")
+                
+                # Show images folder info
+                if result['images_count'] > 0:
+                    st.write("### 📁 Images Folder")
+                    st.info(f"All {result['images_count']} images have been exported to: **{os.path.basename(result['images_folder'])}**")
+                    st.write("This folder contains all original images from the articles, organized with descriptive filenames.")
+                    
+                    # Create zip file with images for download
+                    images_zip_path = result['images_folder'] + '.zip'
+                    try:
+                        import zipfile
+                        with zipfile.ZipFile(images_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                            for img in result['images']:
+                                zipf.write(img['path'], img['filename'])
+                        
+                        with open(images_zip_path, 'rb') as f:
+                            zip_data = f.read()
+                        
+                        st.download_button(
+                            label="📁 Download Images Folder",
+                            data=zip_data,
+                            file_name=f"article_images_{timestamp}.zip",
+                            mime="application/zip"
+                        )
+                        
+                        # Clean up zip file
+                        os.remove(images_zip_path)
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to create images zip: {str(e)}")
+                        st.warning("Images folder created but zip download failed")
+                
+            else:
+                st.error("❌ Failed to create single Word document")
+                
+        except Exception as e:
+            logger.error(f"Single document conversion error: {str(e)}")
+            st.error(f"Single document conversion error: {str(e)}")
+
+def display_google_drive_status():
+    """Display current Google Drive configuration status (non-interactive)"""
+    try:
+        # Get status from credential manager
+        cred_manager = st.session_state.credential_manager
+        google_status = cred_manager.get_google_credentials_status()
+        is_replit = bool(os.environ.get('REPL_ID'))
+        
+        # Show environment
+        env_emoji = "🌐" if is_replit else "💻"
+        env_name = "Replit" if is_replit else "Local"
+        st.caption(f"{env_emoji} Running in {env_name} environment")
+        
+        # Show persistent credential status
+        if google_status['has_credentials']:
+            if google_status['authenticated']:
+                st.success("✅ Google Drive configured and ready")
+                st.caption(f"🔐 {google_status['credentials_type']} credentials + token saved")
+            elif google_status['has_token']:
+                # Try to initialize to check if token is still valid
+                try:
+                    drive_manager = GoogleDriveManager(auto_init=False)
+                    init_result = drive_manager.initialize_if_ready()
+                    if init_result['success']:
+                        st.success("✅ Google Drive configured and ready")
+                        st.caption("🔐 Using saved authentication")
+                    else:
+                        st.warning("⚠️ Authentication expired - Re-authenticate needed")
+                except Exception:
+                    st.warning("⚠️ Authentication expired - Re-authenticate needed")
+            else:
+                st.info("ℹ️ Credentials saved - Authentication needed")
+                st.caption(f"📁 {google_status['credentials_type']} credentials ready")
+                if is_replit:
+                    st.caption("⚡ Use manual flow below to authenticate")
+                else:
+                    st.caption("⚡ Click 'Test Google Drive' to authenticate")
+        else:
+            st.info("ℹ️ Upload credentials.json to enable Google Drive")
+            st.caption("📋 No credentials found in persistent storage")
+                
+    except Exception as e:
+        logger.error(f"Google Drive status check error: {str(e)}")
+        st.error(f"❌ Status check error: {str(e)}")
+
+def setup_google_drive_credentials(uploaded_file):
+    """Setup Google Drive credentials from uploaded file"""
+    try:
+        # Get credentials content
+        credentials_content = uploaded_file.getvalue().decode('utf-8')
+        
+        # Use credential manager to save credentials
+        cred_manager = st.session_state.credential_manager
+        save_result = cred_manager.save_google_credentials(credentials_content)
+        
+        if save_result['success']:
+            st.success("✅ Google Drive credentials saved for future sessions!")
+            st.info("💡 Click 'Test Google Drive' to authenticate for the first time.")
+            logger.info(f"Google Drive credentials saved successfully: {save_result['type']} type")
+        else:
+            st.error(f"❌ Failed to save credentials: {save_result['error']}")
+        
+    except Exception as e:
+        logger.error(f"Failed to setup Google Drive credentials: {str(e)}")
+        st.error(f"❌ Failed to save credentials: {str(e)}")
+
+def test_google_drive_connection():
+    """Test Google Drive connection and authentication with detailed diagnostics"""
+    cred_manager = st.session_state.credential_manager
+    google_status = cred_manager.get_google_credentials_status()
+    
+    if not google_status['has_credentials']:
+        st.warning("⚠️ Please upload and configure Google Drive credentials first.")
+        return
+    
+    with st.spinner("Testing Google Drive connection..."):
+        try:
+            # First check if dependencies are available
+            try:
+                from googleapiclient.discovery import build
+                from google.oauth2.credentials import Credentials
+                from google_auth_oauthlib.flow import InstalledAppFlow
+                st.success("✅ Google Drive API libraries loaded")
+            except ImportError as e:
+                st.error(f"❌ Missing Google Drive dependencies: {str(e)}")
+                st.info("💡 Run: `pip install google-api-python-client google-auth google-auth-oauthlib`")
+                return
+            
+            # Validate credentials file format
+            try:
+                with open(google_status['credentials_path'], 'r') as f:
+                    import json
+                    cred_data = json.load(f)
+                    if 'installed' in cred_data or 'web' in cred_data:
+                        st.success("✅ Credentials file format valid")
+                    else:
+                        st.error("❌ Invalid credentials format - should contain 'installed' or 'web' key")
+                        return
+            except Exception as e:
+                st.error(f"❌ Credentials file error: {str(e)}")
+                return
+            
+            # Test Google Drive manager initialization (with manual auth)
+            drive_manager = GoogleDriveManager(auto_init=False)
+            
+            # Try to initialize service manually
+            try:
+                drive_manager._initialize_service()
+                st.success("✅ Google Drive service initialized")
+            except Exception as init_error:
+                st.error(f"❌ Google Drive initialization failed: {str(init_error)}")
+                
+                # Provide specific guidance for redirect URI errors
+                if "redirect_uri_mismatch" in str(init_error).lower():
+                    st.error("🔧 **Redirect URI Mismatch Error**")
+                    
+                    # Get specific redirect URI info
+                    try:
+                        uri_info = drive_manager.get_redirect_uri_info()
+                        
+                        st.write("**Add these redirect URIs to your Google Cloud Console:**")
+                        
+                        # Show the preferred URI prominently
+                        if uri_info['environment'] == 'local' and uri_info.get('preferred_port'):
+                            st.success(f"**Primary URI (recommended):** `{uri_info['primary_uri']}`")
+                        
+                        # Show all required URIs
+                        uri_list = '\n'.join(uri_info['redirect_uris'])
+                        st.code(uri_list)
+                        
+                        st.write("**Steps:**")
+                        st.write("1. Go to [Google Cloud Console](https://console.cloud.google.com/)")
+                        st.write("2. Navigate to: **APIs & Services** → **Credentials**")
+                        st.write("3. Click on your **OAuth 2.0 Client ID**")
+                        st.write("4. Add the URIs above to **Authorized redirect URIs**")
+                        st.write("5. Click **Save**")
+                        
+                    except Exception as uri_error:
+                        st.code("http://localhost:8080/\nhttp://localhost:8000/\nhttp://localhost:3000/")
+                        logger.warning(f"Failed to get redirect URI info: {uri_error}")
+                    
+                    st.write("Go to: Google Cloud Console → APIs & Services → Credentials → Your OAuth Client → Authorized redirect URIs")
+                
+                return
+            
+            if drive_manager.is_available():
+                st.success("✅ Google Drive service initialized")
+                
+                # Try to create a test folder to verify permissions
+                test_result = drive_manager.create_folder("Test_Connection_" + datetime.now().strftime("%Y%m%d_%H%M%S"))
+                
+                if test_result['success']:
+                    st.success("✅ Google Drive connection successful!")
+                    st.info(f"Created test folder: {test_result['folder_name']}")
+                    
+                    # Clean up test folder
+                    try:
+                        drive_manager.service.files().delete(fileId=test_result['folder_id']).execute()
+                        logger.info("Test folder cleaned up successfully")
+                        st.success("✅ Test cleanup completed")
+                    except Exception as e:
+                        logger.warning(f"Failed to clean up test folder: {str(e)}")
+                        st.warning(f"⚠️ Test folder cleanup failed: {str(e)}")
+                else:
+                    st.error(f"❌ Failed to create test folder: {test_result.get('error', 'Unknown error')}")
+                    
+                    # Provide specific guidance
+                    if 'auth' in str(test_result.get('error', '')).lower():
+                        st.info("💡 Authentication issue detected. Try the authentication flow below.")
+                    
+            else:
+                st.error("❌ Google Drive service not available")
+                
+                # Check for token file
+                if os.path.exists('token.json'):
+                    st.info("🔐 Token file found - attempting re-authentication")
+                else:
+                    st.info("🔐 No token file - authentication required")
+                    
+                # Environment-specific guidance
+                is_replit = bool(os.environ.get('REPL_ID'))
+                if is_replit:
+                    st.info("💡 In Replit: Use 'Get Auth URL' → Manual authentication flow")
+                else:
+                    st.info("💡 In Local: Authentication should open browser automatically")
+                
+        except Exception as e:
+            logger.error(f"Google Drive test failed: {str(e)}")
+            st.error(f"❌ Connection test failed: {str(e)}")
+            
+            # Detailed error analysis
+            error_str = str(e).lower()
+            if "credentials" in error_str or "auth" in error_str:
+                st.info("🔍 **Authentication Issue Detected**")
+                st.write("This looks like an authentication problem. Try the authentication steps below.")
+            elif "permission" in error_str:
+                st.info("🔍 **Permission Issue Detected**") 
+                st.write("Check that your Google Cloud project has the Google Drive API enabled.")
+            elif "quota" in error_str or "rate" in error_str:
+                st.info("🔍 **Quota/Rate Limit Issue**")
+                st.write("You may have hit API rate limits. Wait a moment and try again.")
+            else:
+                st.info("🔍 **General Error**")
+                st.write("Check the error message above for specific details.")
+
+def get_google_drive_auth_url():
+    """Get Google Drive authorization URL for manual authentication (Replit)"""
+    try:
+        drive_manager = GoogleDriveManager()
+        auth_result = drive_manager.get_auth_url()
+        
+        if auth_result['success']:
+            st.success("🔗 Authorization URL Generated!")
+            
+            # Display the authorization URL
+            auth_url = auth_result['auth_url']
+            st.markdown(f"**[Click here to authorize Google Drive access]({auth_url})**")
+            
+            # Copy-paste instructions
+            st.info("""
+            **Instructions:**
+            1. Click the link above to open Google authorization
+            2. Sign in to your Google account
+            3. Grant permissions to the application
+            4. Copy the authorization code from the redirect URL
+            5. Paste it in the 'Authorization Code' field below
+            6. Click 'Authenticate'
+            """)
+            
+            if auth_result['environment'] == 'replit':
+                st.write(f"**Redirect URI configured for Replit:** `{auth_result['redirect_uri']}`")
+                st.caption("Make sure this URI is added to your Google Cloud Console OAuth configuration")
+        else:
+            st.error(f"❌ Failed to get authorization URL: {auth_result['error']}")
+            
+    except Exception as e:
+        logger.error(f"Failed to get auth URL: {str(e)}")
+        st.error(f"❌ Error: {str(e)}")
+
+def authenticate_with_manual_code(auth_code: str):
+    """Authenticate Google Drive using manual authorization code"""
+    try:
+        with st.spinner("Authenticating with Google Drive..."):
+            drive_manager = GoogleDriveManager()
+            result = drive_manager.authenticate_with_code(auth_code)
+            
+            if result['success']:
+                st.success("✅ Google Drive authenticated successfully!")
+                st.balloons()
+                logger.info("Manual Google Drive authentication successful")
+                
+                # Clear the auth code from session state
+                if 'auth_code' in st.session_state:
+                    del st.session_state['auth_code']
+                
+                # Refresh the page to update status
+                st.rerun()
+            else:
+                st.error(f"❌ Authentication failed: {result['error']}")
+                
+    except Exception as e:
+        logger.error(f"Manual authentication failed: {str(e)}")
+        st.error(f"❌ Authentication failed: {str(e)}")
+
+def show_redirect_uri_setup():
+    """Show redirect URI setup instructions"""
+    try:
+        drive_manager = GoogleDriveManager(auto_init=False)
+        uri_info = drive_manager.get_redirect_uri_info()
+        
+        st.info("📋 **Google Cloud Console Setup Instructions**")
+        
+        if uri_info['environment'] == 'local':
+            available_port = uri_info.get('preferred_port')
+            if available_port:
+                st.success(f"**Your app will likely use port {available_port}**")
+                st.write(f"Primary redirect URI: `http://localhost:{available_port}/`")
+            
+            st.write("**Add ALL these redirect URIs to prevent port conflicts:**")
+        else:
+            st.write("**Add these Replit redirect URIs:**")
+        
+        # Show all redirect URIs
+        for uri in uri_info['redirect_uris']:
+            st.code(uri)
+        
+        st.write("**Setup Steps:**")
+        st.write("1. 🌐 Open [Google Cloud Console](https://console.cloud.google.com/)")
+        st.write("2. 📁 Navigate to **APIs & Services** → **Credentials**")
+        st.write("3. ✏️ Click on your **OAuth 2.0 Client ID**")
+        st.write("4. ➕ Add the URIs above to **Authorized redirect URIs**")
+        st.write("5. 💾 Click **Save**")
+        st.write("6. 🧪 Come back here and click **Test Google Drive**")
+        
+        if uri_info['environment'] == 'local':
+            st.info("💡 **Why multiple URIs?** Different processes may use different ports. Adding all ensures consistency.")
+        
+    except Exception as e:
+        logger.error(f"Failed to show setup instructions: {str(e)}")
+        st.error(f"❌ Error generating setup instructions: {str(e)}")
 
 if __name__ == "__main__":
     try:
