@@ -69,3 +69,6 @@ output/
 extracted_articles/
 extracted_images/
 examples/
+
+# JSON files
+*.json
