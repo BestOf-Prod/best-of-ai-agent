@@ -78,6 +78,9 @@ class GoogleDriveManager:
                 flow = InstalledAppFlow.from_client_secrets_file(
                     self.credentials_path, SCOPES)
                 
+                # Configure flow to request offline access for refresh tokens
+                flow.redirect_uri = None  # Will be set appropriately by each method
+                
                 # Handle Replit environment differently
                 if IS_REPLIT:
                     logger.info("Detected Replit environment - using console auth flow")
@@ -122,12 +125,23 @@ class GoogleDriveManager:
                     creds = None
                     successful_port = None
                     
+                    # First configure the flow for offline access
+                    flow.prompt = 'consent'
+                    flow.access_type = 'offline'
+                    flow.include_granted_scopes = True
+                    
                     for port in preferred_ports:
                         try:
-                            logger.info(f"Trying local server on port {port}")
+                            logger.info(f"Trying local server on port {port} with offline access")
                             creds = flow.run_local_server(port=port, open_browser=True)
                             successful_port = port
                             logger.info(f"Successfully authenticated using port {port}")
+                            
+                            # Verify we got a refresh token
+                            if hasattr(creds, 'refresh_token') and creds.refresh_token:
+                                logger.info("✅ Refresh token obtained successfully")
+                            else:
+                                logger.warning("⚠️ No refresh token obtained - this may cause future authentication issues")
                             break
                         except Exception as port_error:
                             logger.warning(f"Port {port} failed: {port_error}")
@@ -179,7 +193,20 @@ class GoogleDriveManager:
                 from google.oauth2.credentials import Credentials
                 from google.auth.transport.requests import Request
                 
-                creds = Credentials.from_authorized_user_file(self.token_path, SCOPES)
+                try:
+                    creds = Credentials.from_authorized_user_file(self.token_path, SCOPES)
+                except Exception as token_error:
+                    logger.error(f"Failed to load token file: {str(token_error)}")
+                    return {'success': False, 'error': f'Invalid token file: {str(token_error)}'}
+                
+                # Check if credentials have refresh token
+                if not hasattr(creds, 'refresh_token') or not creds.refresh_token:
+                    logger.warning("Token file missing refresh_token - full re-authentication required")
+                    return {
+                        'success': False, 
+                        'error': 'Missing refresh token - please re-authenticate to get offline access',
+                        'requires_reauth': True
+                    }
                 
                 # Check if credentials are valid or can be refreshed
                 if creds.valid:
@@ -189,6 +216,7 @@ class GoogleDriveManager:
                     return {'success': True, 'message': 'Initialized from existing credentials'}
                 elif creds.expired and creds.refresh_token:
                     try:
+                        logger.info("Refreshing expired Google Drive token...")
                         creds.refresh(Request())
                         self.creds = creds
                         self.service = build('drive', 'v3', credentials=creds)
@@ -201,9 +229,22 @@ class GoogleDriveManager:
                         return {'success': True, 'message': 'Initialized with refreshed credentials'}
                     except Exception as e:
                         logger.warning(f"Token refresh failed: {str(e)}")
-                        return {'success': False, 'error': f'Token refresh failed: {str(e)}'}
+                        
+                        # If refresh fails, the refresh token might be invalid
+                        if 'refresh_token' in str(e).lower():
+                            return {
+                                'success': False, 
+                                'error': f'Refresh token invalid - please re-authenticate: {str(e)}',
+                                'requires_reauth': True
+                            }
+                        else:
+                            return {'success': False, 'error': f'Token refresh failed: {str(e)}'}
                 else:
-                    return {'success': False, 'error': 'Authentication required'}
+                    return {
+                        'success': False, 
+                        'error': 'Authentication required - expired token without refresh capability',
+                        'requires_reauth': True
+                    }
             else:
                 return {'success': False, 'error': 'No authentication token found'}
                 
@@ -570,6 +611,11 @@ class GoogleDriveManager:
             flow = InstalledAppFlow.from_client_secrets_file(
                 self.credentials_path, SCOPES)
             
+            # Configure flow for offline access to get refresh tokens
+            flow.prompt = 'consent'
+            flow.access_type = 'offline'
+            flow.include_granted_scopes = True
+            
             # For Replit, set up proper redirect URI
             if IS_REPLIT:
                 replit_url = os.environ.get('REPL_SLUG', 'repl') + '.' + os.environ.get('REPL_OWNER', 'user') + '.repl.co'
@@ -578,6 +624,12 @@ class GoogleDriveManager:
             # Exchange authorization code for credentials
             flow.fetch_token(code=auth_code)
             creds = flow.credentials
+            
+            # Verify we got a refresh token
+            if hasattr(creds, 'refresh_token') and creds.refresh_token:
+                logger.info("✅ Refresh token obtained successfully via manual authentication")
+            else:
+                logger.warning("⚠️ No refresh token obtained via manual authentication - this may cause future issues")
             
             # Save the credentials
             with open(self.token_path, 'w') as token:

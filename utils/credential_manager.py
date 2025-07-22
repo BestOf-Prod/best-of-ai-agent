@@ -305,6 +305,33 @@ class CredentialManager:
                 'error': str(e)
             }
     
+    def clear_invalid_google_token(self) -> Dict[str, Any]:
+        """
+        Clear only the Google Drive token file (keeping credentials for re-auth)
+        
+        Returns:
+            dict: Result of clear operation
+        """
+        try:
+            if os.path.exists(self.google_token_file):
+                os.remove(self.google_token_file)
+                logger.info("Cleared invalid Google Drive token file")
+                return {
+                    'success': True,
+                    'message': 'Cleared invalid token file - credentials preserved for re-authentication'
+                }
+            else:
+                return {
+                    'success': True,
+                    'message': 'No token file to clear'
+                }
+        except Exception as e:
+            logger.error(f"Failed to clear Google Drive token: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
     def get_storage_info(self) -> Dict[str, Any]:
         """
         Get information about credential storage

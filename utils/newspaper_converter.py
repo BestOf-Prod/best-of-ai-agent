@@ -497,22 +497,48 @@ def create_component_documents(article_data, temp_dir):
     # Get images from article data - handle both image_url and image_data
     images = []
     
-    # Check for newspapers.com image_data (PIL Image object)
+    # Check for newspapers.com image_data (PIL Image object or bytes)
     if article_data.get('image_data'):
-        # Save PIL Image to temp directory for processing
+        # Save image data to temp directory for processing
         image_filename = f"newspapers_clipping_{int(time.time())}.png"
         image_path = os.path.join(temp_dir, image_filename)
         try:
-            article_data['image_data'].save(image_path, 'PNG')
+            # Handle different image_data formats
+            if hasattr(article_data['image_data'], 'save'):
+                # It's a PIL Image object
+                article_data['image_data'].save(image_path, 'PNG')
+                logger.info(f"Saved PIL Image from newspapers.com: {image_path}")
+            elif isinstance(article_data['image_data'], bytes):
+                # It's raw bytes - convert to PIL Image first
+                from PIL import Image
+                import io
+                img = Image.open(io.BytesIO(article_data['image_data']))
+                img.save(image_path, 'PNG')
+                logger.info(f"Converted bytes to PIL Image for newspapers.com: {image_path}")
+            elif isinstance(article_data['image_data'], str):
+                # It might be base64 encoded
+                from PIL import Image
+                import base64
+                import io
+                img_data = base64.b64decode(article_data['image_data'])
+                img = Image.open(io.BytesIO(img_data))
+                img.save(image_path, 'PNG')
+                logger.info(f"Converted base64 to PIL Image for newspapers.com: {image_path}")
+            else:
+                logger.error(f"Unknown image_data format: {type(article_data['image_data'])}")
+                raise ValueError(f"Unsupported image_data format: {type(article_data['image_data'])}")
+            
             images.append({
                 'alt_text': 'Newspapers.com Clipping',
                 'url': 'newspapers.com_clipping',  # Special marker for clipping images
                 'path': image_path,  # Direct path to image file
                 'is_clipping': True
             })
-            logger.info(f"Using image_data from newspapers.com clipping: {image_path}")
+            logger.info(f"Successfully processed image_data from newspapers.com: {image_path}")
         except Exception as e:
             logger.error(f"Failed to save newspapers.com image_data: {str(e)}")
+            logger.error(f"Image data type: {type(article_data.get('image_data'))}")
+            logger.error(f"Image data length: {len(article_data['image_data']) if hasattr(article_data['image_data'], '__len__') else 'N/A'}")
     
     # Check for regular image URL (from url_extractor)
     elif article_data.get('image_url'):
@@ -984,9 +1010,10 @@ def convert_articles_to_component_zip(articles_data, output_zip_path=None):
             
             # Add images to their respective article directories
             logger.info(f"Adding {len(all_images)} images to article directories")
+            successful_component_images = 0
             for img in all_images:
                 try:
-                    logger.info(f"Processing image for zip: {img['clip_filename']} from {img['source_path']}")
+                    logger.info(f"Processing component image for zip: {img['clip_filename']} from {img['source_path']}")
                     
                     # Check if source file exists
                     if not os.path.exists(img['source_path']):
@@ -1005,11 +1032,14 @@ def convert_articles_to_component_zip(articles_data, output_zip_path=None):
                     directory_path = img['directory']
                     zip_path = f"{directory_path}/images/{img['clip_filename']}"
                     zip_file.writestr(zip_path, img_data)
-                    logger.info(f"Successfully added image to zip: {zip_path} ({len(img_data)} bytes)")
+                    successful_component_images += 1
+                    logger.info(f"Successfully added component image to zip: {zip_path} ({len(img_data)} bytes)")
                     
                 except Exception as e:
                     logger.error(f"Failed to add image {img['clip_filename']} to zip: {str(e)}")
                     logger.error(f"Image details: source_path={img.get('source_path')}, directory={img.get('directory')}")
+            
+            logger.info(f"Successfully added {successful_component_images} out of {len(all_images)} component images to zip file")
             
             # Add metadata file for each article directory
             for directory_name, dir_info in article_directories.items():
@@ -1107,6 +1137,7 @@ def convert_multiple_markdown_to_newspaper_zip(markdown_contents, output_zip_pat
             
             # Handle processed articles with image_data (from batch processing)
             enhanced_md_content = md_content
+            newspapers_image_added = False
             if processed_articles and i < len(processed_articles):
                 article = processed_articles[i]
                 if article.get('image_data'):
@@ -1123,19 +1154,26 @@ def convert_multiple_markdown_to_newspaper_zip(markdown_contents, output_zip_pat
                             # It's already a PIL Image
                             article['image_data'].save(image_path, 'PNG')
                             image_saved = True
-                        else:
-                            # It might be base64 or other format - try to handle it
+                            logger.info(f"Saved PIL Image for {title}")
+                        elif isinstance(article['image_data'], bytes):
+                            # It's raw bytes - convert to PIL Image first
+                            from PIL import Image
+                            img = Image.open(io.BytesIO(article['image_data']))
+                            img.save(image_path, 'PNG')
+                            image_saved = True
+                            logger.info(f"Converted bytes to PIL Image for {title}")
+                        elif isinstance(article['image_data'], str):
+                            # It might be base64 encoded
                             from PIL import Image
                             import base64
-                            
-                            if isinstance(article['image_data'], str):
-                                # Assume base64
-                                img_data = base64.b64decode(article['image_data'])
-                                img = Image.open(io.BytesIO(img_data))
-                                img.save(image_path, 'PNG')
-                                image_saved = True
-                            else:
-                                logger.warning(f"Unknown image_data format for {title}: {type(article['image_data'])}")
+                            img_data = base64.b64decode(article['image_data'])
+                            img = Image.open(io.BytesIO(img_data))
+                            img.save(image_path, 'PNG')
+                            image_saved = True
+                            logger.info(f"Converted base64 to PIL Image for {title}")
+                        else:
+                            logger.warning(f"Unknown image_data format for {title}: {type(article['image_data'])}")
+                            logger.warning(f"Image data length: {len(article['image_data']) if hasattr(article['image_data'], '__len__') else 'N/A'}")
                         
                         # Only proceed if image was saved successfully
                         if image_saved:
@@ -1150,8 +1188,9 @@ def convert_multiple_markdown_to_newspaper_zip(markdown_contents, output_zip_pat
                                 'url': 'scraped_from_newspapers.com',
                                 'alt_text': f'Scraped image for {title}'
                             })
+                            newspapers_image_added = True
                             
-                            logger.info(f"Successfully processed scraped image for {title}")
+                            logger.info(f"Successfully processed scraped image for {title} and added to all_images collection")
                         
                     except Exception as e:
                         logger.error(f"Failed to process image_data for {title}: {str(e)}")
@@ -1170,6 +1209,15 @@ def convert_multiple_markdown_to_newspaper_zip(markdown_contents, output_zip_pat
                         'url': img['url'],
                         'alt_text': img['alt_text']
                     })
+                    logger.info(f"Added URL-based image to all_images: {img_filename}")
+            
+            # Log final image count for this article
+            if newspapers_image_added:
+                logger.info(f"Article {i+1} ({title}): Added newspapers.com image to collection")
+            elif hasattr(doc, '_downloaded_images') and doc._downloaded_images:
+                logger.info(f"Article {i+1} ({title}): Added {len(doc._downloaded_images)} URL-based images to collection")
+            else:
+                logger.info(f"Article {i+1} ({title}): No images found to add to collection")
             
             # Save to temporary file
             temp_doc_path = os.path.join(temp_dir, docx_filename)
@@ -1199,8 +1247,21 @@ def convert_multiple_markdown_to_newspaper_zip(markdown_contents, output_zip_pat
             
             # Add images to clippings directory
             logger.info(f"Adding {len(all_images)} images to clippings directory")
+            successful_image_count = 0
             for img in all_images:
                 try:
+                    logger.info(f"Processing image: {img['clip_filename']} from source: {img['source_path']}")
+                    
+                    # Check if file exists and has content
+                    if not os.path.exists(img['source_path']):
+                        logger.error(f"Image source file not found: {img['source_path']}")
+                        continue
+                    
+                    file_size = os.path.getsize(img['source_path'])
+                    if file_size == 0:
+                        logger.error(f"Image source file is empty: {img['source_path']}")
+                        continue
+                    
                     # Read image data
                     with open(img['source_path'], 'rb') as f:
                         img_data = f.read()
@@ -1208,10 +1269,14 @@ def convert_multiple_markdown_to_newspaper_zip(markdown_contents, output_zip_pat
                     # Add to clippings directory in zip
                     zip_path = f"clippings/{img['clip_filename']}"
                     zip_file.writestr(zip_path, img_data)
-                    logger.info(f"Added image to zip: {zip_path}")
+                    successful_image_count += 1
+                    logger.info(f"Successfully added image to zip: {zip_path} ({len(img_data)} bytes)")
                     
                 except Exception as e:
-                    logger.warning(f"Failed to add image {img['clip_filename']} to zip: {str(e)}")
+                    logger.error(f"Failed to add image {img['clip_filename']} to zip: {str(e)}")
+                    logger.error(f"Image details: source_path={img.get('source_path')}, clip_filename={img.get('clip_filename')}")
+            
+            logger.info(f"Successfully added {successful_image_count} out of {len(all_images)} images to zip file")
         
         zip_data = zip_buffer.getvalue()
         
@@ -1353,7 +1418,7 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
             # Handle article images
             article_images = []
             
-            # Check for newspapers.com image_data (PIL Image)
+            # Check for newspapers.com image_data (PIL Image or bytes)
             if article_data.get('image_data'):
                 try:
                     # Enhanced naming: article_{index}_{source}_{headline}.{extension}
@@ -1361,7 +1426,31 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
                     clean_headline = sanitize_filename(headline)
                     image_filename = f"article_{i+1}_{clean_source}_{clean_headline}.png"
                     image_path = os.path.join(temp_dir, image_filename)
-                    article_data['image_data'].save(image_path, 'PNG')
+                    
+                    # Handle different image_data formats
+                    if hasattr(article_data['image_data'], 'save'):
+                        # It's a PIL Image object
+                        article_data['image_data'].save(image_path, 'PNG')
+                        logger.info(f"Saved PIL Image from newspapers.com: {image_filename}")
+                    elif isinstance(article_data['image_data'], bytes):
+                        # It's raw bytes - convert to PIL Image first
+                        from PIL import Image
+                        import io
+                        img = Image.open(io.BytesIO(article_data['image_data']))
+                        img.save(image_path, 'PNG')
+                        logger.info(f"Converted bytes to PIL Image and saved newspapers.com image: {image_filename}")
+                    elif isinstance(article_data['image_data'], str):
+                        # It might be base64 encoded
+                        from PIL import Image
+                        import base64
+                        import io
+                        img_data = base64.b64decode(article_data['image_data'])
+                        img = Image.open(io.BytesIO(img_data))
+                        img.save(image_path, 'PNG')
+                        logger.info(f"Converted base64 to PIL Image and saved newspapers.com image: {image_filename}")
+                    else:
+                        logger.error(f"Unknown image_data format: {type(article_data['image_data'])}")
+                        continue
                     
                     article_images.append({
                         'path': image_path,
@@ -1369,9 +1458,11 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
                         'source': 'newspapers.com',
                         'alt_text': f'Newspaper clipping for {headline}'
                     })
-                    logger.info(f"Saved newspapers.com image: {image_filename}")
+                    logger.info(f"Successfully processed newspapers.com image: {image_filename}")
                 except Exception as e:
                     logger.error(f"Failed to save newspapers.com image: {str(e)}")
+                    logger.error(f"Image data type: {type(article_data.get('image_data'))}")
+                    logger.error(f"Image data length: {len(article_data['image_data']) if hasattr(article_data['image_data'], '__len__') else 'N/A'}")
             
             # Check for regular image URL
             elif article_data.get('image_url'):
@@ -1412,6 +1503,7 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
                         
                         # Add to collection for export
                         all_images.append(img)
+                        logger.info(f"Added {img['source']} image to all_images collection: {img['filename']}")
                         
                     except Exception as e:
                         logger.error(f"Failed to add image to document: {str(e)}")
@@ -1460,6 +1552,7 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
         os.makedirs(images_dir, exist_ok=True)
         
         # Copy all images to the images folder
+        logger.info(f"Processing {len(all_images)} images for export to images folder")
         exported_images = []
         for img in all_images:
             try:
@@ -1476,7 +1569,7 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
                     'path': dest_path
                 })
                 
-                logger.info(f"Exported image: {img['filename']}")
+                logger.info(f"Exported {img['source']} image: {img['filename']} to {dest_path}")
             except Exception as e:
                 logger.error(f"Failed to export image {img['filename']}: {str(e)}")
         
@@ -1496,10 +1589,28 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
         if upload_to_drive:
             logger.info("Attempting to upload to Google Drive...")
             try:
-                drive_manager = GoogleDriveManager(auto_init=False)
+                # Import credential manager to get proper paths
+                from utils.credential_manager import CredentialManager
+                cred_manager = CredentialManager()
+                google_status = cred_manager.get_google_credentials_status()
+                
+                # Initialize GoogleDriveManager with credential manager paths
+                drive_manager = GoogleDriveManager(
+                    credentials_path=google_status['credentials_path'],
+                    token_path=google_status['token_path'],
+                    auto_init=False
+                )
+                
+                # Debug: Log credential paths
+                logger.info(f"GoogleDriveManager using credentials: {google_status['credentials_path']}")
+                logger.info(f"GoogleDriveManager using token: {google_status['token_path']}")
+                logger.info(f"Credentials exist: {google_status['has_credentials']}")
+                logger.info(f"Token exists: {google_status['has_token']}")
                 
                 # Try to initialize from existing credentials first
                 init_result = drive_manager.initialize_if_ready()
+                
+                logger.info(f"GoogleDriveManager init result: {init_result}")
                 
                 if init_result['success']:
                     # Generate project name based on timestamp and article count
@@ -1531,14 +1642,70 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
                         logger.error(f"Failed to upload to Google Drive: {drive_result.get('error', 'Unknown error')}")
                         summary['google_drive'] = {'success': False, 'error': drive_result.get('error', 'Upload failed')}
                 else:
-                    logger.warning("Google Drive not configured or available")
-                    summary['google_drive'] = {'success': False, 'error': 'Google Drive not configured'}
+                    logger.warning(f"Google Drive initialization failed: {init_result.get('error', 'Unknown error')}")
+                    
+                    # Check if this is a re-authentication requirement (missing refresh token)
+                    if init_result.get('requires_reauth'):
+                        logger.error("Re-authentication required - missing or invalid refresh token")
+                        summary['google_drive'] = {
+                            'success': False, 
+                            'error': 'Re-authentication required: Please clear Google credentials in sidebar and re-authenticate with offline access',
+                            'requires_reauth': True
+                        }
+                    # If we have credentials but initialization failed, it might be a token issue
+                    elif google_status['has_credentials']:
+                        logger.info("Attempting full re-authentication since token may be invalid")
+                        try:
+                            # Try to force a fresh authentication
+                            drive_manager._initialize_service()
+                            if drive_manager.is_available():
+                                logger.info("Successfully authenticated Google Drive with fresh token")
+                                
+                                # Retry the upload with fresh authentication
+                                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                project_name = f"Article_Export_{len(processed_articles)}_articles_{timestamp}"
+                                
+                                # Upload document and images to Google Drive
+                                drive_result = drive_manager.upload_document_and_images(
+                                    document_path=output_path,
+                                    images_folder_path=images_dir,
+                                    project_name=project_name
+                                )
+                                
+                                if drive_result['success']:
+                                    logger.info(f"Successfully uploaded to Google Drive project: {project_name}")
+                                    summary['google_drive'] = drive_result
+                                    
+                                    # Set folder to be publicly accessible
+                                    try:
+                                        drive_manager.set_file_permissions(
+                                            file_id=drive_result['project_folder_id'],
+                                            role='reader',
+                                            type='anyone'
+                                        )
+                                        logger.info("Set Google Drive folder to be publicly accessible")
+                                    except Exception as e:
+                                        logger.warning(f"Failed to set public permissions: {str(e)}")
+                                else:
+                                    logger.error(f"Upload failed even after re-authentication: {drive_result.get('error', 'Unknown error')}")
+                                    summary['google_drive'] = {'success': False, 'error': drive_result.get('error', 'Upload failed after re-auth')}
+                            else:
+                                logger.error("Re-authentication failed - Google Drive service not available")
+                                summary['google_drive'] = {'success': False, 'error': 'Re-authentication failed'}
+                        except Exception as reauth_error:
+                            logger.error(f"Re-authentication attempt failed: {str(reauth_error)}")
+                            summary['google_drive'] = {'success': False, 'error': f'Authentication error: {str(reauth_error)}'}
+                    else:
+                        logger.warning("Google Drive not configured - no credentials available")
+                        summary['google_drive'] = {'success': False, 'error': 'Google Drive not configured'}
                     
             except Exception as e:
                 logger.error(f"Google Drive upload failed: {str(e)}")
                 summary['google_drive'] = {'success': False, 'error': str(e)}
         
         logger.info(f"Successfully created single Word document with {len(processed_articles)} articles and {len(exported_images)} images")
+        image_breakdown = ', '.join([f"{img['source']}({img['filename']})" for img in exported_images])
+        logger.info(f"Image breakdown: {image_breakdown}")
         return summary
         
     except Exception as e:

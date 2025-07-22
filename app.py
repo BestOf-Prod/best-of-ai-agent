@@ -1589,12 +1589,16 @@ def convert_to_single_word_document(selected_indices, results):
                     images_zip_path = result['images_folder'] + '.zip'
                     try:
                         import zipfile
+                        logger.info(f"Creating images zip file with {len(result['images'])} images")
                         with zipfile.ZipFile(images_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
                             for img in result['images']:
+                                logger.info(f"Adding {img['source']} image to zip: {img['filename']} from {img['path']}")
                                 zipf.write(img['path'], img['filename'])
                         
                         with open(images_zip_path, 'rb') as f:
                             zip_data = f.read()
+                        
+                        logger.info(f"Successfully created images zip file: {len(zip_data)} bytes")
                         
                         st.download_button(
                             label="📁 Download Images Folder",
@@ -1638,13 +1642,21 @@ def display_google_drive_status():
             elif google_status['has_token']:
                 # Try to initialize to check if token is still valid
                 try:
-                    drive_manager = GoogleDriveManager(auto_init=False)
+                    drive_manager = GoogleDriveManager(
+                        credentials_path=google_status['credentials_path'],
+                        token_path=google_status['token_path'],
+                        auto_init=False
+                    )
                     init_result = drive_manager.initialize_if_ready()
                     if init_result['success']:
                         st.success("✅ Google Drive configured and ready")
                         st.caption("🔐 Using saved authentication")
                     else:
-                        st.warning("⚠️ Authentication expired - Re-authenticate needed")
+                        if init_result.get('requires_reauth'):
+                            st.error("❌ Re-authentication required")
+                            st.caption("🔄 Missing refresh token - Clear credentials and re-authenticate")
+                        else:
+                            st.warning("⚠️ Authentication expired - Re-authenticate needed")
                 except Exception:
                     st.warning("⚠️ Authentication expired - Re-authenticate needed")
             else:
@@ -1720,7 +1732,11 @@ def test_google_drive_connection():
                 return
             
             # Test Google Drive manager initialization (with manual auth)
-            drive_manager = GoogleDriveManager(auto_init=False)
+            drive_manager = GoogleDriveManager(
+                credentials_path=google_status['credentials_path'],
+                token_path=google_status['token_path'],
+                auto_init=False
+            )
             
             # Try to initialize service manually
             try:
@@ -1825,7 +1841,14 @@ def test_google_drive_connection():
 def get_google_drive_auth_url():
     """Get Google Drive authorization URL for manual authentication (Replit)"""
     try:
-        drive_manager = GoogleDriveManager()
+        # Use credential manager paths
+        cred_manager = st.session_state.credential_manager
+        google_status = cred_manager.get_google_credentials_status()
+        
+        drive_manager = GoogleDriveManager(
+            credentials_path=google_status['credentials_path'],
+            token_path=google_status['token_path']
+        )
         auth_result = drive_manager.get_auth_url()
         
         if auth_result['success']:
@@ -1860,7 +1883,14 @@ def authenticate_with_manual_code(auth_code: str):
     """Authenticate Google Drive using manual authorization code"""
     try:
         with st.spinner("Authenticating with Google Drive..."):
-            drive_manager = GoogleDriveManager()
+            # Use credential manager paths
+            cred_manager = st.session_state.credential_manager
+            google_status = cred_manager.get_google_credentials_status()
+            
+            drive_manager = GoogleDriveManager(
+                credentials_path=google_status['credentials_path'],
+                token_path=google_status['token_path']
+            )
             result = drive_manager.authenticate_with_code(auth_code)
             
             if result['success']:
@@ -1884,7 +1914,15 @@ def authenticate_with_manual_code(auth_code: str):
 def show_redirect_uri_setup():
     """Show redirect URI setup instructions"""
     try:
-        drive_manager = GoogleDriveManager(auto_init=False)
+        # Use credential manager paths
+        cred_manager = st.session_state.credential_manager
+        google_status = cred_manager.get_google_credentials_status()
+        
+        drive_manager = GoogleDriveManager(
+            credentials_path=google_status['credentials_path'],
+            token_path=google_status['token_path'],
+            auto_init=False
+        )
         uri_info = drive_manager.get_redirect_uri_info()
         
         st.info("📋 **Google Cloud Console Setup Instructions**")
