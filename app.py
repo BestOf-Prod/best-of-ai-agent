@@ -268,7 +268,8 @@ def streamlined_sidebar_config():
                         test_google_drive_connection()
                 
                 # Fallback manual auth code input
-                with st.expander("⚠️ Manual Authentication (if automatic fails)"):
+                st.divider()
+                if st.checkbox("⚠️ Use Manual Authentication (if automatic fails)", key="show_manual_auth"):
                     st.caption("Only use this if the automatic authentication doesn't work")
                     auth_code = st.text_input(
                         "Authorization Code", 

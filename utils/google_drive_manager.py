@@ -22,6 +22,13 @@ try:
     GOOGLE_DRIVE_AVAILABLE = True
     logger.info("Google Drive API libraries imported successfully")
 except ImportError as e:
+    # Create dummy classes to prevent NameError
+    build = None
+    MediaIoBaseUpload = None
+    MediaFileUpload = None
+    Credentials = None
+    Request = None
+    InstalledAppFlow = None
     GOOGLE_DRIVE_AVAILABLE = False
     logger.warning(f"Google Drive API libraries not available: {str(e)}")
 
