@@ -13,6 +13,7 @@ import os
 import zipfile
 import tempfile
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 # Import existing modules
 from extractors.url_extractor import extract_from_url
@@ -29,6 +30,32 @@ from utils.credential_manager import CredentialManager
 # Setup logging
 logger = setup_logging(__name__, log_level=logging.INFO)
 
+def handle_oauth_callback():
+    """Handle OAuth callback automatically by extracting auth code from URL"""
+    try:
+        # Get query parameters from URL
+        query_params = st.query_params
+        
+        # Check if we have an auth code in the URL
+        if 'code' in query_params:
+            auth_code = query_params['code']
+            logger.info("Found OAuth authorization code in URL, processing automatically")
+            
+            # Authenticate with the code
+            result = authenticate_with_manual_code(auth_code)
+            
+            if result.get('success'):
+                st.success("✅ Google Drive authentication completed automatically!")
+                # Clear the URL parameters to avoid re-authentication
+                st.query_params.clear()
+                st.rerun()
+            else:
+                st.error(f"❌ Authentication failed: {result.get('error')}")
+                
+    except Exception as e:
+        logger.error(f"Error handling OAuth callback: {e}")
+        # Don't show error to user unless it's critical
+
 def main():
     """Enhanced main application entry point"""
     logger.info("Starting enhanced application with auto-authentication")
@@ -39,6 +66,9 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
+    
+    # Check for OAuth callback in URL
+    handle_oauth_callback()
     
     # Initialize session state variables
     initialize_session_state()
@@ -230,23 +260,25 @@ def streamlined_sidebar_config():
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    if st.button("Get Auth URL", key="get_auth_url"):
-                        get_google_drive_auth_url()
+                    if st.button("🔗 Connect Google Drive", key="get_auth_url"):
+                        get_google_drive_auth_url_automatic()
                 
                 with col2:
                     if st.button("Test Connection", key="test_gdrive"):
                         test_google_drive_connection()
                 
-                # Manual auth code input for Replit
-                auth_code = st.text_input(
-                    "Authorization Code", 
-                    key="auth_code",
-                    help="Paste the authorization code from the OAuth flow",
-                    type="password"
-                )
-                
-                if auth_code and st.button("Authenticate", key="manual_auth"):
-                    authenticate_with_manual_code(auth_code)
+                # Fallback manual auth code input
+                with st.expander("⚠️ Manual Authentication (if automatic fails)"):
+                    st.caption("Only use this if the automatic authentication doesn't work")
+                    auth_code = st.text_input(
+                        "Authorization Code", 
+                        key="auth_code",
+                        help="Paste the authorization code from the OAuth flow",
+                        type="password"
+                    )
+                    
+                    if auth_code and st.button("Authenticate Manually", key="manual_auth"):
+                        authenticate_with_manual_code(auth_code)
             else:
                 # Local development
                 if st.button("Test Google Drive", key="test_gdrive"):
@@ -1837,6 +1869,58 @@ def test_google_drive_connection():
             else:
                 st.info("🔍 **General Error**")
                 st.write("Check the error message above for specific details.")
+
+def get_google_drive_auth_url_automatic():
+    """Get Google Drive authorization URL with automatic callback handling (Replit)"""
+    try:
+        # Use credential manager paths
+        cred_manager = st.session_state.credential_manager
+        google_status = cred_manager.get_google_credentials_status()
+        
+        drive_manager = GoogleDriveManager(
+            credentials_path=google_status['credentials_path'],
+            token_path=google_status['token_path']
+        )
+        auth_result = drive_manager.get_auth_url()
+        
+        if auth_result['success']:
+            st.success("🔗 Ready to connect to Google Drive!")
+            
+            # Display the authorization URL with user-friendly instructions
+            auth_url = auth_result['auth_url']
+            
+            st.markdown("### 📋 Simple Steps:")
+            st.markdown("""
+            1. **Click the link below** to authorize Google Drive access
+            2. **Sign in** to your Google account if prompted  
+            3. **Grant permissions** when asked
+            4. **Wait for automatic redirect** - you'll be brought back here automatically!
+            """)
+            
+            # Make the link more prominent
+            st.markdown(f"""
+            <div style='text-align: center; padding: 20px;'>
+                <a href='{auth_url}' target='_self' style='
+                    background-color: #4285f4;
+                    color: white;
+                    padding: 15px 30px;
+                    text-decoration: none;
+                    border-radius: 8px;
+                    font-size: 18px;
+                    font-weight: bold;
+                    display: inline-block;
+                '>🚀 Connect to Google Drive</a>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.info("💡 **No need to copy/paste anything!** After you authorize, you'll automatically return here and be connected.")
+            
+        else:
+            st.error(f"❌ Failed to get authorization URL: {auth_result['error']}")
+            
+    except Exception as e:
+        logger.error(f"Failed to get auth URL: {str(e)}")
+        st.error(f"❌ Error: {str(e)}")
 
 def get_google_drive_auth_url():
     """Get Google Drive authorization URL for manual authentication (Replit)"""
