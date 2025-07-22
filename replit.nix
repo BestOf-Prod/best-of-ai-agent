@@ -1,5 +1,6 @@
 {pkgs}: {
   deps = [
+    pkgs.python312Packages.selenium-wire
     pkgs.pandoc
     pkgs.tesseract
     pkgs.libGLU
