@@ -100,7 +100,9 @@ class GoogleDriveManager:
                         logger.info("Falling back to local server auth with Replit configuration")
                         try:
                             # For Replit, we need to use the external URL
-                            replit_url = os.environ.get('REPL_SLUG', 'repl') + '.' + os.environ.get('REPL_OWNER', 'user') + '.repl.co'
+                            repl_slug = os.environ.get('REPL_SLUG', 'best-of-ai-agent')
+                            repl_owner = os.environ.get('REPL_OWNER', 'user')
+                            replit_url = f"{repl_slug}-{repl_owner}.replit.app"
                             redirect_uri = f"https://{replit_url}"
                             logger.info(f"Using Replit redirect URI: {redirect_uri}")
                             
@@ -626,7 +628,7 @@ class GoogleDriveManager:
             # For Replit, set up proper redirect URI
             if IS_REPLIT:
                 # Use the newer .replit.app domain format for Replit apps
-                repl_slug = os.environ.get('REPL_SLUG', 'repl')
+                repl_slug = os.environ.get('REPL_SLUG', 'best-of-ai-agent')
                 repl_owner = os.environ.get('REPL_OWNER', 'user')
                 replit_url = f"{repl_slug}-{repl_owner}.replit.app"
                 flow.redirect_uri = f"https://{replit_url}/"
@@ -683,8 +685,9 @@ class GoogleDriveManager:
             # For Replit, configure proper redirect URI
             if IS_REPLIT:
                 # Use the newer .replit.app domain format for Replit apps
+                repl_slug = os.environ.get('REPL_SLUG', 'best-of-ai-agent')
                 repl_owner = os.environ.get('REPL_OWNER', 'user')
-                replit_url = f"best-of-ai-agent-{repl_owner}.replit.app"
+                replit_url = f"{repl_slug}-{repl_owner}.replit.app"
                 flow.redirect_uri = f"https://{replit_url}/"
                 
                 auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
@@ -744,7 +747,7 @@ class GoogleDriveManager:
         
         if is_replit:
             # Use the newer .replit.app domain format for Replit apps
-            repl_slug = os.environ.get('REPL_SLUG', 'your-repl')
+            repl_slug = os.environ.get('REPL_SLUG', 'best-of-ai-agent')
             repl_owner = os.environ.get('REPL_OWNER', 'your-username')
             replit_url = f"{repl_slug}-{repl_owner}.replit.app"
             return {
