@@ -625,8 +625,11 @@ class GoogleDriveManager:
             
             # For Replit, set up proper redirect URI
             if IS_REPLIT:
-                replit_url = os.environ.get('REPL_SLUG', 'repl') + '.' + os.environ.get('REPL_OWNER', 'user') + '.repl.co'
-                flow.redirect_uri = f"https://{replit_url}"
+                # Use the newer .replit.app domain format for Replit apps
+                repl_slug = os.environ.get('REPL_SLUG', 'repl')
+                repl_owner = os.environ.get('REPL_OWNER', 'user')
+                replit_url = f"{repl_slug}-{repl_owner}.replit.app"
+                flow.redirect_uri = f"https://{replit_url}/"
             
             # Exchange authorization code for credentials
             flow.fetch_token(code=auth_code)
@@ -679,8 +682,10 @@ class GoogleDriveManager:
             
             # For Replit, configure proper redirect URI
             if IS_REPLIT:
-                replit_url = os.environ.get('REPL_SLUG', 'repl') + '.' + os.environ.get('REPL_OWNER', 'user') + '.repl.co'
-                flow.redirect_uri = f"https://{replit_url}"
+                # Use the newer .replit.app domain format for Replit apps
+                repl_owner = os.environ.get('REPL_OWNER', 'user')
+                replit_url = f"best-of-ai-agent-{repl_owner}.replit.app"
+                flow.redirect_uri = f"https://{replit_url}/"
                 
                 auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
                 
@@ -738,14 +743,17 @@ class GoogleDriveManager:
         is_replit = IS_REPLIT
         
         if is_replit:
-            replit_url = os.environ.get('REPL_SLUG', 'your-repl') + '.' + os.environ.get('REPL_OWNER', 'your-username') + '.repl.co'
+            # Use the newer .replit.app domain format for Replit apps
+            repl_slug = os.environ.get('REPL_SLUG', 'your-repl')
+            repl_owner = os.environ.get('REPL_OWNER', 'your-username')
+            replit_url = f"{repl_slug}-{repl_owner}.replit.app"
             return {
                 'environment': 'replit',
                 'redirect_uris': [
-                    f'https://{replit_url}',
+                    f'https://{replit_url}/',
                     f'https://{replit_url}/oauth/callback'
                 ],
-                'instructions': f'Add these URIs to your Google Cloud Console for Replit: https://{replit_url}'
+                'instructions': f'Add these URIs to your Google Cloud Console for Replit: https://{replit_url}/'
             }
         else:
             available_port = self.get_available_port()
