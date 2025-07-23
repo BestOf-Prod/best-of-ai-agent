@@ -67,6 +67,11 @@ def main():
         initial_sidebar_state="expanded"
     )
     
+    # Ensure credential manager is always available first
+    if 'credential_manager' not in st.session_state or st.session_state.credential_manager is None:
+        st.session_state.credential_manager = CredentialManager()
+        logger.info("Ensured credential manager initialization at startup")
+    
     # Check for OAuth callback in URL
     handle_oauth_callback()
     
@@ -128,6 +133,12 @@ def initialize_session_state():
     if st.session_state.credential_manager is None:
         st.session_state.credential_manager = CredentialManager()
         logger.info("Initialized credential manager")
+
+def ensure_credential_manager():
+    """Ensure credential manager is initialized in session state"""
+    if 'credential_manager' not in st.session_state or st.session_state.credential_manager is None:
+        st.session_state.credential_manager = CredentialManager()
+        logger.info("Ensured credential manager initialization")
         
         # Auto-load newspapers.com cookies if available
         auto_load_newspapers_credentials()
@@ -138,6 +149,7 @@ def initialize_session_state():
 def auto_load_newspapers_credentials():
     """Auto-load newspapers.com credentials if available"""
     try:
+        ensure_credential_manager()
         cred_manager = st.session_state.credential_manager
         cookies_result = cred_manager.load_newspapers_cookies()
         
@@ -168,6 +180,7 @@ def auto_load_newspapers_credentials():
 def auto_initialize_google_drive():
     """Auto-initialize Google Drive if credentials are available"""
     try:
+        ensure_credential_manager()
         cred_manager = st.session_state.credential_manager
         google_status = cred_manager.get_google_credentials_status()
         
@@ -187,6 +200,7 @@ def streamlined_sidebar_config():
     st.sidebar.header("⚙️ Settings")
     
     # Get credential manager status for UI
+    ensure_credential_manager()
     cred_manager = st.session_state.credential_manager
     newspapers_status = cred_manager.get_newspapers_status()
     
@@ -313,6 +327,7 @@ def streamlined_sidebar_config():
     
     # Display auth status compactly with persistent credential info
     auth_status = st.session_state.get('authentication_status', {})
+    ensure_credential_manager()
     cred_manager = st.session_state.credential_manager
     newspapers_status = cred_manager.get_newspapers_status()
     
@@ -401,6 +416,7 @@ def initialize_newspapers_authentication_with_cookies(uploaded_cookies):
                 cookies_data = json.loads(uploaded_cookies.getvalue().decode())
                 
                 # Save cookies using credential manager
+                ensure_credential_manager()
                 cred_manager = st.session_state.credential_manager
                 save_result = cred_manager.save_newspapers_cookies(cookies_data)
                 
@@ -1658,6 +1674,7 @@ def display_google_drive_status():
     """Display current Google Drive configuration status (non-interactive)"""
     try:
         # Get status from credential manager
+        ensure_credential_manager()
         cred_manager = st.session_state.credential_manager
         google_status = cred_manager.get_google_credentials_status()
         is_replit = bool(os.environ.get('REPL_ID'))
@@ -1714,6 +1731,7 @@ def setup_google_drive_credentials(uploaded_file):
         credentials_content = uploaded_file.getvalue().decode('utf-8')
         
         # Use credential manager to save credentials
+        ensure_credential_manager()
         cred_manager = st.session_state.credential_manager
         save_result = cred_manager.save_google_credentials(credentials_content)
         
@@ -1730,6 +1748,7 @@ def setup_google_drive_credentials(uploaded_file):
 
 def test_google_drive_connection():
     """Test Google Drive connection and authentication with detailed diagnostics"""
+    ensure_credential_manager()
     cred_manager = st.session_state.credential_manager
     google_status = cred_manager.get_google_credentials_status()
     
@@ -1875,6 +1894,7 @@ def get_google_drive_auth_url_automatic():
     """Get Google Drive authorization URL with automatic callback handling (Replit)"""
     try:
         # Use credential manager paths
+        ensure_credential_manager()
         cred_manager = st.session_state.credential_manager
         google_status = cred_manager.get_google_credentials_status()
         
@@ -1927,6 +1947,7 @@ def get_google_drive_auth_url():
     """Get Google Drive authorization URL for manual authentication (Replit)"""
     try:
         # Use credential manager paths
+        ensure_credential_manager()
         cred_manager = st.session_state.credential_manager
         google_status = cred_manager.get_google_credentials_status()
         
@@ -1969,6 +1990,7 @@ def authenticate_with_manual_code(auth_code: str):
     try:
         with st.spinner("Authenticating with Google Drive..."):
             # Use credential manager paths
+            ensure_credential_manager()
             cred_manager = st.session_state.credential_manager
             google_status = cred_manager.get_google_credentials_status()
             
@@ -2000,6 +2022,7 @@ def show_redirect_uri_setup():
     """Show redirect URI setup instructions"""
     try:
         # Use credential manager paths
+        ensure_credential_manager()
         cred_manager = st.session_state.credential_manager
         google_status = cred_manager.get_google_credentials_status()
         
