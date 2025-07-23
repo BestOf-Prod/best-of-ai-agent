@@ -74,15 +74,15 @@ class GoogleDriveManager:
             str: The Replit URL in the format slug.owner.replit.co
         """
         repl_slug = os.environ.get('REPL_SLUG', 'best-of-ai-agent')
-        repl_owner = os.environ.get('REPL_OWNER', 'user')
+        repl_owner = os.environ.get('REPL_OWNER', 'ajoelfischer')
         
         # Validate that we have the required environment variables
         if not repl_slug or repl_slug == 'best-of-ai-agent':
             logger.warning("REPL_SLUG not found or using default value")
-        if not repl_owner or repl_owner == 'user':
+        if not repl_owner or repl_owner == 'ajoelfischer':
             logger.warning("REPL_OWNER not found or using default value")
             
-        return f"{repl_slug}.{repl_owner}.replit.co"
+        return f"{repl_slug}-{repl_owner}.replit.app"
     
     def validate_replit_environment(self) -> Dict[str, Any]:
         """
