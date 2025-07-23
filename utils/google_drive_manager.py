@@ -66,13 +66,20 @@ class GoogleDriveManager:
         else:
             logger.info("Google Drive manager created (not auto-initialized)")
     
-    def _get_replit_url(self) -> str:
+    def _get_oauth_redirect_uri(self) -> str:
         """
-        Get the current Replit URL in the correct format
+        Get the OAuth redirect URI from environment variable or construct from Replit URL
         
         Returns:
-            str: The Replit URL in the format slug.owner.replit.co
+            str: The OAuth redirect URI
         """
+        # Check for explicit redirect URI in environment variable
+        redirect_uri = os.environ.get('GOOGLE_OAUTH_REDIRECT_URI')
+        if redirect_uri:
+            logger.info(f"Using explicit OAuth redirect URI from environment: {redirect_uri}")
+            return redirect_uri
+            
+        # Fallback to constructing from Replit environment
         repl_slug = os.environ.get('REPL_SLUG', 'best-of-ai-agent')
         repl_owner = os.environ.get('REPL_OWNER', 'ajoelfischer')
         
@@ -82,7 +89,10 @@ class GoogleDriveManager:
         if not repl_owner or repl_owner == 'ajoelfischer':
             logger.warning("REPL_OWNER not found or using default value")
             
-        return f"{repl_slug}-{repl_owner}.replit.app"
+        replit_url = f"{repl_slug}-{repl_owner}.replit.app"
+        redirect_uri = f"https://{replit_url}/oauth/callback"
+        logger.info(f"Constructed OAuth redirect URI from Replit environment: {redirect_uri}")
+        return redirect_uri
     
     def validate_replit_environment(self) -> Dict[str, Any]:
         """
@@ -102,8 +112,8 @@ class GoogleDriveManager:
                 'repl_slug': repl_slug,
                 'repl_owner': repl_owner,
                 'repl_id': repl_id,
-                'replit_url': self._get_replit_url() if is_replit else None,
-                'redirect_uri': f"https://{self._get_replit_url()}/oauth/callback" if is_replit else None,
+                'replit_url': f"{repl_slug}-{repl_owner}.replit.app" if is_replit and repl_slug and repl_owner else None,
+                'redirect_uri': self._get_oauth_redirect_uri() if is_replit else None,
                 'issues': []
             }
             
@@ -156,9 +166,8 @@ class GoogleDriveManager:
                     logger.info("Detected Replit environment - using manual authentication flow")
                     try:
                         # For Replit, we need to use the external URL with proper format
-                        replit_url = self._get_replit_url()
-                        redirect_uri = f"https://{replit_url}/oauth/callback"
-                        logger.info(f"Using Replit redirect URI: {redirect_uri}")
+                        redirect_uri = self._get_oauth_redirect_uri()
+                        logger.info(f"Using OAuth redirect URI: {redirect_uri}")
                         
                         # Configure flow for Replit environment
                         flow.redirect_uri = redirect_uri
@@ -688,8 +697,8 @@ class GoogleDriveManager:
             # For Replit, set up proper redirect URI
             if IS_REPLIT:
                 # Use the correct .replit.co domain format for Replit apps
-                replit_url = self._get_replit_url()
-                flow.redirect_uri = f"https://{replit_url}/oauth/callback"
+                redirect_uri = self._get_oauth_redirect_uri()
+                flow.redirect_uri = redirect_uri
             
             # Exchange authorization code for credentials
             flow.fetch_token(code=auth_code)
@@ -743,8 +752,8 @@ class GoogleDriveManager:
             # For Replit, configure proper redirect URI
             if IS_REPLIT:
                 # Use the correct .replit.co domain format for Replit apps
-                replit_url = self._get_replit_url()
-                flow.redirect_uri = f"https://{replit_url}/oauth/callback"
+                redirect_uri = self._get_oauth_redirect_uri()
+                flow.redirect_uri = redirect_uri
                 
                 auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
                 
@@ -803,13 +812,15 @@ class GoogleDriveManager:
         
         if is_replit:
             # Use the correct .replit.co domain format for Replit apps
-            replit_url = self._get_replit_url()
+            redirect_uri = self._get_oauth_redirect_uri()
+            # Extract just the base URL for display purposes
+            replit_url = redirect_uri.replace('https://', '').replace('/oauth/callback', '')
             return {
                 'environment': 'replit',
                 'redirect_uris': [
-                    f'https://{replit_url}/oauth/callback'
+                    redirect_uri
                 ],
-                'instructions': f'Add this URI to your Google Cloud Console for Replit: https://{replit_url}/oauth/callback'
+                'instructions': f'Add this URI to your Google Cloud Console for Replit: {redirect_uri}'
             }
         else:
             available_port = self.get_available_port()
@@ -841,19 +852,21 @@ class GoogleDriveManager:
                     'error': 'Not running in Replit environment'
                 }
             
-            replit_url = self._get_replit_url()
-            redirect_uri = f"https://{replit_url}/oauth/callback"
+            redirect_uri = self._get_oauth_redirect_uri()
+            # Extract just the base URL for display purposes
+            replit_url = redirect_uri.replace('https://', '').replace('/oauth/callback', '')
+            oauth_redirect_uri = self._get_oauth_redirect_uri()
             
             instructions = {
                 'success': True,
                 'environment': 'replit',
                 'replit_url': replit_url,
-                'redirect_uri': redirect_uri,
+                'redirect_uri': oauth_redirect_uri,
                 'setup_steps': [
                     "1. Open Google Cloud Console: https://console.cloud.google.com/",
                     "2. Navigate to APIs & Services → Credentials",
                     "3. Click on your OAuth 2.0 Client ID",
-                    f"4. Add this redirect URI: {redirect_uri}",
+                    f"4. Add this redirect URI: {oauth_redirect_uri}",
                     "5. Make sure Google Drive API is enabled in your project",
                     "6. Save the changes",
                     "7. Return to this app and use the authentication flow"
