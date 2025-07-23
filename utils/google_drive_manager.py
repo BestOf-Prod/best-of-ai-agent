@@ -36,7 +36,7 @@ except ImportError as e:
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 
 # Check if running on Replit by looking for REPL_ID environment variable
-IS_REPLIT = bool(os.environ.get('REPL_ID'))
+IS_REPLIT = bool(os.environ.get('REPL_ID') or os.environ.get('REPL_SLUG'))
 
 class GoogleDriveManager:
     """
@@ -66,6 +66,69 @@ class GoogleDriveManager:
         else:
             logger.info("Google Drive manager created (not auto-initialized)")
     
+    def _get_replit_url(self) -> str:
+        """
+        Get the current Replit URL in the correct format
+        
+        Returns:
+            str: The Replit URL in the format slug.owner.replit.co
+        """
+        repl_slug = os.environ.get('REPL_SLUG', 'best-of-ai-agent')
+        repl_owner = os.environ.get('REPL_OWNER', 'user')
+        
+        # Validate that we have the required environment variables
+        if not repl_slug or repl_slug == 'best-of-ai-agent':
+            logger.warning("REPL_SLUG not found or using default value")
+        if not repl_owner or repl_owner == 'user':
+            logger.warning("REPL_OWNER not found or using default value")
+            
+        return f"{repl_slug}.{repl_owner}.replit.co"
+    
+    def validate_replit_environment(self) -> Dict[str, Any]:
+        """
+        Validate Replit environment configuration and provide diagnostics
+        
+        Returns:
+            dict: Validation results and diagnostic information
+        """
+        try:
+            is_replit = IS_REPLIT
+            repl_slug = os.environ.get('REPL_SLUG')
+            repl_owner = os.environ.get('REPL_OWNER')
+            repl_id = os.environ.get('REPL_ID')
+            
+            validation = {
+                'is_replit': is_replit,
+                'repl_slug': repl_slug,
+                'repl_owner': repl_owner,
+                'repl_id': repl_id,
+                'replit_url': self._get_replit_url() if is_replit else None,
+                'redirect_uri': f"https://{self._get_replit_url()}/oauth/callback" if is_replit else None,
+                'issues': []
+            }
+            
+            if is_replit:
+                if not repl_slug:
+                    validation['issues'].append("REPL_SLUG environment variable not found")
+                if not repl_owner:
+                    validation['issues'].append("REPL_OWNER environment variable not found")
+                if not repl_id:
+                    validation['issues'].append("REPL_ID environment variable not found")
+                    
+                # Check if credentials file exists
+                if not os.path.exists(self.credentials_path):
+                    validation['issues'].append(f"Credentials file not found: {self.credentials_path}")
+                    
+            return validation
+            
+        except Exception as e:
+            logger.error(f"Error validating Replit environment: {str(e)}")
+            return {
+                'is_replit': False,
+                'error': str(e),
+                'issues': [f"Validation error: {str(e)}"]
+            }
+    
     def _initialize_service(self):
         """Initialize Google Drive service with authentication"""
         creds = None
@@ -90,40 +153,37 @@ class GoogleDriveManager:
                 
                 # Handle Replit environment differently
                 if IS_REPLIT:
-                    logger.info("Detected Replit environment - using console auth flow")
+                    logger.info("Detected Replit environment - using manual authentication flow")
                     try:
-                        # Try to use console flow for Replit
-                        creds = flow.run_console()
-                    except Exception as console_error:
-                        logger.warning(f"Console auth failed: {console_error}")
-                        # Fall back to local server with specific port for Replit
-                        logger.info("Falling back to local server auth with Replit configuration")
-                        try:
-                            # For Replit, we need to use the external URL
-                            repl_slug = os.environ.get('REPL_SLUG', 'best-of-ai-agent')
-                            repl_owner = os.environ.get('REPL_OWNER', 'user')
-                            replit_url = f"{repl_slug}-{repl_owner}.replit.app"
-                            redirect_uri = f"https://{replit_url}"
-                            logger.info(f"Using Replit redirect URI: {redirect_uri}")
-                            
-                            # Create authorization URL for manual process
-                            auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
-                            
-                            raise Exception(f"""
-                            Replit OAuth Setup Required:
-                            
-                            1. Open this URL in your browser: {auth_url}
-                            2. Authorize the application  
-                            3. Copy the authorization code from the redirect URL
-                            4. Use the 'Manual Auth Code' option in the sidebar
-                            
-                            Or configure your Google Cloud Console:
-                            - Add this redirect URI: {redirect_uri}
-                            - Add this redirect URI: https://{replit_url}/oauth/callback
-                            """)
-                        except Exception as replit_error:
-                            logger.error(f"Replit-specific auth failed: {replit_error}")
-                            raise Exception("Authentication failed in Replit environment. Please use manual authentication method.")
+                        # For Replit, we need to use the external URL with proper format
+                        replit_url = self._get_replit_url()
+                        redirect_uri = f"https://{replit_url}/oauth/callback"
+                        logger.info(f"Using Replit redirect URI: {redirect_uri}")
+                        
+                        # Configure flow for Replit environment
+                        flow.redirect_uri = redirect_uri
+                        flow.prompt = 'consent'
+                        flow.access_type = 'offline'
+                        flow.include_granted_scopes = True
+                        
+                        # Create authorization URL for manual process
+                        auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
+                        
+                        raise Exception(f"""
+                        Replit OAuth Setup Required:
+                        
+                        1. Open this URL in your browser: {auth_url}
+                        2. Authorize the application  
+                        3. Copy the authorization code from the redirect URL
+                        4. Use the 'Manual Auth Code' option in the sidebar
+                        
+                        Google Cloud Console Setup:
+                        - Add this redirect URI: {redirect_uri}
+                        - Make sure Google Drive API is enabled in your project
+                        """)
+                    except Exception as replit_error:
+                        logger.error(f"Replit-specific auth failed: {replit_error}")
+                        raise Exception("Authentication failed in Replit environment. Please use manual authentication method.")
                 else:
                     # Standard local development environment
                     logger.info("Using standard local server authentication with fixed port")
@@ -627,11 +687,9 @@ class GoogleDriveManager:
             
             # For Replit, set up proper redirect URI
             if IS_REPLIT:
-                # Use the newer .replit.app domain format for Replit apps
-                repl_slug = os.environ.get('REPL_SLUG', 'best-of-ai-agent')
-                repl_owner = os.environ.get('REPL_OWNER', 'user')
-                replit_url = f"{repl_slug}-{repl_owner}.replit.app"
-                flow.redirect_uri = f"https://{replit_url}/"
+                # Use the correct .replit.co domain format for Replit apps
+                replit_url = self._get_replit_url()
+                flow.redirect_uri = f"https://{replit_url}/oauth/callback"
             
             # Exchange authorization code for credentials
             flow.fetch_token(code=auth_code)
@@ -684,11 +742,9 @@ class GoogleDriveManager:
             
             # For Replit, configure proper redirect URI
             if IS_REPLIT:
-                # Use the newer .replit.app domain format for Replit apps
-                repl_slug = os.environ.get('REPL_SLUG', 'best-of-ai-agent')
-                repl_owner = os.environ.get('REPL_OWNER', 'user')
-                replit_url = f"{repl_slug}-{repl_owner}.replit.app"
-                flow.redirect_uri = f"https://{replit_url}/"
+                # Use the correct .replit.co domain format for Replit apps
+                replit_url = self._get_replit_url()
+                flow.redirect_uri = f"https://{replit_url}/oauth/callback"
                 
                 auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
                 
@@ -746,17 +802,14 @@ class GoogleDriveManager:
         is_replit = IS_REPLIT
         
         if is_replit:
-            # Use the newer .replit.app domain format for Replit apps
-            repl_slug = os.environ.get('REPL_SLUG', 'best-of-ai-agent')
-            repl_owner = os.environ.get('REPL_OWNER', 'your-username')
-            replit_url = f"{repl_slug}-{repl_owner}.replit.app"
+            # Use the correct .replit.co domain format for Replit apps
+            replit_url = self._get_replit_url()
             return {
                 'environment': 'replit',
                 'redirect_uris': [
-                    f'https://{replit_url}/',
                     f'https://{replit_url}/oauth/callback'
                 ],
-                'instructions': f'Add these URIs to your Google Cloud Console for Replit: https://{replit_url}/'
+                'instructions': f'Add this URI to your Google Cloud Console for Replit: https://{replit_url}/oauth/callback'
             }
         else:
             available_port = self.get_available_port()
@@ -772,6 +825,55 @@ class GoogleDriveManager:
                 'preferred_port': available_port,
                 'primary_uri': f'http://localhost:{available_port}/' if available_port else 'http://localhost:8080/',
                 'instructions': 'Add these URIs to your Google Cloud Console for local development'
+            }
+    
+    def get_replit_setup_instructions(self) -> Dict[str, Any]:
+        """
+        Get detailed setup instructions for Replit environment
+        
+        Returns:
+            dict: Setup instructions and configuration details
+        """
+        try:
+            if not IS_REPLIT:
+                return {
+                    'success': False,
+                    'error': 'Not running in Replit environment'
+                }
+            
+            replit_url = self._get_replit_url()
+            redirect_uri = f"https://{replit_url}/oauth/callback"
+            
+            instructions = {
+                'success': True,
+                'environment': 'replit',
+                'replit_url': replit_url,
+                'redirect_uri': redirect_uri,
+                'setup_steps': [
+                    "1. Open Google Cloud Console: https://console.cloud.google.com/",
+                    "2. Navigate to APIs & Services → Credentials",
+                    "3. Click on your OAuth 2.0 Client ID",
+                    f"4. Add this redirect URI: {redirect_uri}",
+                    "5. Make sure Google Drive API is enabled in your project",
+                    "6. Save the changes",
+                    "7. Return to this app and use the authentication flow"
+                ],
+                'common_issues': [
+                    "Make sure you're using the correct redirect URI format",
+                    "Ensure Google Drive API is enabled in your Google Cloud project",
+                    "Check that your OAuth consent screen is configured properly",
+                    "Verify that your credentials.json file is uploaded correctly"
+                ],
+                'validation': self.validate_replit_environment()
+            }
+            
+            return instructions
+            
+        except Exception as e:
+            logger.error(f"Error generating Replit setup instructions: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
             }
     
     def is_available(self) -> bool:
