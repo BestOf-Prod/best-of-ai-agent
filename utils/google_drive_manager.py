@@ -68,31 +68,18 @@ class GoogleDriveManager:
     
     def _get_oauth_redirect_uri(self) -> str:
         """
-        Get the OAuth redirect URI from environment variable or construct from Replit URL
+        Get the OAuth redirect URI from environment variable
         
         Returns:
             str: The OAuth redirect URI
         """
-        # Check for explicit redirect URI in environment variable
+        # Only use explicit redirect URI from environment variable
         redirect_uri = os.environ.get('GOOGLE_OAUTH_REDIRECT_URI')
         if redirect_uri:
-            logger.info(f"Using explicit OAuth redirect URI from environment: {redirect_uri}")
+            logger.info(f"Using OAuth redirect URI from environment: {redirect_uri}")
             return redirect_uri
-            
-        # Fallback to constructing from Replit environment
-        repl_slug = os.environ.get('REPL_SLUG', 'best-of-ai-agent')
-        repl_owner = os.environ.get('REPL_OWNER', 'ajoelfischer')
-        
-        # Validate that we have the required environment variables
-        if not repl_slug or repl_slug == 'best-of-ai-agent':
-            logger.warning("REPL_SLUG not found or using default value")
-        if not repl_owner or repl_owner == 'ajoelfischer':
-            logger.warning("REPL_OWNER not found or using default value")
-            
-        replit_url = f"{repl_slug}-{repl_owner}.replit.app"
-        redirect_uri = f"https://{replit_url}/oauth/callback"
-        logger.info(f"Constructed OAuth redirect URI from Replit environment: {redirect_uri}")
-        return redirect_uri
+        else:
+            raise ValueError("GOOGLE_OAUTH_REDIRECT_URI environment variable must be set")
     
     def validate_replit_environment(self) -> Dict[str, Any]:
         """
