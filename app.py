@@ -2157,7 +2157,59 @@ def use_saved_google_credentials():
                     st.info("💡 Try deleting the token.json file and re-authenticating")
                 else:
                     st.warning("⚠️ Credentials loaded but no authentication token found.")
-                    st.info("💡 You'll need to complete OAuth authentication to get a token")
+                    st.info("💡 Generating authentication URL to get a token...")
+                    
+                    # Automatically get auth URL for token generation
+                    try:
+                        drive_manager = GoogleDriveManager(
+                            credentials_path=google_status['credentials_path'],
+                            token_path=google_status['token_path']
+                        )
+                        auth_result = drive_manager.get_auth_url()
+                        
+                        if auth_result['success']:
+                            st.success("🔗 Click the link below to authenticate and get your token:")
+                            
+                            # Create a simple authentication link
+                            st.markdown(f"""
+                            <div style='text-align: center; margin: 20px 0;'>
+                                <a href='{auth_result['auth_url']}' target='_blank' style='
+                                    background-color: #4CAF50;
+                                    color: white;
+                                    padding: 15px 32px;
+                                    text-align: center;
+                                    text-decoration: none;
+                                    display: inline-block;
+                                    font-size: 16px;
+                                    margin: 4px 2px;
+                                    cursor: pointer;
+                                    border-radius: 8px;
+                                '>🚀 Authenticate Google Drive</a>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            st.info("💡 After authentication, copy the authorization code and paste it below:")
+                            
+                            # Manual code input
+                            auth_code = st.text_input(
+                                "Authorization Code", 
+                                key="manual_auth_code",
+                                help="Paste the authorization code from Google here",
+                                type="password"
+                            )
+                            
+                            if auth_code and st.button("Complete Authentication", key="complete_auth"):
+                                code_result = drive_manager.authenticate_with_code(auth_code)
+                                if code_result['success']:
+                                    st.success("✅ Token generated successfully!")
+                                    st.balloons()
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ Authentication failed: {code_result['error']}")
+                        else:
+                            st.error(f"❌ Failed to generate auth URL: {auth_result['error']}")
+                    except Exception as e:
+                        st.error(f"❌ Error generating authentication URL: {str(e)}")
                 
     except Exception as e:
         logger.error(f"Failed to use saved Google credentials: {str(e)}")
