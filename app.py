@@ -314,7 +314,7 @@ def streamlined_sidebar_config():
             
             if is_replit:
                 st.write("**Replit Authentication:**")
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 
                 with col1:
                     if st.button("🔗 Connect Google Drive", key="get_auth_url"):
@@ -323,6 +323,10 @@ def streamlined_sidebar_config():
                 with col2:
                     if st.button("Test Connection", key="test_gdrive"):
                         test_google_drive_connection()
+                
+                with col3:
+                    if st.button("🔍 Check Redirect URI", key="check_redirect_uri"):
+                        show_redirect_uri_debug()
                 
                 # Fallback manual auth code input
                 st.divider()
@@ -2122,6 +2126,50 @@ def show_redirect_uri_setup():
     except Exception as e:
         logger.error(f"Failed to show setup instructions: {str(e)}")
         st.error(f"❌ Error generating setup instructions: {str(e)}")
+
+def show_redirect_uri_debug():
+    """Show current redirect URI configuration for debugging"""
+    try:
+        st.info("🔍 **Redirect URI Debug Information**")
+        
+        # Check environment variable
+        redirect_uri_env = os.environ.get('GOOGLE_OAUTH_REDIRECT_URI')
+        if redirect_uri_env:
+            st.success(f"✅ GOOGLE_OAUTH_REDIRECT_URI is set: `{redirect_uri_env}`")
+        else:
+            st.error("❌ GOOGLE_OAUTH_REDIRECT_URI environment variable is not set")
+            st.write("**You need to set this environment variable in Replit:**")
+            st.code("GOOGLE_OAUTH_REDIRECT_URI=https://your-app-url.replit.app/oauth/callback")
+            return
+        
+        # Check what GoogleDriveManager would use
+        ensure_credential_manager()
+        cred_manager = st.session_state.credential_manager
+        google_status = cred_manager.get_google_credentials_status()
+        
+        if google_status['has_credentials']:
+            drive_manager = GoogleDriveManager(
+                credentials_path=google_status['credentials_path'],
+                token_path=google_status['token_path']
+            )
+            
+            try:
+                actual_redirect_uri = drive_manager._get_oauth_redirect_uri()
+                st.success(f"✅ Google Drive Manager will use: `{actual_redirect_uri}`")
+                
+                if actual_redirect_uri == redirect_uri_env:
+                    st.success("✅ Environment variable and Google Drive Manager match!")
+                else:
+                    st.error("❌ Mismatch between environment variable and Google Drive Manager")
+                    
+            except Exception as e:
+                st.error(f"❌ Error getting redirect URI from Google Drive Manager: {str(e)}")
+        else:
+            st.warning("⚠️ No Google credentials found - upload credentials.json first")
+            
+    except Exception as e:
+        logger.error(f"Failed to show redirect URI debug: {str(e)}")
+        st.error(f"❌ Error: {str(e)}")
 
 if __name__ == "__main__":
     try:
