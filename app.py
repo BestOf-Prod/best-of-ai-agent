@@ -39,7 +39,8 @@ def handle_oauth_callback():
         # Check if we have an auth code in the URL
         if 'code' in query_params:
             auth_code = query_params['code']
-            logger.info("Found OAuth authorization code in URL, processing automatically")
+            state = query_params.get('state')
+            logger.info(f"Found OAuth authorization code in URL, processing automatically (state: {state})")
             
             # Authenticate with the code
             result = authenticate_with_manual_code(auth_code)

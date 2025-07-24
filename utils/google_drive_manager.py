@@ -771,6 +771,14 @@ class GoogleDriveManager:
                 with open(self.credentials_path, 'r') as f:
                     client_config = json.load(f)
                 
+                # Log the client configuration type
+                if 'web' in client_config:
+                    logger.info("Using web application client configuration for auth URL")
+                elif 'installed' in client_config:
+                    logger.info("Using installed application client configuration for auth URL")
+                else:
+                    logger.error(f"Unknown client configuration format: {list(client_config.keys())}")
+                
                 # Create flow with explicit redirect URI
                 from google_auth_oauthlib.flow import Flow
                 flow = Flow.from_client_config(
@@ -779,10 +787,14 @@ class GoogleDriveManager:
                     redirect_uri=redirect_uri
                 )
                 
-                auth_url, _ = flow.authorization_url(
+                auth_url, state = flow.authorization_url(
                     prompt='consent', 
-                    access_type='offline'
+                    access_type='offline',
+                    include_granted_scopes='true'
                 )
+                
+                logger.info(f"Generated auth URL with state: {state}")
+                logger.info(f"Auth URL contains redirect_uri: {'redirect_uri=' in auth_url}")
                 
                 return {
                     'success': True,
