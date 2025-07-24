@@ -53,8 +53,11 @@ def handle_oauth_callback():
                 st.error(f"❌ Authentication failed: {result.get('error')}")
                 
     except Exception as e:
-        logger.error(f"Error handling OAuth callback: {e}")
-        # Don't show error to user unless it's critical
+        # Suppress OAuth redirect errors that occur during successful authentication
+        if "invalid_grant" in str(e) or "NoneType" in str(e):
+            logger.debug(f"OAuth callback handled with expected redirect error: {e}")
+        else:
+            logger.error(f"Error handling OAuth callback: {e}")
 
 def main():
     """Enhanced main application entry point"""
@@ -148,6 +151,18 @@ def ensure_credential_manager():
 
 def auto_load_newspapers_credentials():
     """Auto-load newspapers.com credentials if available"""
+    # Only show loading screen if newspapers extractor is not already initialized
+    show_loading = 'newspapers_extractor' not in st.session_state or st.session_state.newspapers_extractor is None
+    
+    if show_loading:
+        with st.spinner("🔐 Loading newspapers.com authentication..."):
+            time.sleep(0.1)  # Brief delay to show loading screen
+            _perform_newspapers_auth_load()
+    else:
+        _perform_newspapers_auth_load()
+
+def _perform_newspapers_auth_load():
+    """Internal function to perform newspapers.com authentication loading"""
     try:
         ensure_credential_manager()
         cred_manager = st.session_state.credential_manager
@@ -179,6 +194,18 @@ def auto_load_newspapers_credentials():
 
 def auto_initialize_google_drive():
     """Auto-initialize Google Drive if credentials are available"""
+    # Only show loading screen if Google Drive manager is not already initialized
+    show_loading = 'google_drive_manager' not in st.session_state or st.session_state.google_drive_manager is None
+    
+    if show_loading:
+        with st.spinner("🔐 Loading Google Drive authentication..."):
+            time.sleep(0.1)  # Brief delay to show loading screen
+            _perform_google_drive_auth_load()
+    else:
+        _perform_google_drive_auth_load()
+
+def _perform_google_drive_auth_load():
+    """Internal function to perform Google Drive authentication loading"""
     try:
         ensure_credential_manager()
         cred_manager = st.session_state.credential_manager
@@ -186,7 +213,21 @@ def auto_initialize_google_drive():
         
         if google_status['ready_for_auth']:
             logger.info("Auto-initializing Google Drive from saved credentials")
-            # This will be handled by the existing GoogleDriveManager logic
+            
+            # Initialize Google Drive Manager with credential manager paths
+            google_drive_manager = GoogleDriveManager(
+                credentials_path=google_status['credentials_path'],
+                token_path=google_status['token_path'],
+                auto_init=True
+            )
+            
+            # Store in session state
+            st.session_state.google_drive_manager = google_drive_manager
+            
+            if google_drive_manager.service:
+                logger.info("Auto-initialized Google Drive authentication from saved credentials")
+            else:
+                logger.info("Google Drive credentials found but authentication incomplete")
         else:
             logger.info("No Google Drive credentials available for auto-initialization")
             
@@ -355,11 +396,12 @@ def initialize_newspapers_authentication(email: str, password: str, uploaded_coo
     """Initialize Newspapers.com authentication"""
     logger.info("Initializing Newspapers.com authentication")
     
-    with st.spinner("Initializing Newspapers.com authentication..."):
+    # Check if we're in Replit environment for optimized timeout settings
+    is_replit = 'REPL_ID' in os.environ or 'REPL_SLUG' in os.environ
+    loading_text = "🔐 Authenticating with newspapers.com..." + (" (Replit - may take longer)" if is_replit else "")
+    
+    with st.spinner(loading_text):
         try:
-            # Check if we're in Replit environment
-            is_replit = 'REPL_ID' in os.environ or 'REPL_SLUG' in os.environ
-            
             # Initialize extractor with appropriate settings
             extractor = NewspapersComExtractor(auto_auth=True)
             
@@ -384,6 +426,17 @@ def initialize_newspapers_authentication(email: str, password: str, uploaded_coo
             # Try to authenticate
             success = extractor.initialize(email=email, password=password)
             
+            # If authentication was successful, save credentials for future use
+            if success and extractor.cookie_manager.cookies:
+                try:
+                    ensure_credential_manager()
+                    cred_manager = st.session_state.credential_manager
+                    save_result = cred_manager.save_newspapers_cookies(extractor.cookie_manager.cookies)
+                    if save_result['success']:
+                        logger.info(f"Saved {save_result['cookie_count']} cookies for future sessions")
+                except Exception as e:
+                    logger.warning(f"Failed to save credentials for future use: {str(e)}")
+            
             # Store in session state
             st.session_state.newspapers_extractor = extractor
             st.session_state.authentication_status = extractor.get_authentication_status()
@@ -406,7 +459,11 @@ def initialize_newspapers_authentication_with_cookies(uploaded_cookies):
     """Initialize Newspapers.com authentication using only cookies"""
     logger.info("Initializing Newspapers.com authentication with cookies only")
     
-    with st.spinner("Initializing Newspapers.com authentication with cookies..."):
+    # Check if we're in Replit environment for optimized settings
+    is_replit = 'REPL_ID' in os.environ or 'REPL_SLUG' in os.environ
+    loading_text = "🍪 Loading authentication cookies..." + (" (Replit optimized)" if is_replit else "")
+    
+    with st.spinner(loading_text):
         try:
             # Initialize extractor with appropriate settings
             extractor = NewspapersComExtractor(auto_auth=True)
