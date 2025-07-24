@@ -2268,10 +2268,10 @@ def use_saved_google_credentials():
                                 st.error("❌ Redirect URI is missing from the authorization URL")
                                 logger.error(f"Auth URL missing redirect_uri: {auth_result['auth_url']}")
                             
-                            # Create a simple authentication link
+                            # Create a simple authentication link that opens in same tab
                             st.markdown(f"""
                             <div style='text-align: center; margin: 20px 0;'>
-                                <a href='{auth_result['auth_url']}' target='_blank' style='
+                                <a href='{auth_result['auth_url']}' style='
                                     background-color: #4CAF50;
                                     color: white;
                                     padding: 15px 32px;
