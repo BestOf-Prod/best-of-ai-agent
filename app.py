@@ -74,6 +74,10 @@ def main():
     if 'credential_manager' not in st.session_state or st.session_state.credential_manager is None:
         st.session_state.credential_manager = CredentialManager()
         logger.info("Ensured credential manager initialization at startup")
+        
+        # Auto-load credentials on first initialization
+        auto_load_newspapers_credentials()
+        auto_initialize_google_drive()
     
     # Check for OAuth callback in URL
     handle_oauth_callback()
@@ -142,15 +146,11 @@ def ensure_credential_manager():
     if 'credential_manager' not in st.session_state or st.session_state.credential_manager is None:
         st.session_state.credential_manager = CredentialManager()
         logger.info("Ensured credential manager initialization")
-        
-        # Auto-load newspapers.com cookies if available
-        auto_load_newspapers_credentials()
-        
-        # Auto-initialize Google Drive if credentials are available
-        auto_initialize_google_drive()
 
 def auto_load_newspapers_credentials():
     """Auto-load newspapers.com credentials if available"""
+    logger.info("Starting auto-load newspapers.com credentials check")
+    
     # Only show loading screen if newspapers extractor is not already initialized
     show_loading = 'newspapers_extractor' not in st.session_state or st.session_state.newspapers_extractor is None
     
@@ -194,6 +194,8 @@ def _perform_newspapers_auth_load():
 
 def auto_initialize_google_drive():
     """Auto-initialize Google Drive if credentials are available"""
+    logger.info("Starting auto-initialize Google Drive credentials check")
+    
     # Only show loading screen if Google Drive manager is not already initialized
     show_loading = 'google_drive_manager' not in st.session_state or st.session_state.google_drive_manager is None
     

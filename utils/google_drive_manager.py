@@ -713,7 +713,27 @@ class GoogleDriveManager:
             }
             
         except Exception as e:
-            logger.error(f"Manual authentication failed: {str(e)}")
+            # Suppress OAuth redirect errors that occur during successful authentication
+            if "invalid_grant" in str(e) or "Bad Request" in str(e):
+                logger.debug(f"OAuth redirect handled with expected error: {e}")
+                # For OAuth redirect errors, still try to check if authentication actually succeeded
+                if os.path.exists(self.token_path):
+                    try:
+                        # Try to load the token to see if authentication actually succeeded
+                        creds = Credentials.from_authorized_user_file(self.token_path, SCOPES)
+                        if creds and creds.valid:
+                            self.creds = creds
+                            self.service = build('drive', 'v3', credentials=creds)
+                            logger.info("Authentication actually succeeded despite OAuth redirect error")
+                            return {
+                                'success': True,
+                                'message': 'Authentication successful! Google Drive is now configured.'
+                            }
+                    except Exception:
+                        pass
+            else:
+                logger.error(f"Manual authentication failed: {str(e)}")
+            
             return {
                 'success': False,
                 'error': f'Authentication failed: {str(e)}'
