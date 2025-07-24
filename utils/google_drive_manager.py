@@ -673,19 +673,26 @@ class GoogleDriveManager:
                 }
             
             # Create flow and exchange code for credentials
-            flow = InstalledAppFlow.from_client_secrets_file(
-                self.credentials_path, SCOPES)
-            
-            # Configure flow for offline access to get refresh tokens
-            flow.prompt = 'consent'
-            flow.access_type = 'offline'
-            flow.include_granted_scopes = True
-            
-            # For Replit, set up proper redirect URI
             if IS_REPLIT:
-                # Use the correct .replit.co domain format for Replit apps
+                # For Replit, use custom redirect URI approach
                 redirect_uri = self._get_oauth_redirect_uri()
-                flow.redirect_uri = redirect_uri
+                
+                # Load client secrets manually for custom flow
+                import json
+                with open(self.credentials_path, 'r') as f:
+                    client_config = json.load(f)
+                
+                # Create flow with explicit redirect URI
+                from google_auth_oauthlib.flow import Flow
+                flow = Flow.from_client_config(
+                    client_config, 
+                    scopes=SCOPES,
+                    redirect_uri=redirect_uri
+                )
+            else:
+                # Local development - use InstalledAppFlow
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    self.credentials_path, SCOPES)
             
             # Exchange authorization code for credentials
             flow.fetch_token(code=auth_code)
@@ -753,25 +760,29 @@ class GoogleDriveManager:
                     'error': f'Credentials file not found: {self.credentials_path}'
                 }
             
-            flow = InstalledAppFlow.from_client_secrets_file(
-                self.credentials_path, SCOPES)
-            
-            # For Replit, configure proper redirect URI
+            # For Replit, use custom redirect URI approach
             if IS_REPLIT:
-                # Use the correct .replit.co domain format for Replit apps
+                # Use the correct redirect URI for Replit apps
                 redirect_uri = self._get_oauth_redirect_uri()
                 logger.info(f"Using OAuth redirect URI for Replit: {redirect_uri}")
                 
-                # Set redirect URI on the flow and generate authorization URL
-                flow.redirect_uri = redirect_uri
+                # Load client secrets manually for custom flow
+                import json
+                with open(self.credentials_path, 'r') as f:
+                    client_config = json.load(f)
+                
+                # Create flow with explicit redirect URI
+                from google_auth_oauthlib.flow import Flow
+                flow = Flow.from_client_config(
+                    client_config, 
+                    scopes=SCOPES,
+                    redirect_uri=redirect_uri
+                )
+                
                 auth_url, _ = flow.authorization_url(
                     prompt='consent', 
                     access_type='offline'
                 )
-                
-                # Verify the redirect_uri is included in the auth_url
-                if 'redirect_uri=' not in auth_url:
-                    logger.warning(f"Redirect URI not found in generated auth URL: {auth_url}")
                 
                 return {
                     'success': True,
@@ -780,7 +791,9 @@ class GoogleDriveManager:
                     'environment': 'replit'
                 }
             else:
-                # Local development - let flow use default redirect_uri
+                # Local development - use InstalledAppFlow
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    self.credentials_path, SCOPES)
                 auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
                 
                 return {
