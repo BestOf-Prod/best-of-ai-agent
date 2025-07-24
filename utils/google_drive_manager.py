@@ -760,15 +760,18 @@ class GoogleDriveManager:
             if IS_REPLIT:
                 # Use the correct .replit.co domain format for Replit apps
                 redirect_uri = self._get_oauth_redirect_uri()
-                flow.redirect_uri = redirect_uri
                 logger.info(f"Using OAuth redirect URI for Replit: {redirect_uri}")
                 
-                # Explicitly pass redirect_uri to authorization_url
+                # Set redirect URI on the flow and generate authorization URL
+                flow.redirect_uri = redirect_uri
                 auth_url, _ = flow.authorization_url(
                     prompt='consent', 
-                    access_type='offline',
-                    redirect_uri=redirect_uri
+                    access_type='offline'
                 )
+                
+                # Verify the redirect_uri is included in the auth_url
+                if 'redirect_uri=' not in auth_url:
+                    logger.warning(f"Redirect URI not found in generated auth URL: {auth_url}")
                 
                 return {
                     'success': True,
