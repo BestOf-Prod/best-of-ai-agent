@@ -42,23 +42,56 @@ def handle_oauth_callback():
             state = query_params.get('state')
             logger.info(f"Found OAuth authorization code in URL, processing automatically (state: {state})")
             
-            # Authenticate with the code
-            result = authenticate_with_manual_code(auth_code)
-            
-            if result.get('success'):
-                st.success("✅ Google Drive authentication completed automatically!")
-                # Clear the URL parameters to avoid re-authentication
-                st.query_params.clear()
-                st.rerun()
-            else:
-                st.error(f"❌ Authentication failed: {result.get('error')}")
+            # Show a loading message while processing
+            with st.spinner("🔐 Completing Google Drive authentication..."):
+                # Authenticate with the code
+                result = authenticate_with_manual_code(auth_code)
+                
+                if result and result.get('success'):
+                    st.success("✅ Google Drive authentication completed automatically!")
+                    st.balloons()
+                    # Clear the URL parameters to avoid re-authentication
+                    st.query_params.clear()
+                    # Small delay to show success message before rerun
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    error_msg = result.get('error', 'Unknown error') if result else 'No result returned'
+                    logger.warning(f"Authentication attempt completed but may have failed: {error_msg}")
+                    # Still clear the URL to prevent loops, even if there was an error
+                    st.query_params.clear()
+                    # Check if authentication actually worked despite the error
+                    ensure_credential_manager()
+                    cred_manager = st.session_state.credential_manager
+                    google_status = cred_manager.get_google_credentials_status()
+                    if google_status['has_token']:
+                        st.success("✅ Google Drive authentication completed successfully!")
+                        st.balloons()
+                    else:
+                        st.error(f"❌ Authentication failed: {error_msg}")
+                    st.rerun()
                 
     except Exception as e:
         # Suppress OAuth redirect errors that occur during successful authentication
-        if "invalid_grant" in str(e) or "NoneType" in str(e):
+        if "invalid_grant" in str(e) or "NoneType" in str(e) or "Bad Request" in str(e):
             logger.debug(f"OAuth callback handled with expected redirect error: {e}")
+            # Even with errors, clear the URL to prevent loops
+            st.query_params.clear()
+            # Check if authentication actually worked despite the error
+            try:
+                ensure_credential_manager()
+                cred_manager = st.session_state.credential_manager
+                google_status = cred_manager.get_google_credentials_status()
+                if google_status['has_token']:
+                    st.success("✅ Google Drive authentication completed successfully!")
+                    st.balloons()
+                    st.rerun()
+            except Exception:
+                pass
         else:
             logger.error(f"Error handling OAuth callback: {e}")
+            # Clear URL even on unexpected errors to prevent loops
+            st.query_params.clear()
 
 def main():
     """Enhanced main application entry point"""
@@ -80,8 +113,8 @@ def main():
         # auto_load_newspapers_credentials()
         # auto_initialize_google_drive()
     
-    # Disable OAuth callback handling to prevent loops with simple credential approach
-    # handle_oauth_callback()
+    # Handle OAuth callback but only when needed
+    handle_oauth_callback()
     
     # Initialize session state variables
     initialize_session_state()
@@ -2204,14 +2237,36 @@ def use_saved_google_credentials():
                     
                     # Automatically get auth URL for token generation
                     try:
+                        # Create drive manager without auto-init to avoid service initialization issues
                         drive_manager = GoogleDriveManager(
                             credentials_path=google_status['credentials_path'],
-                            token_path=google_status['token_path']
+                            token_path=google_status['token_path'],
+                            auto_init=False
                         )
+                        
+                        # Debug: Check if GOOGLE_OAUTH_REDIRECT_URI is set
+                        redirect_uri_env = os.environ.get('GOOGLE_OAUTH_REDIRECT_URI')
+                        if not redirect_uri_env:
+                            st.error("❌ GOOGLE_OAUTH_REDIRECT_URI environment variable is not set")
+                            st.info("💡 Set this environment variable in Replit: `GOOGLE_OAUTH_REDIRECT_URI=https://your-app-url.replit.app/oauth/callback`")
+                            return
+                        
+                        logger.info(f"Using GOOGLE_OAUTH_REDIRECT_URI: {redirect_uri_env}")
                         auth_result = drive_manager.get_auth_url()
                         
                         if auth_result['success']:
                             st.success("🔗 Click the link below to authenticate and get your token:")
+                            
+                            # Debug: Show what redirect URI is being used
+                            used_redirect_uri = auth_result.get('redirect_uri', 'Not specified')
+                            st.info(f"🔍 Using redirect URI: `{used_redirect_uri}`")
+                            
+                            # Check if redirect_uri is in the auth URL
+                            if 'redirect_uri=' in auth_result['auth_url']:
+                                st.success("✅ Redirect URI is included in the authorization URL")
+                            else:
+                                st.error("❌ Redirect URI is missing from the authorization URL")
+                                logger.error(f"Auth URL missing redirect_uri: {auth_result['auth_url']}")
                             
                             # Create a simple authentication link
                             st.markdown(f"""
@@ -2231,24 +2286,7 @@ def use_saved_google_credentials():
                             </div>
                             """, unsafe_allow_html=True)
                             
-                            st.info("💡 After authentication, copy the authorization code and paste it below:")
-                            
-                            # Manual code input
-                            auth_code = st.text_input(
-                                "Authorization Code", 
-                                key="manual_auth_code",
-                                help="Paste the authorization code from Google here",
-                                type="password"
-                            )
-                            
-                            if auth_code and st.button("Complete Authentication", key="complete_auth"):
-                                code_result = drive_manager.authenticate_with_code(auth_code)
-                                if code_result['success']:
-                                    st.success("✅ Token generated successfully!")
-                                    st.balloons()
-                                    st.rerun()
-                                else:
-                                    st.error(f"❌ Authentication failed: {code_result['error']}")
+                            st.info("💡 **No need to copy/paste anything!** After you authorize, you'll automatically return here and be connected.")
                         else:
                             st.error(f"❌ Failed to generate auth URL: {auth_result['error']}")
                     except Exception as e:
