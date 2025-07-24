@@ -76,9 +76,8 @@ def main():
         st.session_state.credential_manager = CredentialManager()
         logger.info("Ensured credential manager initialization at startup")
         
-        # Auto-load credentials on first initialization
-        auto_load_newspapers_credentials()
-        # Disable auto Google Drive initialization to prevent OAuth loops
+        # Disable auto-authentication for both services to prevent loops and provide user control
+        # auto_load_newspapers_credentials()
         # auto_initialize_google_drive()
     
     # Disable OAuth callback handling to prevent loops with simple credential approach
@@ -249,20 +248,22 @@ def streamlined_sidebar_config():
     cred_manager = st.session_state.credential_manager
     newspapers_status = cred_manager.get_newspapers_status()
     
-    # Authentication section (collapsed by default)
-    with st.sidebar.expander("🔐 Newspapers.com Login", expanded=False):
-        uploaded_cookies = st.file_uploader("Cookies File (Required)", type=['json'], help="Upload your newspapers.com cookies JSON file")
+    # Newspapers.com Authentication section (collapsed by default)
+    with st.sidebar.expander("🔐 Newspapers.com Authentication", expanded=False):
+        # Simple button to use saved credentials
+        if st.button("📁 Use Saved Credentials", key="use_saved_newspapers_creds"):
+            use_saved_newspapers_credentials()
         
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Login", key="init_auth"):
-                if uploaded_cookies is not None:
-                    initialize_newspapers_authentication_with_cookies(uploaded_cookies)
-                else:
-                    st.warning("Please upload a cookies file to authenticate")
-        with col2:
-            if st.button("Test", key="test_auth"):
-                test_newspapers_authentication()
+        st.divider()
+        st.caption("🔧 Manual Setup (if no saved credentials)")
+        
+        uploaded_cookies = st.file_uploader("Upload Cookies File", type=['json'], help="Upload your newspapers.com cookies JSON file")
+        
+        if st.button("Save New Cookies", key="save_cookies"):
+            if uploaded_cookies is not None:
+                initialize_newspapers_authentication_with_cookies(uploaded_cookies)
+            else:
+                st.warning("Please upload a cookies file first")
         
         # Show credential management options
         if newspapers_status['has_cookies']:
@@ -2118,6 +2119,48 @@ def show_redirect_uri_setup():
     except Exception as e:
         logger.error(f"Failed to show setup instructions: {str(e)}")
         st.error(f"❌ Error generating setup instructions: {str(e)}")
+
+def use_saved_newspapers_credentials():
+    """Use existing newspapers.com cookies to initialize authentication"""
+    try:
+        with st.spinner("📁 Loading saved newspapers.com credentials..."):
+            ensure_credential_manager()
+            cred_manager = st.session_state.credential_manager
+            cookies_result = cred_manager.load_newspapers_cookies()
+            
+            if not cookies_result['success']:
+                st.error("❌ No saved newspapers.com cookies found. Please upload a cookies file first.")
+                st.info("💡 Use the 'Upload Cookies File' section below to save cookies")
+                return
+            
+            # Initialize extractor with loaded cookies
+            extractor = NewspapersComExtractor(auto_auth=True)
+            extractor.cookie_manager.cookies = cookies_result['cookies']
+            
+            # Try to initialize
+            success = extractor.initialize()
+            
+            # Store in session state
+            st.session_state.newspapers_extractor = extractor
+            st.session_state.authentication_status = extractor.get_authentication_status()
+            
+            if success:
+                st.success("✅ Newspapers.com connected successfully using saved cookies!")
+                st.balloons()
+                logger.info("Newspapers.com initialized successfully with saved cookies")
+                
+                # Show cookie info
+                metadata = cookies_result.get('metadata', {})
+                cookie_count = metadata.get('cookie_count', 'unknown')
+                saved_at = metadata.get('saved_at', 'unknown date')
+                st.info(f"🍪 Using {cookie_count} cookies saved on {saved_at[:10]}")
+            else:
+                st.warning("⚠️ Cookies loaded but authentication may have limited access")
+                st.info("💡 Try uploading fresh cookies if you encounter issues")
+                
+    except Exception as e:
+        logger.error(f"Failed to use saved newspapers.com credentials: {str(e)}")
+        st.error(f"❌ Error loading saved credentials: {str(e)}")
 
 def use_saved_google_credentials():
     """Use existing Google credentials JSON files to initialize Google Drive"""
