@@ -316,15 +316,9 @@ def streamlined_sidebar_config():
             
             if is_replit:
                 st.write("**Replit Authentication:**")
-                col1, col2 = st.columns(2)
                 
-                with col1:
-                    if st.button("📁 Use Saved Credentials", key="use_saved_creds"):
-                        use_saved_google_credentials()
-                
-                with col2:
-                    if st.button("Test Connection", key="test_gdrive"):
-                        test_google_drive_connection()
+                if st.button("📁 Use Saved Credentials", key="use_saved_creds"):
+                    use_saved_google_credentials()
                 
                 # Fallback manual auth code input
                 st.divider()
