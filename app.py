@@ -78,10 +78,11 @@ def main():
         
         # Auto-load credentials on first initialization
         auto_load_newspapers_credentials()
-        auto_initialize_google_drive()
+        # Disable auto Google Drive initialization to prevent OAuth loops
+        # auto_initialize_google_drive()
     
-    # Check for OAuth callback in URL
-    handle_oauth_callback()
+    # Disable OAuth callback handling to prevent loops with simple credential approach
+    # handle_oauth_callback()
     
     # Initialize session state variables
     initialize_session_state()
@@ -315,19 +316,15 @@ def streamlined_sidebar_config():
             
             if is_replit:
                 st.write("**Replit Authentication:**")
-                col1, col2, col3 = st.columns(3)
+                col1, col2 = st.columns(2)
                 
                 with col1:
-                    if st.button("🔗 Connect Google Drive", key="get_auth_url"):
-                        get_google_drive_auth_url_automatic()
+                    if st.button("📁 Use Saved Credentials", key="use_saved_creds"):
+                        use_saved_google_credentials()
                 
                 with col2:
                     if st.button("Test Connection", key="test_gdrive"):
                         test_google_drive_connection()
-                
-                with col3:
-                    if st.button("🔍 Check Redirect URI", key="check_redirect_uri"):
-                        show_redirect_uri_debug()
                 
                 # Fallback manual auth code input
                 st.divider()
@@ -2127,6 +2124,50 @@ def show_redirect_uri_setup():
     except Exception as e:
         logger.error(f"Failed to show setup instructions: {str(e)}")
         st.error(f"❌ Error generating setup instructions: {str(e)}")
+
+def use_saved_google_credentials():
+    """Use existing Google credentials JSON files to initialize Google Drive"""
+    try:
+        with st.spinner("📁 Loading saved Google Drive credentials..."):
+            ensure_credential_manager()
+            cred_manager = st.session_state.credential_manager
+            google_status = cred_manager.get_google_credentials_status()
+            
+            if not google_status['has_credentials']:
+                st.error("❌ No credentials.json file found. Please upload your Google credentials first.")
+                return
+            
+            # Initialize Google Drive Manager with saved credentials
+            google_drive_manager = GoogleDriveManager(
+                credentials_path=google_status['credentials_path'],
+                token_path=google_status['token_path'],
+                auto_init=True
+            )
+            
+            # Store in session state
+            st.session_state.google_drive_manager = google_drive_manager
+            
+            if google_drive_manager.service:
+                st.success("✅ Google Drive connected successfully using saved credentials!")
+                st.balloons()
+                logger.info("Google Drive initialized successfully with saved credentials")
+                
+                # Show some info about the connection
+                if google_status['has_token']:
+                    st.info("🔐 Using existing authentication token - no OAuth required!")
+                else:
+                    st.info("📋 Credentials loaded - you may need to authenticate once for a new token")
+            else:
+                if google_status['has_token']:
+                    st.warning("⚠️ Credentials loaded but service initialization failed. Token may be expired.")
+                    st.info("💡 Try deleting the token.json file and re-authenticating")
+                else:
+                    st.warning("⚠️ Credentials loaded but no authentication token found.")
+                    st.info("💡 You'll need to complete OAuth authentication to get a token")
+                
+    except Exception as e:
+        logger.error(f"Failed to use saved Google credentials: {str(e)}")
+        st.error(f"❌ Error loading saved credentials: {str(e)}")
 
 def show_redirect_uri_debug():
     """Show current redirect URI configuration for debugging"""
