@@ -686,9 +686,12 @@ class GoogleDriveManager:
                 from google_auth_oauthlib.flow import Flow
                 flow = Flow.from_client_config(
                     client_config, 
-                    scopes=SCOPES,
-                    redirect_uri=redirect_uri
+                    scopes=SCOPES
                 )
+                
+                # Explicitly set the redirect URI after flow creation
+                flow.redirect_uri = redirect_uri
+                logger.info(f"Auth code exchange - Flow redirect_uri set to: {flow.redirect_uri}")
             else:
                 # Local development - use InstalledAppFlow
                 flow = InstalledAppFlow.from_client_secrets_file(
@@ -783,9 +786,12 @@ class GoogleDriveManager:
                 from google_auth_oauthlib.flow import Flow
                 flow = Flow.from_client_config(
                     client_config, 
-                    scopes=SCOPES,
-                    redirect_uri=redirect_uri
+                    scopes=SCOPES
                 )
+                
+                # Explicitly set the redirect URI after flow creation
+                flow.redirect_uri = redirect_uri
+                logger.info(f"Flow redirect_uri set to: {flow.redirect_uri}")
                 
                 auth_url, state = flow.authorization_url(
                     prompt='consent', 
