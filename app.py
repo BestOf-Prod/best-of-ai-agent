@@ -1248,6 +1248,104 @@ def handle_processed_articles_conversion():
             # Single featured button
             if st.button("📄 Download Single Word Document", type="primary", use_container_width=True, help="Create one Word document with all articles and export images to a separate folder"):
                 convert_to_single_word_document(selected_articles, successful_results)
+        
+        # Display persistent Word document results if available
+        display_persistent_word_doc_results()
+
+def display_persistent_word_doc_results():
+    """Display persistent Word document download results that survive page reloads"""
+    if 'word_doc_result' not in st.session_state or 'word_doc_timestamp' not in st.session_state:
+        return
+    
+    result = st.session_state.word_doc_result
+    timestamp = st.session_state.word_doc_timestamp
+    
+    st.write("### 📄 Recently Created Word Document")
+    
+    # Generate download filename
+    doc_filename = f"enhanced_articles_{timestamp}.docx"
+    
+    # Show success message
+    with st.container():
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            st.success(f"✅ Enhanced single Word document available!")
+        with col2:
+            st.info(f"Contains {result['articles_count']} articles with {result['images_count']} images")
+    
+    # Word document download button
+    with st.container():
+        # Read the document for download
+        if os.path.exists(result['document_path']):
+            with open(result['document_path'], 'rb') as f:
+                doc_data = f.read()
+            
+            st.write(f"📄 **{doc_filename}** ({result['document_size']:,} bytes)")
+            
+            st.download_button(
+                label="📥 Download Single Word Document",
+                data=doc_data,
+                file_name=doc_filename,
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                type="primary",
+                use_container_width=True
+            )
+    
+    # Show images folder info and download button
+    if result['images_count'] > 0:
+        st.write("### 📁 Images Folder")
+        st.info(f"All {result['images_count']} images have been exported to: **{os.path.basename(result['images_folder'])}**")
+        st.write("This folder contains all original images from the articles, organized with descriptive filenames.")
+        
+        # Create zip file with images for download
+        images_zip_path = result['images_folder'] + '.zip'
+        try:
+            import zipfile
+            if not os.path.exists(images_zip_path):
+                with zipfile.ZipFile(images_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for img in result['images']:
+                        if os.path.exists(img['path']):
+                            zipf.write(img['path'], img['filename'])
+            
+            if os.path.exists(images_zip_path):
+                with open(images_zip_path, 'rb') as f:
+                    zip_data = f.read()
+                
+                st.download_button(
+                    label="📁 Download Images Folder",
+                    data=zip_data,
+                    file_name=f"article_images_{timestamp}.zip",
+                    mime="application/zip"
+                )
+        except Exception as e:
+            st.warning("Images folder created but zip download failed")
+    
+    # Show Google Drive links if available
+    if result.get('google_drive') and result['google_drive'].get('success'):
+        drive_info = result['google_drive']
+        st.success("🌐 Successfully uploaded to Google Drive!")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown(f"**📁 [Open Google Drive Folder]({drive_info['project_folder_url']})**")
+            st.caption(f"Project: {drive_info['project_name']}")
+        
+        with col2:
+            st.markdown(f"**📄 [Open Document]({drive_info['document']['file_url']})**")
+            st.markdown(f"**🖼️ [Download Images]({drive_info['images_zip']['file_url']})**")
+    
+    elif result.get('google_drive') and not result['google_drive'].get('success'):
+        st.warning(f"⚠️ Google Drive upload failed: {result['google_drive'].get('error', 'Unknown error')}")
+        st.info("💡 Document and images are still available for local download above.")
+    
+    # Add clear button
+    if st.button("🗑️ Clear Results", help="Clear the Word document results"):
+        if 'word_doc_result' in st.session_state:
+            del st.session_state.word_doc_result
+        if 'word_doc_timestamp' in st.session_state:
+            del st.session_state.word_doc_timestamp
+        st.rerun()
 
 def determine_layout_display(content_length):
     """Return display string for layout type"""
@@ -1632,129 +1730,14 @@ def convert_to_single_word_document(selected_indices, results):
                 progress_placeholder.empty()
                 status_text.empty()
                 
+                # Store result in session state for persistence
+                st.session_state.word_doc_result = result
+                st.session_state.word_doc_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                
                 st.balloons()
-                st.success(f"✅ Document creation completed!")
-                
-                # Generate download filename
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                doc_filename = f"enhanced_articles_{timestamp}.docx"
-                
-                # Show success message with green background
-                with st.container():
-                    col1, col2 = st.columns([1, 1])
-                    with col1:
-                        st.success(f"✅ Successfully created enhanced single Word document with {result['articles_count']} articles in original order!")
-                    with col2:
-                        st.info(f"Contains {result['articles_count']} articles with {result['images_count']} images")
-                
-                # Featured download button
-                with st.container():
-                    # Read the document for download
-                    with open(result['document_path'], 'rb') as f:
-                        doc_data = f.read()
-                    
-                    st.write("### 📄 Download Single Word Document")
-                    st.write(f"📄 **{doc_filename}** ({result['document_size']:,} bytes)")
-                    
-                    st.download_button(
-                        label="📥 Download Single Word Document",
-                        data=doc_data,
-                        file_name=doc_filename,
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        type="primary",
-                        use_container_width=True
-                    )
-                
-                # Show Google Drive links if available
-                if result.get('google_drive') and result['google_drive'].get('success'):
-                    drive_info = result['google_drive']
-                    st.success("🌐 Successfully uploaded to Google Drive!")
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.markdown(f"**📁 [Open Google Drive Folder]({drive_info['project_folder_url']})**")
-                        st.caption(f"Project: {drive_info['project_name']}")
-                    
-                    with col2:
-                        st.markdown(f"**📄 [Open Document]({drive_info['document']['file_url']})**")
-                        st.markdown(f"**🖼️ [Download Images]({drive_info['images_zip']['file_url']})**")
-                
-                elif result.get('google_drive') and not result['google_drive'].get('success'):
-                    st.warning(f"⚠️ Google Drive upload failed: {result['google_drive'].get('error', 'Unknown error')}")
-                    st.info("💡 Document and images are still available for local download above.")
-                
-                # Show document details
-                with st.expander("📄 Document Details"):
-                    st.write(f"**Document:** {doc_filename}")
-                    st.write(f"**Size:** {result['document_size']:,} bytes")
-                    st.write(f"**Articles:** {result['articles_count']}")
-                    st.write(f"**Images:** {result['images_count']}")
-                    st.write(f"**Images folder:** {os.path.basename(result['images_folder'])}")
-                    
-                    # Google Drive details if available
-                    if result.get('google_drive') and result['google_drive'].get('success'):
-                        st.write("**Google Drive:**")
-                        drive_info = result['google_drive']
-                        st.write(f"  • Project folder: {drive_info['project_name']}")
-                        st.write(f"  • Document: {drive_info['document']['file_name']} ({int(drive_info['document']['file_size']):,} bytes)")
-                        st.write(f"  • Images zip: {drive_info['images_zip']['file_name']} ({int(drive_info['images_zip']['file_size']):,} bytes)")
-                    
-                    st.write("**Articles included:**")
-                    for i, article in enumerate(result['articles']):
-                        st.write(f"  {i+1}. **{article['headline']}** - {article['source']} ({article['images']} images)")
-                    
-                    if result['images']:
-                        st.write("**Images exported:**")
-                        for img in result['images']:
-                            st.write(f"  • {img['filename']} ({img['source']})")
-                    
-                    st.write("**Enhanced Features:**")
-                    st.write("• Articles in exact original document order")
-                    st.write("• Professional newspaper-style formatting with dropheads")
-                    st.write("• Enhanced image naming with article index and source")
-                    st.write("• All images embedded in the document")
-                    st.write("• Separate images folder with descriptive filenames")
-                    st.write("• Page breaks between articles for clean separation")
-                    st.write("• Complete source and date information")
-                    st.write("• URL references for verification and attribution")
-                    if result.get('google_drive') and result['google_drive'].get('success'):
-                        st.write("• **Automatically uploaded to Google Drive with public access**")
-                
-                # Show images folder info
-                if result['images_count'] > 0:
-                    st.write("### 📁 Images Folder")
-                    st.info(f"All {result['images_count']} images have been exported to: **{os.path.basename(result['images_folder'])}**")
-                    st.write("This folder contains all original images from the articles, organized with descriptive filenames.")
-                    
-                    # Create zip file with images for download
-                    images_zip_path = result['images_folder'] + '.zip'
-                    try:
-                        import zipfile
-                        logger.info(f"Creating images zip file with {len(result['images'])} images")
-                        with zipfile.ZipFile(images_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                            for img in result['images']:
-                                logger.info(f"Adding {img['source']} image to zip: {img['filename']} from {img['path']}")
-                                zipf.write(img['path'], img['filename'])
-                        
-                        with open(images_zip_path, 'rb') as f:
-                            zip_data = f.read()
-                        
-                        logger.info(f"Successfully created images zip file: {len(zip_data)} bytes")
-                        
-                        st.download_button(
-                            label="📁 Download Images Folder",
-                            data=zip_data,
-                            file_name=f"article_images_{timestamp}.zip",
-                            mime="application/zip"
-                        )
-                        
-                        # Clean up zip file
-                        os.remove(images_zip_path)
-                        
-                    except Exception as e:
-                        logger.error(f"Failed to create images zip: {str(e)}")
-                        st.warning("Images folder created but zip download failed")
+                st.success(f"✅ Enhanced single Word document created successfully!")
+                st.info(f"Document contains {result['articles_count']} articles with {result['images_count']} images")
+                st.info("📥 Download buttons available below!")
                 
             else:
                 # Clear progress elements even when there's an error
