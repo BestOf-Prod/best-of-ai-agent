@@ -1628,6 +1628,10 @@ def convert_to_single_word_document(selected_indices, results):
             progress_placeholder.progress(1.0)
             
             if result:
+                # Clear progress elements to prevent UI interference
+                progress_placeholder.empty()
+                status_text.empty()
+                
                 st.balloons()
                 st.success(f"✅ Document creation completed!")
                 
@@ -1753,9 +1757,15 @@ def convert_to_single_word_document(selected_indices, results):
                         st.warning("Images folder created but zip download failed")
                 
             else:
+                # Clear progress elements even when there's an error
+                progress_placeholder.empty()
+                status_text.empty()
                 st.error("❌ Failed to create single Word document")
                 
         except Exception as e:
+            # Clear progress elements in case of exception
+            progress_placeholder.empty()
+            status_text.empty()
             logger.error(f"Single document conversion error: {str(e)}")
             st.error(f"Single document conversion error: {str(e)}")
 
