@@ -747,6 +747,14 @@ def clear_extracted_data():
     st.session_state.extracted_urls = []
     st.session_state.batch_results = None
     st.session_state.search_results = []
+    # Clear article selection state
+    if 'select_all_articles' in st.session_state:
+        del st.session_state.select_all_articles
+    # Clear Word document results
+    if 'word_doc_result' in st.session_state:
+        del st.session_state.word_doc_result
+    if 'word_doc_timestamp' in st.session_state:
+        del st.session_state.word_doc_timestamp
     logger.info("Cleared all extracted data")
     st.success("Cleared all extracted data")
 
@@ -1207,19 +1215,62 @@ def handle_processed_articles_conversion():
     st.write("### 📊 Use Processed Articles")
     
     successful_results = st.session_state.batch_results.get('results', [])
-    st.write(f"**Available articles:** {len(successful_results)}")
+    
+    # Show source breakdown
+    source_breakdown = {}
+    for article in successful_results:
+        source = article.get('source', 'Unknown')
+        source_breakdown[source] = source_breakdown.get(source, 0) + 1
+    
+    st.write(f"**Available articles:** {len(successful_results)} total")
+    if source_breakdown:
+        breakdown_text = ", ".join([f"{count} from {source}" for source, count in source_breakdown.items()])
+        st.write(f"**Sources:** {breakdown_text}")
     
     # Article selection
     if successful_results:
+        st.write("### 📄 Select Articles to Convert")
+        
+        # Add Select All / Select None buttons
+        col1, col2, col3 = st.columns([1, 1, 4])
+        with col1:
+            if st.button("✅ Select All", help="Select all articles"):
+                st.session_state.select_all_articles = True
+                st.rerun()
+        with col2:
+            if st.button("❌ Select None", help="Deselect all articles"):
+                st.session_state.select_all_articles = False
+                st.rerun()
+        
+        # Determine default selection
+        if hasattr(st.session_state, 'select_all_articles'):
+            if st.session_state.select_all_articles:
+                default_selection = list(range(len(successful_results)))
+            else:
+                default_selection = []
+            # Clear the flag after using it
+            del st.session_state.select_all_articles
+        else:
+            # Default to all articles selected
+            default_selection = list(range(len(successful_results)))
+        
         selected_articles = st.multiselect(
-            "Select articles to convert:",
+            "Choose articles to include in your document:",
             range(len(successful_results)),
-            default=list(range(min(3, len(successful_results)))),  # Select first 3 by default
-            format_func=lambda i: f"{i+1}. {successful_results[i].get('headline', 'Untitled')[:50]}..."
+            default=default_selection,
+            format_func=lambda i: f"{i+1}. {successful_results[i].get('headline', 'Untitled')[:50]}... [{successful_results[i].get('source', 'Unknown')}]",
+            help=f"All {len(successful_results)} articles from newspapers.com and other sources are available"
         )
         
         if selected_articles:
-            st.write(f"**Selected:** {len(selected_articles)} articles")
+            # Show selected articles breakdown by source
+            selected_breakdown = {}
+            for idx in selected_articles:
+                source = successful_results[idx].get('source', 'Unknown')
+                selected_breakdown[source] = selected_breakdown.get(source, 0) + 1
+            
+            selected_breakdown_text = ", ".join([f"{count} from {source}" for source, count in selected_breakdown.items()])
+            st.write(f"**Selected:** {len(selected_articles)} articles ({selected_breakdown_text})")
             
             # Show layout estimation for combined content
             total_content_length = 0
