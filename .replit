@@ -3,7 +3,7 @@ run = "streamlit run app.py"
 
 [nix]
 channel = "stable-25_05"
-packages = ["apt", "geckodriver", "glibcLocales", "libGL", "libGLU", "tesseract", "chromedriver", "chromium", "streamlit"]
+packages = ["apt", "geckodriver", "glibcLocales", "libGL", "libGLU", "tesseract", "chromedriver", "streamlit", "chromedriver", "chromium"]
 
 [deployment]
 run = ["sh", "-c", "streamlit run app.py"]
