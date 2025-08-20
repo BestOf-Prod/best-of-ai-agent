@@ -2,9 +2,10 @@ services:
   - type: web
     name: best-of-ai-agent
     env: python
+    runtime: python-3.12
     buildCommand: |
       python -m pip install --upgrade pip
-      pip install -r requirements.txt
+      pip install -r requirements-render.txt
     startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
     envVars:
       - key: PYTHONUNBUFFERED
