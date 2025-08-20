@@ -19,7 +19,12 @@ from utils.storage_manager import StorageManager
 from utils.paragraph_formatter import format_article_paragraphs
 
 # Import capsule parser for typography specifications
-from utils.capsule_parser import get_typography_for_article
+try:
+    from utils.capsule_parser import get_typography_for_article
+except ImportError as e:
+    logger.warning(f"Failed to import capsule parser: {e}. Typography features disabled.")
+    def get_typography_for_article(*args, **kwargs):
+        return None
 
 # Setup logging
 logger = setup_logging(__name__)

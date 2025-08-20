@@ -8,9 +8,19 @@ for different newspaper elements based on word count ranges.
 import re
 import logging
 from typing import Dict, List, Optional, Tuple
-from docx import Document
 from dataclasses import dataclass
 from pathlib import Path
+
+# Try to import docx with fallback
+try:
+    from docx import Document
+    DOCX_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"Failed to import python-docx: {e}. Document capsule parsing disabled.")
+    DOCX_AVAILABLE = False
+    class Document:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("python-docx not available")
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +267,9 @@ def get_typography_for_article(word_count: int, source_url: str = "") -> Optiona
     Returns:
         DocumentCapsule object or None if not found
     """
+    if not DOCX_AVAILABLE:
+        logger.warning("Document capsule parsing not available - python-docx not installed")
+        return None
     parser = get_capsule_parser()
     
     # Import font matrix from newspaper converter
