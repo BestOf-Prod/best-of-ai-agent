@@ -2,11 +2,11 @@ modules = ["python-3.12"]
 run = "streamlit run app.py"
 
 [nix]
-channel = "stable-24_05"
-packages = ["apt", "geckodriver", "glibcLocales", "libGL", "libGLU", "tesseract"]
+channel = "stable-25_05"
+packages = ["apt", "geckodriver", "glibcLocales", "libGL", "libGLU", "tesseract", "chromedriver", "chromium", "streamlit"]
 
 [deployment]
-run = ["sh", "-c", "streamlit run app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true --server.enableCORS=false --server.enableWebsocketCompression=false"]
+run = ["sh", "-c", "streamlit run app.py"]
 deploymentTarget = "cloudrun"
 
 [[ports]]
