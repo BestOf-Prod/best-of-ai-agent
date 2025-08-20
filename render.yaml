@@ -2,7 +2,7 @@ services:
   - type: web
     name: best-of-ai-agent
     env: python
-    runtime: python-3.12
+    runtime: python-3.12.8
     buildCommand: |
       python -m pip install --upgrade pip
       pip install -r requirements-render.txt
