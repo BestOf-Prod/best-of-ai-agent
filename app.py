@@ -2,7 +2,20 @@
 # Enhanced main application with auto-cookie authentication
 import streamlit as st
 import streamlit.components.v1
-import pandas as pd
+import sys
+
+# Fix for Replit numpy import issues
+try:
+    import pandas as pd
+except ImportError as e:
+    if "numpy" in str(e).lower():
+        st.error("❌ **Environment Issue**: NumPy/Pandas import conflict detected.")
+        st.error("**Solution**: In Replit, go to Shell and run: `kill 1` then restart the app.")
+        st.info("**Alternative**: Use the `run_app.py` script instead of running `app.py` directly.")
+        st.code("python run_app.py", language="bash")
+        st.stop()
+    else:
+        raise e
 import logging
 from datetime import datetime
 import uuid
