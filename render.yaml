@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: best-of-ai-agent
+    env: python
+    buildCommand: |
+      python -m pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: 1
+      - key: PYTHONNOUSERSITE
+        value: 1
+      - key: NUMPY_EXPERIMENTAL_ARRAY_FUNCTION
+        value: 0
+    plan: free
