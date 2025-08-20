@@ -4,9 +4,17 @@ services:
     env: python
     runtime: python-3.12.8
     buildCommand: |
+      # Install system dependencies for Chrome
+      apt-get update
+      apt-get install -y wget gnupg2 software-properties-common
+      wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add -
+      echo "deb http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list
+      apt-get update
+      apt-get install -y google-chrome-stable xvfb
+      # Install Python dependencies
       python -m pip install --upgrade pip
       pip install -r requirements-render.txt
-    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --server.enableCORS false --server.enableXsrfProtection false
     envVars:
       - key: PYTHONUNBUFFERED
         value: 1
@@ -14,4 +22,12 @@ services:
         value: 1
       - key: NUMPY_EXPERIMENTAL_ARRAY_FUNCTION
         value: 0
+      - key: RENDER
+        value: 1
+      - key: CHROME_EXECUTABLE_PATH
+        value: /usr/bin/google-chrome-stable
+      - key: DISPLAY
+        value: :99
+      - key: STREAMLIT_SERVER_HEADLESS
+        value: true
     plan: free

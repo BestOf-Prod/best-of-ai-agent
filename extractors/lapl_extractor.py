@@ -34,6 +34,7 @@ class LAPLExtractor:
         self.is_authenticated = False
         self.base_domain = "lapl.idm.oclc.org"
         self.newspaper_archive_domain = "access-newspaperarchive-com.lapl.idm.oclc.org"
+        self.is_render = 'RENDER' in os.environ or 'RENDER_SERVICE_ID' in os.environ
         
         logger.info("LAPL Extractor initialized")
         
@@ -130,6 +131,27 @@ class LAPLExtractor:
             chrome_options.add_argument("--disable-gpu")
             chrome_options.add_argument("--window-size=1920,1080")
             chrome_options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+            
+            # Add Render-specific memory optimizations
+            if self.is_render:
+                chrome_options.add_argument('--memory-pressure-off')
+                chrome_options.add_argument('--max_old_space_size=256')
+                chrome_options.add_argument('--disable-background-mode')
+                chrome_options.add_argument('--disable-plugins')
+                chrome_options.add_argument('--disable-java')
+                chrome_options.add_argument('--disable-component-extensions-with-background-pages')
+                chrome_options.add_argument('--disable-software-rasterizer')
+                chrome_options.add_argument('--disable-accelerated-2d-canvas')
+                chrome_options.add_argument('--disable-accelerated-video-decode')
+                chrome_options.add_argument('--disable-accelerated-video-encode')
+                chrome_options.add_argument('--max-memory-usage=128MB')
+                chrome_options.add_argument('--single-process')
+                chrome_options.add_argument('--disable-site-isolation-trials')
+                chrome_options.add_argument('--disable-features=VizDisplayCompositor,VizHitTestSurfaceLayer')
+                chrome_options.add_argument('--aggressive-cache-discard')
+                chrome_options.add_argument('--disable-shared-workers')
+                chrome_options.add_argument('--disable-service-worker-navigation-preload')
+                logger.info("Applied Render-specific ultra-low memory Chrome options for LAPL extractor")
             
             # Initialize driver
             self.driver = webdriver.Chrome(options=chrome_options)

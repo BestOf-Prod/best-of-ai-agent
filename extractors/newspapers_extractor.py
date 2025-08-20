@@ -85,6 +85,7 @@ class SeleniumLoginManager:
         self.last_login = None
         self.login_credentials = None
         self.is_replit = 'REPL_ID' in os.environ or 'REPL_SLUG' in os.environ
+        self.is_render = 'RENDER' in os.environ or 'RENDER_SERVICE_ID' in os.environ
         # Detect if we're in a Replit deployment (more restrictive than IDE)
         self.is_replit_deployment = (
             self.is_replit and 
@@ -150,9 +151,9 @@ class SeleniumLoginManager:
             chrome_options.add_argument('--disable-features=VizDisplayCompositor')
             
             # Add deployment-specific options for even more resource constraints
-            if self.is_replit_deployment:
+            if self.is_replit_deployment or self.is_render:
                 chrome_options.add_argument('--memory-pressure-off')
-                chrome_options.add_argument('--max_old_space_size=512')
+                chrome_options.add_argument('--max_old_space_size=256')  # Even more aggressive for Render
                 chrome_options.add_argument('--disable-background-mode')
                 chrome_options.add_argument('--disable-plugins')
                 chrome_options.add_argument('--disable-java')
@@ -165,7 +166,19 @@ class SeleniumLoginManager:
                 chrome_options.add_argument('--disable-smooth-scrolling')
                 chrome_options.add_argument('--window-size=800,600')  # Smaller window for deployment
                 chrome_options.add_argument('--remote-debugging-port=9222')  # Enable remote debugging
-                logger.info("Applied deployment-specific Chrome options for resource constraints")
+                
+                # Render-specific ultra-low memory options
+                if self.is_render:
+                    chrome_options.add_argument('--max-memory-usage=128MB')
+                    chrome_options.add_argument('--single-process')  # Force single process mode
+                    chrome_options.add_argument('--disable-site-isolation-trials')
+                    chrome_options.add_argument('--disable-features=VizDisplayCompositor,VizHitTestSurfaceLayer')
+                    chrome_options.add_argument('--aggressive-cache-discard')
+                    chrome_options.add_argument('--disable-shared-workers')
+                    chrome_options.add_argument('--disable-service-worker-navigation-preload')
+                    logger.info("Applied Render-specific ultra-low memory Chrome options")
+                else:
+                    logger.info("Applied deployment-specific Chrome options for resource constraints")
             
             # Add batch processing options for improved stability
             if self.is_batch_processing:
