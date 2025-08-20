@@ -17,6 +17,7 @@ class CredentialManager:
         self.is_replit = bool(os.environ.get('REPL_ID'))
         self.credentials_dir = self._get_credentials_directory()
         self.newspapers_cookies_file = os.path.join(self.credentials_dir, 'newspapers_cookies.json')
+        self.lapl_cookies_file = os.path.join(self.credentials_dir, 'lapl_cookies.json')
         self.google_credentials_file = os.path.join(self.credentials_dir, 'credentials.json')
         self.google_token_file = os.path.join(self.credentials_dir, 'token.json')
         
@@ -50,7 +51,13 @@ class CredentialManager:
             # Normalize cookies data to consistent format
             if isinstance(cookies_data, list):
                 # Convert list of cookie objects to name-value dictionary
-                normalized_cookies = {cookie['name']: cookie['value'] for cookie in cookies_data}
+                # Skip cookies that are missing required name or value fields
+                normalized_cookies = {}
+                for cookie in cookies_data:
+                    if isinstance(cookie, dict) and 'name' in cookie and 'value' in cookie:
+                        normalized_cookies[cookie['name']] = cookie['value']
+                    else:
+                        logger.warning(f"Skipping malformed newspapers.com cookie: {cookie}")
             else:
                 normalized_cookies = cookies_data
             
@@ -123,6 +130,99 @@ class CredentialManager:
                 'error': str(e)
             }
     
+    def save_lapl_cookies(self, cookies_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Save LAPL cookies to persistent storage
+        
+        Args:
+            cookies_data: Dictionary or list of cookies from uploaded JSON
+            
+        Returns:
+            dict: Result of save operation
+        """
+        try:
+            # Normalize cookies data to consistent format
+            if isinstance(cookies_data, list):
+                # Convert list of cookie objects to name-value dictionary
+                # Skip cookies that are missing required name or value fields
+                normalized_cookies = {}
+                for cookie in cookies_data:
+                    if isinstance(cookie, dict) and 'name' in cookie and 'value' in cookie:
+                        normalized_cookies[cookie['name']] = cookie['value']
+                    else:
+                        logger.warning(f"Skipping malformed LAPL cookie: {cookie}")
+            else:
+                normalized_cookies = cookies_data
+            
+            # Add metadata
+            cookies_with_metadata = {
+                'cookies': normalized_cookies,
+                'saved_at': __import__('datetime').datetime.now().isoformat(),
+                'environment': 'replit' if self.is_replit else 'local',
+                'cookie_count': len(normalized_cookies)
+            }
+            
+            # Save to file
+            with open(self.lapl_cookies_file, 'w') as f:
+                json.dump(cookies_with_metadata, f, indent=2)
+            
+            logger.info(f"Saved LAPL cookies: {len(normalized_cookies)} cookies to {self.lapl_cookies_file}")
+            
+            return {
+                'success': True,
+                'message': f'Saved {len(normalized_cookies)} cookies',
+                'file_path': self.lapl_cookies_file,
+                'cookie_count': len(normalized_cookies)
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to save LAPL cookies: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def load_lapl_cookies(self) -> Dict[str, Any]:
+        """
+        Load LAPL cookies from persistent storage
+        
+        Returns:
+            dict: Result with cookies data or error
+        """
+        try:
+            if not os.path.exists(self.lapl_cookies_file):
+                return {
+                    'success': False,
+                    'error': 'No saved LAPL cookies found'
+                }
+            
+            with open(self.lapl_cookies_file, 'r') as f:
+                cookies_data = json.load(f)
+            
+            # Extract just the cookies dictionary
+            cookies = cookies_data.get('cookies', {})
+            metadata = {
+                'saved_at': cookies_data.get('saved_at'),
+                'cookie_count': cookies_data.get('cookie_count', len(cookies)),
+                'environment': cookies_data.get('environment')
+            }
+            
+            logger.info(f"Loaded LAPL cookies: {len(cookies)} cookies from {self.lapl_cookies_file}")
+            
+            return {
+                'success': True,
+                'cookies': cookies,
+                'metadata': metadata,
+                'file_path': self.lapl_cookies_file
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to load LAPL cookies: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
     def save_google_credentials(self, credentials_content: str) -> Dict[str, Any]:
         """
         Save Google Drive credentials to persistent storage
@@ -179,6 +279,10 @@ class CredentialManager:
     def has_newspapers_cookies(self) -> bool:
         """Check if newspapers.com cookies exist"""
         return os.path.exists(self.newspapers_cookies_file)
+    
+    def has_lapl_cookies(self) -> bool:
+        """Check if LAPL cookies exist"""
+        return os.path.exists(self.lapl_cookies_file)
     
     def get_google_credentials_status(self) -> Dict[str, Any]:
         """
@@ -241,6 +345,64 @@ class CredentialManager:
                 status['cookie_count'] = 0
         
         return status
+    
+    def get_lapl_status(self) -> Dict[str, Any]:
+        """
+        Get status of LAPL cookies
+        
+        Returns:
+            dict: Status information
+        """
+        has_cookies = self.has_lapl_cookies()
+        
+        status = {
+            'has_cookies': has_cookies,
+            'cookies_path': self.lapl_cookies_file,
+            'ready_for_auth': has_cookies
+        }
+        
+        if has_cookies:
+            try:
+                # Get cookie metadata
+                with open(self.lapl_cookies_file, 'r') as f:
+                    cookies_data = json.load(f)
+                status.update({
+                    'cookie_count': cookies_data.get('cookie_count', 0),
+                    'saved_at': cookies_data.get('saved_at'),
+                    'environment': cookies_data.get('environment')
+                })
+            except Exception as e:
+                logger.warning(f"Could not read LAPL cookies file: {str(e)}")
+                status['cookie_count'] = 0
+        
+        return status
+    
+    def clear_lapl_cookies(self) -> Dict[str, Any]:
+        """
+        Clear saved LAPL cookies
+        
+        Returns:
+            dict: Result of clear operation
+        """
+        try:
+            if os.path.exists(self.lapl_cookies_file):
+                os.remove(self.lapl_cookies_file)
+                logger.info("Cleared LAPL cookies")
+                return {
+                    'success': True,
+                    'message': 'LAPL cookies cleared'
+                }
+            else:
+                return {
+                    'success': True,
+                    'message': 'No cookies to clear'
+                }
+        except Exception as e:
+            logger.error(f"Failed to clear LAPL cookies: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
     
     def clear_newspapers_cookies(self) -> Dict[str, Any]:
         """
@@ -343,8 +505,10 @@ class CredentialManager:
             'environment': 'replit' if self.is_replit else 'local',
             'credentials_directory': self.credentials_dir,
             'newspapers_cookies_file': self.newspapers_cookies_file,
+            'lapl_cookies_file': self.lapl_cookies_file,
             'google_credentials_file': self.google_credentials_file,
             'google_token_file': self.google_token_file,
             'newspapers_status': self.get_newspapers_status(),
+            'lapl_status': self.get_lapl_status(),
             'google_status': self.get_google_credentials_status()
         }

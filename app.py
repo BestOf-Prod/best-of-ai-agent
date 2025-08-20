@@ -159,6 +159,7 @@ def initialize_session_state():
         'processing_active': False,
         'uploaded_images': [],
         'newspapers_extractor': None,
+        'lapl_extractor': None,
         'authentication_status': {},
         'search_results': [],
         'selected_articles': [],
@@ -280,6 +281,7 @@ def streamlined_sidebar_config():
     ensure_credential_manager()
     cred_manager = st.session_state.credential_manager
     newspapers_status = cred_manager.get_newspapers_status()
+    lapl_status = cred_manager.get_lapl_status()
     
     # Newspapers.com Authentication section (collapsed by default)
     with st.sidebar.expander("🔐 Newspapers.com Authentication", expanded=False):
@@ -311,6 +313,42 @@ def streamlined_sidebar_config():
                     st.rerun()
                 else:
                     st.error(f"❌ {clear_result['error']}")
+    
+    # LAPL Authentication section (new)
+    with st.sidebar.expander("🏛️ LAPL Authentication", expanded=False):
+        # Simple button to use saved credentials
+        if st.button("📁 Use Saved LAPL Credentials", key="use_saved_lapl_creds"):
+            use_saved_lapl_credentials()
+        
+        st.divider()
+        st.caption("🔧 Manual Setup (if no saved credentials)")
+        
+        uploaded_lapl_cookies = st.file_uploader("Upload LAPL Cookies File", type=['json'], key="lapl_cookies", help="Upload your LAPL cookies JSON file")
+        
+        if st.button("Save New LAPL Cookies", key="save_lapl_cookies"):
+            if uploaded_lapl_cookies is not None:
+                initialize_lapl_authentication_with_cookies(uploaded_lapl_cookies)
+            else:
+                st.warning("Please upload a cookies file first")
+        
+        # Show credential management options
+        if lapl_status['has_cookies']:
+            st.divider()
+            st.caption("🔧 Credential Management")
+            if st.button("Clear Saved LAPL Cookies", key="clear_lapl_cookies", help="Remove saved LAPL cookies from persistent storage"):
+                clear_result = cred_manager.clear_lapl_cookies()
+                if clear_result['success']:
+                    st.success("✅ LAPL Cookies cleared!")
+                    st.rerun()
+                else:
+                    st.error(f"❌ {clear_result['error']}")
+        
+        # Test LAPL URL access
+        st.divider()
+        st.caption("🧪 Test LAPL Access")
+        test_url = st.text_input("Test URL", value="https://access-newspaperarchive-com.lapl.idm.oclc.org/us/california/marysville/marysville-appeal-democrat/2014/12-12/page-10", key="lapl_test_url")
+        if st.button("🔍 Test LAPL URL Access", key="test_lapl_access"):
+            test_lapl_url_access(test_url)
     
     # Google Drive section
     with st.sidebar.expander("🌐 Google Drive Integration", expanded=False):
@@ -802,7 +840,8 @@ def start_enhanced_batch_processing(config):
         storage_manager=storage_manager, 
         max_workers=config['max_workers'],
         newspapers_cookies=config.get('newspapers_cookies', ''),
-        newspapers_extractor=st.session_state.newspapers_extractor
+        newspapers_extractor=st.session_state.newspapers_extractor,
+        lapl_extractor=st.session_state.get('lapl_extractor', None)
         # extraction_method parameter removed - using optimized download_clicks only
     )
     
@@ -2383,6 +2422,142 @@ def show_redirect_uri_debug():
     except Exception as e:
         logger.error(f"Failed to show redirect URI debug: {str(e)}")
         st.error(f"❌ Error: {str(e)}")
+
+def use_saved_lapl_credentials():
+    """Use existing LAPL cookies to initialize authentication"""
+    try:
+        with st.spinner("📁 Loading saved LAPL credentials..."):
+            ensure_credential_manager()
+            cred_manager = st.session_state.credential_manager
+            cookies_result = cred_manager.load_lapl_cookies()
+            
+            if not cookies_result['success']:
+                st.error("❌ No saved LAPL cookies found. Please upload a cookies file first.")
+                st.info("💡 Use the 'Upload LAPL Cookies File' section below to save cookies")
+                return
+            
+            # Initialize extractor with loaded cookies
+            from extractors.lapl_extractor import LAPLExtractor
+            extractor = LAPLExtractor(auto_auth=False)
+            extractor.load_cookies_from_data(cookies_result['cookies'])
+            
+            # Store in session state
+            st.session_state.lapl_extractor = extractor
+            
+            # Test authentication
+            auth_test = extractor.test_authentication()
+            
+            if auth_test['success'] and auth_test['authenticated']:
+                st.success("✅ LAPL connected successfully using saved cookies!")
+                st.balloons()
+                logger.info("LAPL initialized successfully with saved cookies")
+                
+                # Show cookie info
+                metadata = cookies_result.get('metadata', {})
+                cookie_count = metadata.get('cookie_count', 'unknown')
+                saved_at = metadata.get('saved_at', 'unknown date')
+                st.info(f"🍪 Using {cookie_count} cookies saved on {saved_at[:10]}")
+            else:
+                st.warning("⚠️ LAPL cookies loaded but authentication test failed")
+                st.info("💡 Try uploading fresh cookies if you encounter issues")
+                st.info(f"Test result: {auth_test.get('message', 'Unknown error')}")
+                
+    except Exception as e:
+        logger.error(f"Failed to use saved LAPL credentials: {str(e)}")
+        st.error(f"❌ Error loading saved credentials: {str(e)}")
+
+def initialize_lapl_authentication_with_cookies(uploaded_cookies):
+    """Initialize LAPL authentication using only cookies"""
+    logger.info("Initializing LAPL authentication with cookies only")
+    
+    try:
+        with st.spinner("🔐 Initializing LAPL authentication..."):
+            # Initialize extractor
+            from extractors.lapl_extractor import LAPLExtractor
+            extractor = LAPLExtractor(auto_auth=False)
+            
+            # Load cookies from uploaded file
+            try:
+                cookies_data = json.loads(uploaded_cookies.getvalue().decode())
+                
+                # Save cookies using credential manager
+                ensure_credential_manager()
+                cred_manager = st.session_state.credential_manager
+                save_result = cred_manager.save_lapl_cookies(cookies_data)
+                
+                if save_result['success']:
+                    st.success(f"✅ Saved {save_result['cookie_count']} cookies for future sessions!")
+                    
+                    # Load cookies into extractor
+                    load_result = extractor.load_cookies_from_data(cookies_data)
+                    
+                    if load_result['success']:
+                        # Store in session state
+                        st.session_state.lapl_extractor = extractor
+                        
+                        # Test authentication
+                        auth_test = extractor.test_authentication()
+                        
+                        if auth_test['success'] and auth_test['authenticated']:
+                            st.success("✅ LAPL authentication successful!")
+                            st.balloons()
+                        else:
+                            st.warning("⚠️ LAPL cookies saved but authentication test failed")
+                            st.info(f"Test result: {auth_test.get('message', 'Unknown error')}")
+                    else:
+                        st.error(f"❌ Failed to load cookies: {load_result['error']}")
+                else:
+                    st.error(f"❌ Failed to save cookies: {save_result['error']}")
+                    
+            except json.JSONDecodeError:
+                st.error("❌ Invalid JSON file. Please upload a valid cookies JSON file.")
+            except Exception as e:
+                st.error(f"❌ Error processing cookies file: {str(e)}")
+                
+    except Exception as e:
+        logger.error(f"Failed to initialize LAPL authentication: {str(e)}")
+        st.error(f"❌ Authentication failed: {str(e)}")
+
+def test_lapl_url_access(test_url: str):
+    """Test access to a specific LAPL URL"""
+    try:
+        # Check if LAPL extractor is available
+        if 'lapl_extractor' not in st.session_state or st.session_state.lapl_extractor is None:
+            st.error("❌ No LAPL authentication available. Please upload and save cookies first.")
+            return
+        
+        with st.spinner(f"🔍 Testing access to LAPL URL..."):
+            extractor = st.session_state.lapl_extractor
+            result = extractor.access_specific_url(test_url)
+            
+            if result['success']:
+                st.success("✅ URL access successful!")
+                
+                # Show detailed results
+                st.info(f"Status Code: {result['status_code']}")
+                st.info(f"Content Length: {result['content_length']:,} characters")
+                st.info(f"Final URL: {result['final_url']}")
+                
+                if result['has_newspaper_content']:
+                    st.success("📰 Newspaper content detected!")
+                else:
+                    st.warning("⚠️ No clear newspaper content indicators found")
+                
+                if result['has_errors']:
+                    st.error("❌ Error indicators found in content")
+                
+                # Show content preview
+                if result.get('content_preview'):
+                    st.text_area("Content Preview (first 500 chars)", result['content_preview'], height=100)
+                    
+            else:
+                st.error(f"❌ URL access failed: {result['message']}")
+                if result.get('status_code'):
+                    st.info(f"Status Code: {result['status_code']}")
+                    
+    except Exception as e:
+        logger.error(f"Failed to test LAPL URL access: {str(e)}")
+        st.error(f"❌ Test failed: {str(e)}")
 
 if __name__ == "__main__":
     try:

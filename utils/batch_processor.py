@@ -20,11 +20,12 @@ class BatchProcessor:
     """Enhanced batch processor with auto-authentication support"""
     
     def __init__(self, storage_manager, max_workers: int = 3, newspapers_cookies: str = "", 
-                 newspapers_extractor: Optional = None):
+                 newspapers_extractor: Optional = None, lapl_extractor: Optional = None):
         self.storage_manager = storage_manager
         self.max_workers = max_workers
         self.newspapers_cookies = newspapers_cookies
         self.newspapers_extractor = newspapers_extractor
+        self.lapl_extractor = lapl_extractor
         # extraction_method parameter removed - using optimized download_clicks only
         self.total_processed = 0
         self.total_successful = 0
@@ -36,6 +37,8 @@ class BatchProcessor:
         logger.info(f"Initialized BatchProcessor with {max_workers} workers")
         if newspapers_extractor:
             logger.info("Using enhanced Newspapers.com extractor with auto-authentication")
+        if lapl_extractor:
+            logger.info("Using LAPL extractor for NewsBank and ProQuest URLs")
     
     def __del__(self):
         """Cleanup ThreadPoolExecutor on object destruction"""
@@ -292,6 +295,8 @@ class BatchProcessor:
             # Determine processing method based on URL type
             if 'newspapers.com' in url.lower():
                 return self._process_newspapers_url(url, player_name, enable_advanced_processing, project_name)
+            elif self.lapl_extractor and self.lapl_extractor.is_lapl_news_url(url):
+                return self._process_lapl_url(url, project_name)
             else:
                 return self._process_general_url(url, player_name, project_name)
                 
@@ -355,6 +360,72 @@ class BatchProcessor:
                 player_name=player_name,
                 project_name=project_name
             )
+    
+    def _process_lapl_url(self, url: str, project_name: str = "default"):
+        """Process LAPL URL (NewsBank/ProQuest) with authenticated extraction"""
+        logger.info(f"Processing LAPL URL: {url}")
+        
+        # Simple result class for compatibility
+        class SimpleResult:
+            def __init__(self, success=False, error="", processing_time_seconds=0.0):
+                self.success = success
+                self.error = error
+                self.processing_time_seconds = processing_time_seconds
+                self.headline = ""
+                self.source = ""
+                self.date = ""
+                self.content = ""
+                self.text = ""  # alias for content
+                self.image_data = None
+                self.image_url = None
+                self.markdown_path = ""
+                self.word_count = 0
+                self.typography_capsule = None
+                self.structured_content = []
+                self.metadata = {}
+        
+        start_time = time.time()
+        
+        try:
+            # Use LAPL extractor for authenticated access
+            result = self.lapl_extractor.extract_article_content(url, project_name=project_name)
+            processing_time = time.time() - start_time
+            
+            if result.get('success', False):
+                # Convert LAPL result to SimpleResult format
+                simple_result = SimpleResult(success=True)
+                simple_result.headline = result.get('headline', '')
+                simple_result.source = result.get('source', 'LAPL')
+                simple_result.date = result.get('date', datetime.now().strftime('%Y-%m-%d'))
+                simple_result.content = result.get('text', '')
+                simple_result.text = simple_result.content  # alias
+                simple_result.image_data = None  # LAPL typically doesn't have images
+                simple_result.image_url = None
+                simple_result.markdown_path = result.get('markdown_path', '')
+                simple_result.word_count = result.get('word_count', 0)
+                simple_result.processing_time_seconds = processing_time
+                
+                # Store additional LAPL-specific metadata
+                simple_result.metadata = {
+                    'content_type': result.get('content_type', 'unknown'),
+                    'lapl_source': True
+                }
+                
+                logger.info(f"Successfully processed LAPL URL: {url} in {processing_time:.2f}s")
+                return simple_result
+                
+            else:
+                error_msg = result.get('error', 'Unknown LAPL extraction error')
+                logger.warning(f"LAPL extraction failed for {url}: {error_msg}")
+                simple_result = SimpleResult(success=False, error=error_msg, processing_time_seconds=processing_time)
+                return simple_result
+                
+        except Exception as e:
+            processing_time = time.time() - start_time
+            error_msg = f"LAPL processing error: {str(e)}"
+            logger.error(f"Error processing LAPL URL {url}: {error_msg}")
+            simple_result = SimpleResult(success=False, error=error_msg, processing_time_seconds=processing_time)
+            return simple_result
     
     def _process_general_url(self, url: str, player_name: Optional[str] = None, project_name: str = "default"):
         """Process general URL with standard extraction"""
