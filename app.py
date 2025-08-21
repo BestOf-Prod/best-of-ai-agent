@@ -1201,62 +1201,17 @@ def handle_newspaper_conversion():
     st.write("## 📰 Newspaper Clipping Converter")
     st.write("Convert markdown content into professional newspaper-style Word documents with dynamic column layouts.")
     
-    # Conversion type selection
-    col1, col2 = st.columns([2, 1])
+    # Show layout info
+    st.info("""
+    **📰 Layout Rules:**
+    - **Short** (<1500 chars): Single column
+    - **Long** (1500+ chars): Two columns  
+    - **Optimized for 1-page documents**
+    """)
     
-    with col1:
-        conversion_source = st.radio(
-            "Choose content source:",
-            ["Upload Markdown File", "Use Processed Articles"],
-            help="Select whether to upload a new markdown file or use articles from batch processing"
-        )
-    
-    with col2:
-        st.info("""
-        **📰 Layout Rules:**
-        - **Short** (<1500 chars): Single column
-        - **Long** (1500+ chars): Two columns  
-        - **Optimized for 1-page documents**
-        """)
-    
-    if conversion_source == "Upload Markdown File":
-        handle_markdown_upload_conversion()
-    else:
-        handle_processed_articles_conversion()
+    # Always use processed articles
+    handle_processed_articles_conversion()
 
-def handle_markdown_upload_conversion():
-    """Handle conversion from uploaded markdown files"""
-    st.write("### 📄 Upload Markdown Files")
-    
-    uploaded_md_files = st.file_uploader(
-        "Choose markdown files",
-        type=["md", "txt"],
-        accept_multiple_files=True,
-        help="Upload one or more markdown files to convert to newspaper format"
-    )
-    
-    if uploaded_md_files:
-        st.success(f"✅ Uploaded {len(uploaded_md_files)} file(s)")
-        
-        # Show file details
-        for i, uploaded_file in enumerate(uploaded_md_files):
-            with st.expander(f"📄 {uploaded_file.name} ({uploaded_file.size:,} bytes)"):
-                try:
-                    content = uploaded_file.getvalue().decode('utf-8')
-                    st.write(f"**Content length:** {len(content)} characters")
-                    st.write(f"**Estimated layout:** {determine_layout_display(len(content))}")
-                    
-                    # Show preview
-                    if len(content) > 200:
-                        st.write(f"**Preview:** {content[:200]}...")
-                    else:
-                        st.write(f"**Content:** {content}")
-                except Exception as e:
-                    st.error(f"Error reading file: {str(e)}")
-        
-        # Convert button
-        if st.button("🔄 Convert to Newspaper Format", type="primary"):
-            convert_uploaded_markdown_files(uploaded_md_files)
 
 def handle_processed_articles_conversion():
     """Handle conversion from processed batch results"""
@@ -1457,91 +1412,6 @@ def determine_layout_display(content_length):
     else:
         return "Two columns (image on left, text on right)"
 
-def convert_uploaded_markdown_files(uploaded_files):
-    """Convert uploaded markdown files to individual newspaper documents in a zip file"""
-    with st.spinner("Converting markdown files to individual newspaper documents..."):
-        try:
-            # Extract content from uploaded files
-            markdown_contents = []
-            file_names = []
-            
-            for uploaded_file in uploaded_files:
-                content = uploaded_file.getvalue().decode('utf-8')
-                markdown_contents.append(content)
-                file_names.append(uploaded_file.name)
-                logger.info(f"Loaded content from {uploaded_file.name}")
-            
-            if not markdown_contents:
-                st.error("❌ No valid markdown content found")
-                return
-            
-            # Convert to zip file with individual documents
-            logger.info(f"Converting {len(markdown_contents)} markdown files to newspaper format")
-            result = convert_multiple_markdown_to_newspaper_zip(markdown_contents)
-            
-            logger.info(f"Conversion result: {result is not None}")
-            if result:
-                logger.info(f"Result keys: {list(result.keys())}")
-                logger.info(f"Zip data size: {len(result.get('zip_data', b''))} bytes")
-            
-            if result and result.get('zip_data'):
-                st.success(f"✅ Successfully converted {result['document_count']} files to newspaper format!")
-                
-                # Generate zip filename
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                zip_filename = f"newspaper_articles_{timestamp}.zip"
-                
-                # Create download button for zip file
-                st.write("### 📥 Download Newspaper Documents")
-                
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.write(f"📦 **{zip_filename}** ({result['total_size']:,} bytes)")
-                    st.write(f"Contains {result['document_count']} individual Word documents")
-                with col2:
-                    # Add debug info
-                    logger.info(f"Creating download button with {len(result['zip_data'])} bytes")
-                    st.download_button(
-                        label="📥 Download Zip",
-                        data=result['zip_data'],
-                        file_name=zip_filename,
-                        mime="application/zip"
-                    )
-                
-                # Show detailed file list
-                with st.expander("📋 Files in Zip Package"):
-                    st.write(f"**Total documents:** {result['document_count']}")
-                    st.write(f"**Total images:** {result.get('image_count', 0)}")
-                    st.write(f"**Total size:** {result['total_size']:,} bytes")
-                    st.write("**Individual files:**")
-                    
-                    for i, doc_info in enumerate(result['documents']):
-                        st.write(f"  {i+1}. **{doc_info['filename']}** - {doc_info['title'][:50]}{'...' if len(doc_info['title']) > 50 else ''} ({doc_info['size']:,} bytes)")
-                    
-                    if result.get('image_count', 0) > 0:
-                        st.write(f"  📁 **clippings/** directory with {result['image_count']} scraped images")
-                    
-                    st.write("**Features:**")
-                    st.write("• Individual Word documents for each article")
-                    st.write("• Filenames based on article titles with hyphens")
-                    st.write("• Dynamic column layouts based on content length")
-                    st.write("• Images downloaded and inserted automatically")
-                    st.write("• Professional newspaper styling")
-                    st.write("• Scraped images saved in clippings/ directory")
-            else:
-                if not result:
-                    st.error("❌ Failed to create newspaper zip file - conversion returned None")
-                    logger.error("Conversion function returned None")
-                elif not result.get('zip_data'):
-                    st.error("❌ Failed to create newspaper zip file - no zip data in result")
-                    logger.error(f"Result keys: {list(result.keys()) if result else 'None'}")
-                else:
-                    st.error("❌ Failed to create newspaper zip file - unknown error")
-                    logger.error(f"Unknown error with result: {result}")
-                
-        except Exception as e:
-            logger.error(f"Markdown conversion error: {str(e)}")
-            st.error(f"Conversion error: {str(e)}")
 
 def convert_processed_articles(selected_indices, results):
     """Convert processed articles to individual newspaper documents in a zip file"""
