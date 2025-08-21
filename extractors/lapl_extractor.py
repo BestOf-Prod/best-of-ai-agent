@@ -611,26 +611,41 @@ class LAPLExtractor:
                     'error': 'LAPL authentication required for ProQuest access'
                 }
             
-            # Set proper headers for ProQuest
+            # Set proper headers for ProQuest with appropriate referer
+            parsed_url = urlparse(url)
+            referer_url = f"{parsed_url.scheme}://{parsed_url.netloc}/"
+            
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.5',
-                'Referer': 'https://search-proquest-com.lapl.idm.oclc.org/',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Referer': referer_url,
             }
             
             response = self.session.get(url, headers=headers, timeout=30)
             response.raise_for_status()
             
+            logger.info(f"ProQuest response status: {response.status_code}, content length: {len(response.content)}")
+            
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Extract headline
+            # Check if we have the expected ProQuest content structure
+            has_docview = bool(soup.select_one('.docview-header, #docview-contents-wrapper, .docView'))
+            has_fulltext = bool(soup.select_one('#fullTextZone, .fullTextHeader, #fulltext_field_MSTAR'))
+            logger.info(f"ProQuest page analysis - has docview structure: {has_docview}, has fulltext: {has_fulltext}")
+            
+            # Extract headline with debugging
             headline = "Unknown Headline"
             headline_selectors = [
                 '.documentTitle',  # New ProQuest structure
                 '.truncatedDocumentTitle',
                 '#documentTitle',
+                'h1.documentTitle',
+                'h1.truncatedDocumentTitle',
                 '.titleLink',
                 '.docTitle',
                 'h1',
@@ -639,11 +654,31 @@ class LAPLExtractor:
                 '.article-title'
             ]
             
+            logger.info("Attempting headline extraction from ProQuest page")
             for selector in headline_selectors:
                 headline_elem = soup.select_one(selector)
-                if headline_elem and len(headline_elem.text.strip()) > 5:
-                    headline = headline_elem.text.strip()
-                    break
+                if headline_elem:
+                    headline_text = headline_elem.text.strip()
+                    logger.info(f"Found element with selector '{selector}': '{headline_text[:50]}...'")
+                    if len(headline_text) > 5:
+                        headline = headline_text
+                        logger.info(f"Selected headline: '{headline}'")
+                        break
+                else:
+                    logger.debug(f"No element found for selector: {selector}")
+            
+            if headline == "Unknown Headline":
+                logger.warning("No headline found with BeautifulSoup, checking for any h1 elements on page")
+                all_h1s = soup.find_all('h1')
+                for h1 in all_h1s:
+                    logger.info(f"Found h1 element: '{h1.text.strip()[:100]}...' with classes: {h1.get('class', [])}")
+                
+                # If we still have no headline, try using Selenium as fallback
+                if not all_h1s or not any(len(h1.text.strip()) > 5 for h1 in all_h1s):
+                    logger.info("Attempting ProQuest extraction with Selenium as fallback")
+                    selenium_result = self._extract_proquest_with_selenium(url)
+                    if selenium_result.get('success'):
+                        return selenium_result
             
             # Extract date and publication info
             date_text = "Unknown Date"
@@ -700,12 +735,13 @@ class LAPLExtractor:
                     author = re.sub(r'^By\s+', '', author, flags=re.IGNORECASE)
                     break
             
-            # Extract article content
+            # Extract article content with debugging
             content = ""
             content_selectors = [
                 'text[htmlcontent="true"]',  # New ProQuest structure
                 '.display_record_text_copy text',
                 '#fulltext_field_MSTAR text',
+                'text[wordcount]',  # Alternative ProQuest text element selector
                 '.docFullText',
                 '.article-content',
                 '.content',
@@ -713,24 +749,32 @@ class LAPLExtractor:
                 '.full-text'
             ]
             
+            logger.info("Attempting content extraction from ProQuest page")
             for selector in content_selectors:
                 content_elem = soup.select_one(selector)
                 if content_elem:
+                    logger.info(f"Found content element with selector '{selector}'")
+                    
                     # For the new ProQuest text element, extract paragraphs
                     paragraphs = []
                     for p in content_elem.find_all('p'):
                         text = p.get_text().strip()
                         if len(text) > 20:  # Skip short fragments
                             paragraphs.append('    ' + text)  # Add indentation
+                    
                     if paragraphs:
                         content = "\n\n".join(paragraphs)
+                        logger.info(f"Extracted {len(paragraphs)} paragraphs, total content length: {len(content)}")
                         break
                     
                     # Fallback to get all text if no paragraphs
                     text = content_elem.get_text().strip()
                     if len(text) > 100:
                         content = text
+                        logger.info(f"Used fallback text extraction, content length: {len(content)}")
                         break
+                else:
+                    logger.debug(f"No content element found for selector: {selector}")
             
             # Additional fallback for new ProQuest structure
             if not content:
@@ -781,6 +825,137 @@ class LAPLExtractor:
                 'error': str(e),
                 'message': f'ProQuest extraction failed: {str(e)}'
             }
+    
+    def _extract_proquest_with_selenium(self, url: str) -> Dict[str, Any]:
+        """
+        Fallback method to extract ProQuest content using Selenium when regular HTTP fails
+        
+        Args:
+            url: ProQuest article URL
+            
+        Returns:
+            dict: Extracted article data
+        """
+        try:
+            logger.info(f"Using Selenium fallback for ProQuest URL: {url}")
+            
+            if not self.driver:
+                # Use the Chrome options already defined for this environment
+                chrome_options = Options()
+                chrome_options.add_argument("--headless")
+                chrome_options.add_argument("--no-sandbox")
+                chrome_options.add_argument("--disable-dev-shm-usage")
+                chrome_options.add_argument("--disable-gpu")
+                chrome_options.add_argument("--window-size=1920,1080")
+                chrome_options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+                
+                # Add Render-specific memory optimizations if needed
+                if self.is_render:
+                    chrome_options.add_argument('--memory-pressure-off')
+                    chrome_options.add_argument('--max_old_space_size=256')
+                    chrome_options.add_argument('--single-process')
+                    logger.info("Applied Render-specific Chrome options for ProQuest Selenium fallback")
+                
+                from selenium import webdriver
+                self.driver = webdriver.Chrome(options=chrome_options)
+                self.driver.set_page_load_timeout(30)
+            
+            # Navigate to the page
+            self.driver.get(url)
+            
+            # Wait for content to load
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
+            from selenium.webdriver.common.by import By
+            
+            wait = WebDriverWait(self.driver, 10)
+            
+            # Wait for headline element to be present
+            try:
+                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '.documentTitle, h1')))
+            except:
+                logger.warning("Timeout waiting for ProQuest content to load")
+            
+            # Extract data from the loaded page
+            from bs4 import BeautifulSoup
+            page_source = self.driver.page_source
+            soup = BeautifulSoup(page_source, 'html.parser')
+            
+            # Extract headline
+            headline = "Unknown Headline"
+            headline_elem = soup.select_one('.documentTitle, #documentTitle, h1.documentTitle')
+            if headline_elem:
+                headline = headline_elem.text.strip()
+                logger.info(f"Selenium extracted headline: {headline}")
+            
+            # Extract author
+            author = "Unknown Author"
+            author_elem = soup.select_one('.author-name')
+            if author_elem:
+                author = author_elem.text.strip()
+            
+            # Extract date and publication
+            date_text = "Unknown Date"
+            publication = "Unknown Publication"
+            newspaper_elem = soup.select_one('.newspaperArticle')
+            if newspaper_elem:
+                import re
+                text = newspaper_elem.get_text()
+                date_match = re.search(r'\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}', text)
+                if date_match:
+                    date_text = date_match.group()
+                
+                pub_elem = soup.select_one('.newspaperArticle strong')
+                if pub_elem:
+                    publication = pub_elem.get_text().strip()
+            
+            # Extract content
+            content = ""
+            content_elem = soup.select_one('text[htmlcontent="true"], text[wordcount]')
+            if content_elem:
+                paragraphs = []
+                for p in content_elem.find_all('p'):
+                    text = p.get_text().strip()
+                    if len(text) > 20:
+                        paragraphs.append('    ' + text)
+                content = "\n\n".join(paragraphs)
+                logger.info(f"Selenium extracted {len(paragraphs)} paragraphs")
+            
+            # Determine source
+            if publication and publication != "Unknown Publication":
+                source = f"{publication} via ProQuest/LAPL"
+            else:
+                source = "ProQuest via LAPL"
+            
+            return {
+                'success': True,
+                'headline': headline,
+                'date': date_text,
+                'author': author,
+                'text': content,
+                'source': source,
+                'url': url,
+                'content_type': 'proquest',
+                'publication': publication,
+                'word_count': len(content.split()) if content else 0,
+                'extraction_method': 'selenium'
+            }
+            
+        except Exception as e:
+            logger.error(f"Selenium ProQuest extraction failed: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e),
+                'message': f'Selenium ProQuest extraction failed: {str(e)}'
+            }
+        finally:
+            # Clean up driver if we created it for this extraction
+            if self.driver:
+                try:
+                    self.driver.quit()
+                    self.driver = None
+                except:
+                    pass
     
     def extract_article_content(self, url: str, project_name: str = "lapl_extracts") -> Dict[str, Any]:
         """
