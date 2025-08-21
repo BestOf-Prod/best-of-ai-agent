@@ -535,7 +535,7 @@ class LAPLExtractor:
                     author = re.sub(r'^By\s+', '', author, flags=re.IGNORECASE)
                     break
             
-            # Extract article content
+            # Extract article content with preserved formatting
             content = ""
             content_selectors = [
                 '.article-text',
@@ -548,22 +548,23 @@ class LAPLExtractor:
             for selector in content_selectors:
                 content_elem = soup.select_one(selector)
                 if content_elem:
-                    # Get all paragraphs and clean them
+                    # Preserve paragraph structure and formatting
                     paragraphs = []
                     for p in content_elem.find_all(['p', 'div']):
                         text = p.get_text().strip()
                         if len(text) > 20:  # Skip short fragments
-                            paragraphs.append('    ' + text)  # Add indentation
+                            # Don't add indentation here - let paragraph formatter handle it
+                            paragraphs.append(text)
                     content = "\n\n".join(paragraphs)
                     break
             
-            # Fallback content extraction
+            # Fallback content extraction  
             if not content:
                 paragraphs = []
                 for p in soup.find_all('p'):
                     text = p.get_text().strip()
                     if len(text) > 40:
-                        paragraphs.append('    ' + text)
+                        paragraphs.append(text)
                 content = "\n\n".join(paragraphs)
             
             # Determine source
@@ -755,22 +756,28 @@ class LAPLExtractor:
                 if content_elem:
                     logger.info(f"Found content element with selector '{selector}'")
                     
-                    # For the new ProQuest text element, extract paragraphs
+                    # For the new ProQuest text element, extract paragraphs with preserved formatting
                     paragraphs = []
                     for p in content_elem.find_all('p'):
                         text = p.get_text().strip()
                         if len(text) > 20:  # Skip short fragments
-                            paragraphs.append('    ' + text)  # Add indentation
+                            # Don't add indentation here - let paragraph formatter handle it
+                            paragraphs.append(text)
                     
                     if paragraphs:
                         content = "\n\n".join(paragraphs)
                         logger.info(f"Extracted {len(paragraphs)} paragraphs, total content length: {len(content)}")
                         break
                     
-                    # Fallback to get all text if no paragraphs
+                    # Fallback to get all text if no paragraphs, but try to preserve structure
                     text = content_elem.get_text().strip()
                     if len(text) > 100:
-                        content = text
+                        # Try to split on double newlines to preserve paragraph breaks
+                        paragraphs = [p.strip() for p in text.split('\n\n') if len(p.strip()) > 20]
+                        if paragraphs:
+                            content = "\n\n".join(paragraphs)
+                        else:
+                            content = text
                         logger.info(f"Used fallback text extraction, content length: {len(content)}")
                         break
                 else:
@@ -784,7 +791,7 @@ class LAPLExtractor:
                     for p in fulltext_zone.find_all('p'):
                         text = p.get_text().strip()
                         if len(text) > 40:
-                            paragraphs.append('    ' + text)
+                            paragraphs.append(text)
                     content = "\n\n".join(paragraphs)
             
             # Final fallback content extraction
@@ -793,7 +800,7 @@ class LAPLExtractor:
                 for p in soup.find_all('p'):
                     text = p.get_text().strip()
                     if len(text) > 40:
-                        paragraphs.append('    ' + text)
+                        paragraphs.append(text)
                 content = "\n\n".join(paragraphs)
             
             # Determine source
@@ -909,7 +916,7 @@ class LAPLExtractor:
                 if pub_elem:
                     publication = pub_elem.get_text().strip()
             
-            # Extract content
+            # Extract content with preserved formatting
             content = ""
             content_elem = soup.select_one('text[htmlcontent="true"], text[wordcount]')
             if content_elem:
@@ -917,7 +924,8 @@ class LAPLExtractor:
                 for p in content_elem.find_all('p'):
                     text = p.get_text().strip()
                     if len(text) > 20:
-                        paragraphs.append('    ' + text)
+                        # Don't add indentation here - let paragraph formatter handle it
+                        paragraphs.append(text)
                 content = "\n\n".join(paragraphs)
                 logger.info(f"Selenium extracted {len(paragraphs)} paragraphs")
             
