@@ -436,7 +436,9 @@ class LAPLExtractor:
             'hnpla',
             'latimes'
         ]
-        return any(indicator in parsed.netloc.lower() for indicator in proquest_indicators) and 'lapl.idm.oclc.org' in parsed.netloc
+        # Also check for direct proquest.com URLs (ex: https://www.proquest.com/usnews/docview/...)
+        return (any(indicator in parsed.netloc.lower() for indicator in proquest_indicators) and 'lapl.idm.oclc.org' in parsed.netloc) or \
+               ('proquest.com' in parsed.netloc and ('docview' in url or 'usnews' in url))
     
     def is_lapl_news_url(self, url: str) -> bool:
         """
@@ -626,6 +628,9 @@ class LAPLExtractor:
             # Extract headline
             headline = "Unknown Headline"
             headline_selectors = [
+                '.documentTitle',  # New ProQuest structure
+                '.truncatedDocumentTitle',
+                '#documentTitle',
                 '.titleLink',
                 '.docTitle',
                 'h1',
@@ -640,7 +645,7 @@ class LAPLExtractor:
                     headline = headline_elem.text.strip()
                     break
             
-            # Extract date
+            # Extract date and publication info
             date_text = "Unknown Date"
             date_selectors = [
                 '.pubDate',
@@ -650,19 +655,40 @@ class LAPLExtractor:
                 'time'
             ]
             
+            # First try standard date selectors
             for selector in date_selectors:
                 date_elem = soup.select_one(selector)
                 if date_elem:
                     date_text = date_elem.text.strip()
                     break
+                    
+            # For new ProQuest structure, extract from newspaperArticle span
+            if date_text == "Unknown Date":
+                newspaper_elem = soup.select_one('.newspaperArticle')
+                if newspaper_elem:
+                    import re
+                    text = newspaper_elem.get_text()
+                    # Look for date pattern like "26 Aug 2024"
+                    date_match = re.search(r'\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}', text)
+                    if date_match:
+                        date_text = date_match.group()
+                        
+            # Extract publication name
+            publication = "Unknown Publication"
+            pub_elem = soup.select_one('.newspaperArticle strong')
+            if pub_elem:
+                publication = pub_elem.get_text().strip()
             
             # Extract author
             author = "Unknown Author"
             author_selectors = [
+                '.author-name',  # New ProQuest structure
+                '.truncatedAuthor .author-name',
                 '.author',
                 '.byline',
                 '.docAuthor',
-                '.contributor'
+                '.contributor',
+                '.scholUnivAuthors .author-name'
             ]
             
             for selector in author_selectors:
@@ -677,6 +703,9 @@ class LAPLExtractor:
             # Extract article content
             content = ""
             content_selectors = [
+                'text[htmlcontent="true"]',  # New ProQuest structure
+                '.display_record_text_copy text',
+                '#fulltext_field_MSTAR text',
                 '.docFullText',
                 '.article-content',
                 '.content',
@@ -687,16 +716,34 @@ class LAPLExtractor:
             for selector in content_selectors:
                 content_elem = soup.select_one(selector)
                 if content_elem:
-                    # Get all paragraphs and clean them
+                    # For the new ProQuest text element, extract paragraphs
                     paragraphs = []
-                    for p in content_elem.find_all(['p', 'div']):
+                    for p in content_elem.find_all('p'):
                         text = p.get_text().strip()
                         if len(text) > 20:  # Skip short fragments
                             paragraphs.append('    ' + text)  # Add indentation
-                    content = "\n\n".join(paragraphs)
-                    break
+                    if paragraphs:
+                        content = "\n\n".join(paragraphs)
+                        break
+                    
+                    # Fallback to get all text if no paragraphs
+                    text = content_elem.get_text().strip()
+                    if len(text) > 100:
+                        content = text
+                        break
             
-            # Fallback content extraction
+            # Additional fallback for new ProQuest structure
+            if not content:
+                fulltext_zone = soup.select_one('#fullTextZone')
+                if fulltext_zone:
+                    paragraphs = []
+                    for p in fulltext_zone.find_all('p'):
+                        text = p.get_text().strip()
+                        if len(text) > 40:
+                            paragraphs.append('    ' + text)
+                    content = "\n\n".join(paragraphs)
+            
+            # Final fallback content extraction
             if not content:
                 paragraphs = []
                 for p in soup.find_all('p'):
@@ -707,7 +754,10 @@ class LAPLExtractor:
             
             # Determine source
             parsed_url = urlparse(url)
-            source = "ProQuest via LAPL"
+            if publication and publication != "Unknown Publication":
+                source = f"{publication} via ProQuest/LAPL"
+            else:
+                source = "ProQuest via LAPL"
             
             logger.info(f"Successfully extracted ProQuest article: {headline}")
             
@@ -720,6 +770,7 @@ class LAPLExtractor:
                 'source': source,
                 'url': url,
                 'content_type': 'proquest',
+                'publication': publication,
                 'word_count': len(content.split()) if content else 0
             }
             
