@@ -548,13 +548,13 @@ class LAPLExtractor:
             for selector in content_selectors:
                 content_elem = soup.select_one(selector)
                 if content_elem:
-                    # Preserve paragraph structure and formatting
+                    # Preserve paragraph structure with indentation for formatter
                     paragraphs = []
                     for p in content_elem.find_all(['p', 'div']):
                         text = p.get_text().strip()
                         if len(text) > 20:  # Skip short fragments
-                            # Don't add indentation here - let paragraph formatter handle it
-                            paragraphs.append(text)
+                            # Add indentation that fallback formatter expects
+                            paragraphs.append('    ' + text)
                     content = "\n\n".join(paragraphs)
                     break
             
@@ -564,7 +564,7 @@ class LAPLExtractor:
                 for p in soup.find_all('p'):
                     text = p.get_text().strip()
                     if len(text) > 40:
-                        paragraphs.append(text)
+                        paragraphs.append('    ' + text)
                 content = "\n\n".join(paragraphs)
             
             # Determine source
@@ -756,13 +756,13 @@ class LAPLExtractor:
                 if content_elem:
                     logger.info(f"Found content element with selector '{selector}'")
                     
-                    # For the new ProQuest text element, extract paragraphs with preserved formatting
+                    # For the new ProQuest text element, extract paragraphs with formatter indentation
                     paragraphs = []
                     for p in content_elem.find_all('p'):
                         text = p.get_text().strip()
                         if len(text) > 20:  # Skip short fragments
-                            # Don't add indentation here - let paragraph formatter handle it
-                            paragraphs.append(text)
+                            # Add indentation that fallback formatter expects
+                            paragraphs.append('    ' + text)
                     
                     if paragraphs:
                         content = "\n\n".join(paragraphs)
@@ -772,12 +772,17 @@ class LAPLExtractor:
                     # Fallback to get all text if no paragraphs, but try to preserve structure
                     text = content_elem.get_text().strip()
                     if len(text) > 100:
-                        # Try to split on double newlines to preserve paragraph breaks
-                        paragraphs = [p.strip() for p in text.split('\n\n') if len(p.strip()) > 20]
+                        # Try to split on double newlines and add indentation
+                        paragraphs = []
+                        for p in text.split('\n\n'):
+                            p_clean = p.strip()
+                            if len(p_clean) > 20:
+                                paragraphs.append('    ' + p_clean)
                         if paragraphs:
                             content = "\n\n".join(paragraphs)
                         else:
-                            content = text
+                            # Single block of text, add indentation
+                            content = '    ' + text
                         logger.info(f"Used fallback text extraction, content length: {len(content)}")
                         break
                 else:
@@ -791,7 +796,7 @@ class LAPLExtractor:
                     for p in fulltext_zone.find_all('p'):
                         text = p.get_text().strip()
                         if len(text) > 40:
-                            paragraphs.append(text)
+                            paragraphs.append('    ' + text)
                     content = "\n\n".join(paragraphs)
             
             # Final fallback content extraction
@@ -800,7 +805,7 @@ class LAPLExtractor:
                 for p in soup.find_all('p'):
                     text = p.get_text().strip()
                     if len(text) > 40:
-                        paragraphs.append(text)
+                        paragraphs.append('    ' + text)
                 content = "\n\n".join(paragraphs)
             
             # Determine source
@@ -916,7 +921,7 @@ class LAPLExtractor:
                 if pub_elem:
                     publication = pub_elem.get_text().strip()
             
-            # Extract content with preserved formatting
+            # Extract content with formatter indentation
             content = ""
             content_elem = soup.select_one('text[htmlcontent="true"], text[wordcount]')
             if content_elem:
@@ -924,8 +929,8 @@ class LAPLExtractor:
                 for p in content_elem.find_all('p'):
                     text = p.get_text().strip()
                     if len(text) > 20:
-                        # Don't add indentation here - let paragraph formatter handle it
-                        paragraphs.append(text)
+                        # Add indentation that fallback formatter expects
+                        paragraphs.append('    ' + text)
                 content = "\n\n".join(paragraphs)
                 logger.info(f"Selenium extracted {len(paragraphs)} paragraphs")
             
@@ -1014,7 +1019,7 @@ class LAPLExtractor:
                 import re
                 from datetime import datetime
                 
-                # Apply paragraph formatting
+                # Apply paragraph formatting with debugging
                 context = {
                     'headline': article_data.get('headline', ''),
                     'source': article_data.get('source', ''),
@@ -1022,10 +1027,18 @@ class LAPLExtractor:
                     'date': article_data.get('date', '')
                 }
                 
-                formatted_content = format_article_paragraphs(article_data.get('text', ''), context)
-                if formatted_content and formatted_content != article_data.get('text', ''):
+                original_content = article_data.get('text', '')
+                content_type = article_data.get('content_type', 'unknown')
+                logger.info(f"Applying paragraph formatting to {content_type} content (length: {len(original_content)})")
+                logger.debug(f"Original content preview: {original_content[:200]}...")
+                
+                formatted_content = format_article_paragraphs(original_content, context)
+                if formatted_content and formatted_content != original_content:
                     article_data['text'] = formatted_content
-                    logger.info(f"Applied paragraph formatting to LAPL content")
+                    logger.info(f"Applied paragraph formatting to {content_type} content (new length: {len(formatted_content)})")
+                    logger.debug(f"Formatted content preview: {formatted_content[:200]}...")
+                else:
+                    logger.warning(f"Paragraph formatting failed or had no effect for {content_type} content")
                 
                 # Initialize storage manager
                 storage_manager = StorageManager(project_name=project_name)
