@@ -57,6 +57,7 @@ import signal
 import threading
 import queue
 import tempfile
+import shutil
 from pathlib import Path
 
 # Import paragraph formatter for text processing
@@ -1894,15 +1895,24 @@ class NewspapersComExtractor:
             # Add user agent to avoid detection
             chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
             
-            # Configure download behavior for speed
+            # Configure download behavior for proper file downloads
+            download_dir = tempfile.gettempdir()
             prefs = {
-                "download.default_directory": tempfile.gettempdir(),
+                "download.default_directory": download_dir,
                 "download.prompt_for_download": False,
                 "download.directory_upgrade": True,
                 "safebrowsing.enabled": False,  # Disable for speed
-                "profile.managed_default_content_settings.images": 2,  # Block images
+                "safebrowsing.disable_download_protection": True,  # Allow downloads
+                "download_restrictions": 0,  # Allow all downloads
+                # Don't block images since we need to download them
+                "profile.managed_default_content_settings.images": 1,  # Allow images
             }
             chrome_options.add_experimental_option("prefs", prefs)
+            
+            # Add arguments to support downloads in headless mode
+            chrome_options.add_argument("--enable-features=VizDisplayCompositor")
+            chrome_options.add_argument("--allow-running-insecure-content")
+            chrome_options.add_argument("--disable-web-security")  # Allow downloads from different origins
             
             # Initialize driver based on environment and availability
             if use_selenium_wire:
@@ -2012,9 +2022,15 @@ class NewspapersComExtractor:
                         
                         # Check for download requests from selenium-wire (only if available)
                         if use_selenium_wire and hasattr(driver, 'requests'):
+                            logger.info(f"Checking {len(driver.requests)} requests after click {i}")
+                            found_downloads = 0
                             for request in driver.requests:
+                                # Log all requests for debugging
+                                logger.debug(f"Request: {request.url} - Response: {bool(request.response)} - Content-Type: {request.response.headers.get('content-type', 'N/A') if request.response else 'N/A'}")
+                                
                                 if request.response and request.response.headers.get('content-disposition'):
                                     content_type = request.response.headers.get('content-type', '')
+                                    logger.info(f"Found downloadable response: {request.url} - Content-Type: {content_type}")
                                     
                                     # Only save JPG files
                                     if 'jpeg' in content_type.lower() or 'jpg' in content_type.lower():
@@ -2025,7 +2041,11 @@ class NewspapersComExtractor:
                                             'headers': dict(request.response.headers),
                                             'click_step': i
                                         })
+                                        found_downloads += 1
                                         logger.info(f"Captured JPG download from click {i}: {content_type}")
+                            
+                            if found_downloads == 0:
+                                logger.info(f"No downloadable files found in {len(driver.requests)} requests after click {i}")
                         else:
                             # For regular selenium, we skip the interception and rely on the GET request method
                             logger.info(f"Click {i} completed - relying on direct GET request method for download")
@@ -2037,78 +2057,107 @@ class NewspapersComExtractor:
                         logger.error(f"Error during click {i}: {str(e)}")
                         continue
                 
-                # After the 2 clicks, find the JPG download button and make direct GET request
-                try:
-                    logger.info("Looking for JPG download button to extract href URL")
-                    
-                    # Wait for the JPG download button to appear (reduced timeout)
-                    jpg_button = WebDriverWait(driver, 8).until(
-                        EC.element_to_be_clickable((By.CSS_SELECTOR, "a.btn.btn-outline-light.border-primary.jpg"))
-                    )
-                    
-                    # Get the href URL from the button
-                    href_url = jpg_button.get_attribute("href")
-                    if href_url:
-                        logger.info(f"Found JPG download href URL: {href_url}")
+                # If selenium-wire didn't capture downloads, try clicking the download button directly
+                if not downloaded_files:
+                    logger.info("No downloads captured via selenium-wire, attempting direct download click")
+                    try:
+                        # Wait for the JPG download button to appear
+                        jpg_button = WebDriverWait(driver, 8).until(
+                            EC.element_to_be_clickable((By.CSS_SELECTOR, "a.btn.btn-outline-light.border-primary.jpg"))
+                        )
                         
-                        # Extract filename and optimize URL (single pass)
-                        parsed_url = urlparse(href_url)
-                        params = parse_qs(parsed_url.query)
+                        logger.info("Clicking JPG download button directly")
                         
-                        # Get filename efficiently
-                        filename = (params.get('filename', [None])[0] or 
-                                  f"newspaper_article_{params.get('id', ['unknown'])[0]}") + '.jpg'
+                        # Set up download monitoring if not using selenium-wire
+                        download_dir = tempfile.mkdtemp()
+                        if not use_selenium_wire:
+                            # Configure download directory for monitoring
+                            driver.execute_cdp_cmd('Page.setDownloadBehavior', {
+                                'behavior': 'allow',
+                                'downloadPath': download_dir
+                            })
+                            logger.info(f"Set download directory to: {download_dir}")
                         
-                        # Filter params efficiently
-                        essential_params = {'institutionId', 'id', 'user', 'iat'}
-                        filtered_params = {k: v for k, v in params.items() if k in essential_params}
+                        # Track downloads before clicking
+                        existing_files = set(os.listdir(download_dir)) if os.path.exists(download_dir) else set()
                         
-                        # Reconstruct the URL
-                        filtered_query = urlencode(filtered_params, doseq=True)
-                        filtered_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}?{filtered_query}"
+                        # Clear requests if using selenium-wire
+                        if use_selenium_wire and hasattr(driver, 'requests'):
+                            driver.requests.clear()
                         
-                        logger.info(f"Filtered URL: {filtered_url}")
+                        # Click the download button
+                        jpg_button.click()
+                        logger.info("Clicked JPG download button")
                         
-                        # Make a GET request to the filtered URL to download the image
+                        # Wait for download to complete
+                        max_wait_time = 30
+                        wait_interval = 1
+                        waited_time = 0
+                        
+                        while waited_time < max_wait_time:
+                            time.sleep(wait_interval)
+                            waited_time += wait_interval
+                            
+                            # Check selenium-wire first
+                            if use_selenium_wire and hasattr(driver, 'requests'):
+                                for request in driver.requests:
+                                    if request.response and request.response.headers.get('content-disposition'):
+                                        content_type = request.response.headers.get('content-type', '')
+                                        if 'jpeg' in content_type.lower() or 'jpg' in content_type.lower():
+                                            downloaded_files.append({
+                                                'url': request.url,
+                                                'content': request.response.body,
+                                                'content_type': content_type,
+                                                'headers': dict(request.response.headers),
+                                                'click_step': 3
+                                            })
+                                            logger.info(f"Captured direct download via selenium-wire: {content_type}")
+                                            break
+                                
+                                if downloaded_files:
+                                    break
+                            
+                            # Check download directory for new files
+                            if os.path.exists(download_dir):
+                                current_files = set(os.listdir(download_dir))
+                                new_files = current_files - existing_files
+                                
+                                for new_file in new_files:
+                                    if new_file.endswith(('.jpg', '.jpeg')) and not new_file.endswith('.crdownload'):
+                                        file_path = os.path.join(download_dir, new_file)
+                                        if os.path.getsize(file_path) > 0:  # Ensure file is not empty
+                                            try:
+                                                with open(file_path, 'rb') as f:
+                                                    file_content = f.read()
+                                                downloaded_files.append({
+                                                    'url': jpg_button.get_attribute("href") or url,
+                                                    'content': file_content,
+                                                    'content_type': 'image/jpeg',
+                                                    'headers': {'content-type': 'image/jpeg'},
+                                                    'click_step': 3,
+                                                    'filename': new_file
+                                                })
+                                                logger.info(f"Captured download from directory: {new_file} ({len(file_content)} bytes)")
+                                                break
+                                            except Exception as e:
+                                                logger.warning(f"Error reading downloaded file {new_file}: {e}")
+                                
+                                if downloaded_files:
+                                    break
+                        
+                        if not downloaded_files:
+                            logger.warning(f"No downloads captured after {waited_time}s wait")
+                        
+                        # Clean up temporary download directory
                         try:
-                            # Add proper headers that newspapers.com expects
-                            headers = {
-                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                                'Accept': 'image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-                                'Accept-Language': 'en-US,en;q=0.9',
-                                'Accept-Encoding': 'gzip, deflate, br',
-                                'Referer': url,  # Use the current article URL as referrer
-                                'Connection': 'keep-alive',
-                                'Sec-Fetch-Dest': 'image',
-                                'Sec-Fetch-Mode': 'no-cors',
-                                'Sec-Fetch-Site': 'same-origin',
-                            }
+                            shutil.rmtree(download_dir)
+                        except Exception as e:
+                            logger.warning(f"Failed to clean up download directory: {e}")
                             
-                            # Use the session with cookies for authentication (reduced timeout)
-                            response = self.cookie_manager.session.get(filtered_url, headers=headers, timeout=15)
-                            response.raise_for_status()
-                            
-                            # Create a download file entry - only save JPG files
-                            content_type = response.headers.get('content-type', 'image/jpeg')
-                            if 'jpeg' in content_type.lower() or 'jpg' in content_type.lower():
-                                downloaded_files.append({
-                                    'url': href_url,
-                                    'content': response.content,
-                                    'content_type': content_type,
-                                    'headers': dict(response.headers),
-                                    'click_step': 3,  # Mark as step 3 for consistency
-                                    'filename': filename
-                                })
-                                logger.info(f"Successfully downloaded JPG via GET request: {content_type}, filename: {filename}")
-                            else:
-                                logger.info(f"Skipping non-JPG file: {content_type}")
-                        except Exception as req_e:
-                            logger.error(f"Failed to download via GET request: {req_e}")
-                    else:
-                        logger.warning("No href found in JPG download button")
-                        
-                except Exception as e:
-                    logger.error(f"Error finding JPG download button: {str(e)}")
+                    except Exception as e:
+                        logger.error(f"Error during direct download click: {str(e)}")
+                else:
+                    logger.info(f"Successfully captured {len(downloaded_files)} files via selenium-wire interception")
                 
                 # Process downloaded files
                 if downloaded_files:
