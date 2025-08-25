@@ -1848,6 +1848,9 @@ class NewspapersComExtractor:
         This method performs 2 clicks to open the download menu and select format,
         then makes a direct GET request to the JPG download href URL.
         
+        For deployment environments (Render/Replit), falls back to regular selenium
+        if selenium-wire is not available or incompatible.
+        
         Args:
             url: The newspapers.com URL to extract from
             player_name: Optional player name for filtering
@@ -1856,24 +1859,20 @@ class NewspapersComExtractor:
         Returns:
             Dict with extraction results including downloaded files
         """
-        if not SELENIUM_WIRE_AVAILABLE:
-            logger.error("selenium-wire is not available. Cannot use download capture method.")
-            return {'success': False, 'error': "selenium-wire not installed. Use: pip install selenium-wire"}
+        # Check if we should use selenium-wire or fall back to regular selenium
+        use_selenium_wire = SELENIUM_WIRE_AVAILABLE and not (self.is_render or self.is_replit_deployment)
+        
+        if not use_selenium_wire:
+            if self.is_render or self.is_replit_deployment:
+                logger.info("Using regular selenium for deployment environment due to compatibility constraints")
+            else:
+                logger.warning("selenium-wire not available, falling back to regular selenium")
         
         try:
             # Refresh cookies if needed
             if not self.cookie_manager.refresh_cookies_if_needed():
                 logger.error("Failed to refresh authentication cookies for download extraction.")
                 return {'success': False, 'error': "Authentication failed or expired. Please re-initialize."}
-            
-            # Configure selenium-wire options for speed
-            wire_options = {
-                'port': 0,  # Use random port
-                'disable_encoding': True,  # Don't decode responses
-                'request_storage_base_dir': tempfile.gettempdir(),
-                'suppress_connection_errors': True,
-                'request_storage': 'memory',  # Use memory storage for speed
-            }
             
             # Setup Chrome options optimized for speed
             chrome_options = Options()
@@ -1903,8 +1902,49 @@ class NewspapersComExtractor:
             }
             chrome_options.add_experimental_option("prefs", prefs)
             
-            # Initialize selenium-wire driver
-            driver = wire_webdriver.Chrome(options=chrome_options, seleniumwire_options=wire_options)
+            # Initialize driver based on environment and availability
+            if use_selenium_wire:
+                # Configure selenium-wire options for speed
+                wire_options = {
+                    'port': 0,  # Use random port
+                    'disable_encoding': True,  # Don't decode responses
+                    'request_storage_base_dir': tempfile.gettempdir(),
+                    'suppress_connection_errors': True,
+                    'request_storage': 'memory',  # Use memory storage for speed
+                }
+                # Initialize selenium-wire driver
+                driver = wire_webdriver.Chrome(options=chrome_options, seleniumwire_options=wire_options)
+            else:
+                # Use the existing driver or create a new one using the standard initialization logic
+                if hasattr(self.cookie_manager.selenium_login_manager, 'driver') and self.cookie_manager.selenium_login_manager.driver:
+                    # Reuse the existing driver if available
+                    driver = self.cookie_manager.selenium_login_manager.driver
+                    logger.info("Reusing existing selenium driver from login manager")
+                else:
+                    # Create a new driver using standard selenium
+                    try:
+                        # For deployment environments, use the same initialization logic as login manager
+                        if self.is_render or self.is_replit_deployment:
+                            # Try undetected-chromedriver first for deployments
+                            try:
+                                import undetected_chromedriver as uc
+                                uc_options = uc.ChromeOptions()
+                                for arg in chrome_options.arguments:
+                                    uc_options.add_argument(arg)
+                                driver = uc.Chrome(options=uc_options, headless=True, version_main=None)
+                                logger.info("Successfully initialized undetected Chrome WebDriver for deployment")
+                            except Exception as e:
+                                logger.warning(f"Undetected Chrome WebDriver failed: {str(e)}")
+                                # Fallback to regular selenium
+                                driver = webdriver.Chrome(options=chrome_options)
+                                logger.info("Fallback to regular Chrome WebDriver")
+                        else:
+                            # Standard selenium for non-deployment environments
+                            driver = webdriver.Chrome(options=chrome_options)
+                            logger.info("Successfully initialized regular Chrome WebDriver")
+                    except Exception as e:
+                        logger.error(f"Failed to create selenium driver: {str(e)}")
+                        raise
             
             try:
                 # Add cookies for authentication
@@ -1959,28 +1999,34 @@ class NewspapersComExtractor:
                             EC.element_to_be_clickable((By.CSS_SELECTOR, click_config["selector"]))
                         )
                         
-                        # Clear requests and click
-                        driver.requests.clear()
+                        # Clear requests and click (only for selenium-wire)
+                        if use_selenium_wire and hasattr(driver, 'requests'):
+                            driver.requests.clear()
+                        
                         element.click()
                         
                         # Reduced wait time
                         time.sleep(1.5)
                         
-                        # Check for download requests from selenium-wire
-                        for request in driver.requests:
-                            if request.response and request.response.headers.get('content-disposition'):
-                                content_type = request.response.headers.get('content-type', '')
-                                
-                                # Only save JPG files
-                                if 'jpeg' in content_type.lower() or 'jpg' in content_type.lower():
-                                    downloaded_files.append({
-                                        'url': request.url,
-                                        'content': request.response.body,
-                                        'content_type': content_type,
-                                        'headers': dict(request.response.headers),
-                                        'click_step': i
-                                    })
-                                    logger.info(f"Captured JPG download from click {i}: {content_type}")
+                        # Check for download requests from selenium-wire (only if available)
+                        if use_selenium_wire and hasattr(driver, 'requests'):
+                            for request in driver.requests:
+                                if request.response and request.response.headers.get('content-disposition'):
+                                    content_type = request.response.headers.get('content-type', '')
+                                    
+                                    # Only save JPG files
+                                    if 'jpeg' in content_type.lower() or 'jpg' in content_type.lower():
+                                        downloaded_files.append({
+                                            'url': request.url,
+                                            'content': request.response.body,
+                                            'content_type': content_type,
+                                            'headers': dict(request.response.headers),
+                                            'click_step': i
+                                        })
+                                        logger.info(f"Captured JPG download from click {i}: {content_type}")
+                        else:
+                            # For regular selenium, we skip the interception and rely on the GET request method
+                            logger.info(f"Click {i} completed - relying on direct GET request method for download")
                         
                     except TimeoutException:
                         logger.warning(f"Timeout waiting for click {i} element: {click_config['description']}")
@@ -2069,7 +2115,12 @@ class NewspapersComExtractor:
                     return {'success': False, 'error': "No files were downloaded during the process"}
                 
             finally:
-                driver.quit()
+                # Only quit the driver if we created a new one (not reusing from login manager)
+                if not (hasattr(self.cookie_manager.selenium_login_manager, 'driver') and 
+                       self.cookie_manager.selenium_login_manager.driver == driver):
+                    driver.quit()
+                else:
+                    logger.info("Preserving reused driver from login manager")
                 
         except Exception as e:
             logger.error(f"Error in download extraction: {str(e)}")
