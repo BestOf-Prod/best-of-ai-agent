@@ -11,10 +11,23 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.support import expected_conditions as EC
 try:
+    import seleniumwire
     from seleniumwire import webdriver as wire_webdriver
     SELENIUM_WIRE_AVAILABLE = True
-except ImportError:
+    print(f"DEBUG: selenium-wire imported successfully, version: {getattr(seleniumwire, '__version__', 'unknown')}")
+except ImportError as e:
     SELENIUM_WIRE_AVAILABLE = False
+    print(f"DEBUG: selenium-wire import failed: {e}")
+    # Try alternative import path
+    try:
+        import sys
+        print(f"DEBUG: Python path: {sys.path}")
+        print(f"DEBUG: Installed packages contain seleniumwire: {'seleniumwire' in str(sys.modules)}")
+    except:
+        pass
+except Exception as e:
+    SELENIUM_WIRE_AVAILABLE = False
+    print(f"DEBUG: selenium-wire import error (not ImportError): {e}")
 import cv2
 import pytesseract
 from PIL import Image, ImageEnhance

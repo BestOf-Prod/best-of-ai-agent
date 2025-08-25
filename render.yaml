@@ -12,7 +12,9 @@ services:
       apt-get update
       apt-get install -y google-chrome-stable xvfb
       # Install additional dependencies for selenium-wire
-      apt-get install -y libssl-dev libffi-dev python3-dev
+      apt-get install -y libssl-dev libffi-dev python3-dev build-essential
+      # Install additional networking tools selenium-wire might need
+      apt-get install -y ca-certificates curl
       # Install Python dependencies
       python -m pip install --upgrade pip
       pip install -r requirements-render.txt
