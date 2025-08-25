@@ -2066,17 +2066,29 @@ class NewspapersComExtractor:
                             EC.element_to_be_clickable((By.CSS_SELECTOR, "a.btn.btn-outline-light.border-primary.jpg"))
                         )
                         
+                        # Capture button attributes before clicking to avoid stale element issues
+                        button_href = None
+                        try:
+                            button_href = jpg_button.get_attribute("href")
+                            logger.info(f"Captured download button href: {button_href}")
+                        except Exception as e:
+                            logger.warning(f"Could not capture button href: {e}")
+                        
                         logger.info("Clicking JPG download button directly")
                         
                         # Set up download monitoring if not using selenium-wire
                         download_dir = tempfile.mkdtemp()
                         if not use_selenium_wire:
                             # Configure download directory for monitoring
-                            driver.execute_cdp_cmd('Page.setDownloadBehavior', {
-                                'behavior': 'allow',
-                                'downloadPath': download_dir
-                            })
-                            logger.info(f"Set download directory to: {download_dir}")
+                            try:
+                                driver.execute_cdp_cmd('Page.setDownloadBehavior', {
+                                    'behavior': 'allow',
+                                    'downloadPath': download_dir
+                                })
+                                logger.info(f"Set download directory to: {download_dir}")
+                            except Exception as cdp_error:
+                                logger.warning(f"Failed to set download behavior via CDP: {cdp_error}")
+                                logger.info(f"Will monitor default download directory: {download_dir}")
                         
                         # Track downloads before clicking
                         existing_files = set(os.listdir(download_dir)) if os.path.exists(download_dir) else set()
@@ -2085,9 +2097,23 @@ class NewspapersComExtractor:
                         if use_selenium_wire and hasattr(driver, 'requests'):
                             driver.requests.clear()
                         
-                        # Click the download button
-                        jpg_button.click()
-                        logger.info("Clicked JPG download button")
+                        # Click the download button with error handling
+                        try:
+                            jpg_button.click()
+                            logger.info("Clicked JPG download button")
+                        except Exception as click_error:
+                            logger.error(f"Error clicking download button: {click_error}")
+                            # Try to find the button again if it became stale
+                            try:
+                                logger.info("Attempting to re-locate download button")
+                                jpg_button = WebDriverWait(driver, 5).until(
+                                    EC.element_to_be_clickable((By.CSS_SELECTOR, "a.btn.btn-outline-light.border-primary.jpg"))
+                                )
+                                jpg_button.click()
+                                logger.info("Successfully clicked download button on second attempt")
+                            except Exception as retry_error:
+                                logger.error(f"Failed to click download button on retry: {retry_error}")
+                                raise retry_error
                         
                         # Wait for download to complete
                         max_wait_time = 30
@@ -2130,7 +2156,7 @@ class NewspapersComExtractor:
                                                 with open(file_path, 'rb') as f:
                                                     file_content = f.read()
                                                 downloaded_files.append({
-                                                    'url': jpg_button.get_attribute("href") or url,
+                                                    'url': button_href or url,
                                                     'content': file_content,
                                                     'content_type': 'image/jpeg',
                                                     'headers': {'content-type': 'image/jpeg'},
@@ -2147,6 +2173,15 @@ class NewspapersComExtractor:
                         
                         if not downloaded_files:
                             logger.warning(f"No downloads captured after {waited_time}s wait")
+                            # Log diagnostic information for debugging
+                            if use_selenium_wire and hasattr(driver, 'requests'):
+                                logger.info(f"selenium-wire captured {len(driver.requests)} requests total")
+                            if os.path.exists(download_dir):
+                                final_files = set(os.listdir(download_dir))
+                                logger.info(f"Download directory final state: {final_files}")
+                                logger.info(f"Directory size: {len(final_files)} files")
+                            else:
+                                logger.warning(f"Download directory {download_dir} does not exist")
                         
                         # Clean up temporary download directory
                         try:
