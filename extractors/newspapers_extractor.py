@@ -1860,10 +1860,12 @@ class NewspapersComExtractor:
             Dict with extraction results including downloaded files
         """
         # Check if we should use selenium-wire or fall back to regular selenium
-        use_selenium_wire = SELENIUM_WIRE_AVAILABLE and not (self.is_render or self.is_replit_deployment)
+        is_render = self.cookie_manager.selenium_login_manager.is_render
+        is_replit_deployment = self.cookie_manager.selenium_login_manager.is_replit_deployment
+        use_selenium_wire = SELENIUM_WIRE_AVAILABLE and not (is_render or is_replit_deployment)
         
         if not use_selenium_wire:
-            if self.is_render or self.is_replit_deployment:
+            if is_render or is_replit_deployment:
                 logger.info("Using regular selenium for deployment environment due to compatibility constraints")
             else:
                 logger.warning("selenium-wire not available, falling back to regular selenium")
@@ -1924,7 +1926,7 @@ class NewspapersComExtractor:
                     # Create a new driver using standard selenium
                     try:
                         # For deployment environments, use the same initialization logic as login manager
-                        if self.is_render or self.is_replit_deployment:
+                        if is_render or is_replit_deployment:
                             # Try undetected-chromedriver first for deployments
                             try:
                                 import undetected_chromedriver as uc
