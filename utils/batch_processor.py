@@ -462,8 +462,60 @@ class BatchProcessor:
                     logger.info(f"Created structured_content with {len(structured_paragraphs)} paragraphs for Word doc formatting")
                 else:
                     simple_result.structured_content = result.get('structured_content', [])
-                # LAPL can now have images (e.g., from NewspaperArchive)
-                simple_result.image_data = result.get('image_data')  # Pass through image data if available
+                # LAPL can now have images (e.g., from NewspaperArchive) - enhance quality like newspapers_extractor
+                raw_image_data = result.get('image_data')
+                if raw_image_data:
+                    try:
+                        # Convert raw bytes to PIL Image for enhancement
+                        from PIL import Image, ImageEnhance
+                        import io
+                        
+                        # Handle different image data formats
+                        if isinstance(raw_image_data, bytes):
+                            # Raw bytes - convert to PIL Image
+                            img = Image.open(io.BytesIO(raw_image_data))
+                            logger.info(f"Converting raw bytes to PIL Image: {img.size}, mode: {img.mode}")
+                        elif hasattr(raw_image_data, 'save'):
+                            # Already a PIL Image
+                            img = raw_image_data
+                            logger.info(f"Using existing PIL Image: {img.size}, mode: {img.mode}")
+                        else:
+                            # Unknown format, pass through as-is
+                            logger.warning(f"Unknown image_data format: {type(raw_image_data)}, passing through")
+                            simple_result.image_data = raw_image_data
+                            simple_result.image_url = result.get('image_url')
+                            # Continue without enhancement
+                            img = None
+                        
+                        # Apply enhancement similar to newspapers_extractor
+                        if img is not None:
+                            # Ensure RGB mode for consistency 
+                            if img.mode != 'RGB':
+                                img = img.convert('RGB')
+                                logger.info(f"Converted image to RGB mode")
+                            
+                            # Apply quality enhancements
+                            enhancer = ImageEnhance.Contrast(img)
+                            img = enhancer.enhance(1.2)  # Slight contrast boost
+                            
+                            enhancer = ImageEnhance.Sharpness(img)
+                            img = enhancer.enhance(1.1)  # Slight sharpness boost
+                            
+                            # Save as high-quality PNG instead of compressed format
+                            png_buffer = io.BytesIO()
+                            img.save(png_buffer, format='PNG', optimize=False, compress_level=1)  # Minimal compression
+                            enhanced_image_data = png_buffer.getvalue()
+                            
+                            # Use enhanced image as PIL Image object (like newspapers_extractor)
+                            simple_result.image_data = img  # Pass PIL Image instead of bytes
+                            logger.info(f"Enhanced NewspaperArchive image quality: {img.size}, format: PNG, size: {len(enhanced_image_data)} bytes")
+                        
+                    except Exception as e:
+                        logger.warning(f"Failed to enhance NewspaperArchive image, using original: {str(e)}")
+                        simple_result.image_data = raw_image_data  # Fallback to original
+                else:
+                    simple_result.image_data = None
+                    
                 simple_result.image_url = result.get('image_url')
                 simple_result.markdown_path = result.get('markdown_path', '')
                 simple_result.word_count = result.get('word_count', 0)
@@ -524,7 +576,54 @@ class BatchProcessor:
                 simple_result.source = result.get('source', 'Unknown')
                 simple_result.date = result.get('date', datetime.now().strftime('%Y-%m-%d'))
                 simple_result.content = result.get('text', '')
-                simple_result.image_data = result.get('clipping_image')
+                
+                # Enhanced image processing for general URLs (consistent with NewspaperArchive)
+                raw_image_data = result.get('clipping_image')
+                if raw_image_data:
+                    try:
+                        # Convert raw bytes to PIL Image for enhancement
+                        from PIL import Image, ImageEnhance
+                        import io
+                        
+                        # Handle different image data formats
+                        if isinstance(raw_image_data, bytes):
+                            # Raw bytes - convert to PIL Image
+                            img = Image.open(io.BytesIO(raw_image_data))
+                            logger.info(f"Converting general URL raw bytes to PIL Image: {img.size}, mode: {img.mode}")
+                        elif hasattr(raw_image_data, 'save'):
+                            # Already a PIL Image
+                            img = raw_image_data
+                            logger.info(f"Using existing PIL Image for general URL: {img.size}, mode: {img.mode}")
+                        else:
+                            # Unknown format, pass through as-is
+                            logger.warning(f"Unknown clipping_image format for general URL: {type(raw_image_data)}, passing through")
+                            simple_result.image_data = raw_image_data
+                            img = None
+                        
+                        # Apply enhancement similar to newspapers_extractor
+                        if img is not None:
+                            # Ensure RGB mode for consistency 
+                            if img.mode != 'RGB':
+                                img = img.convert('RGB')
+                                logger.info(f"Converted general URL image to RGB mode")
+                            
+                            # Apply quality enhancements
+                            enhancer = ImageEnhance.Contrast(img)
+                            img = enhancer.enhance(1.2)  # Slight contrast boost
+                            
+                            enhancer = ImageEnhance.Sharpness(img)
+                            img = enhancer.enhance(1.1)  # Slight sharpness boost
+                            
+                            # Use enhanced image as PIL Image object (like newspapers_extractor)
+                            simple_result.image_data = img  # Pass PIL Image instead of bytes
+                            logger.info(f"Enhanced general URL image quality: {img.size}")
+                        
+                    except Exception as e:
+                        logger.warning(f"Failed to enhance general URL image, using original: {str(e)}")
+                        simple_result.image_data = raw_image_data  # Fallback to original
+                else:
+                    simple_result.image_data = None
+                    
                 simple_result.image_url = result.get('image_url')  # Store the original image URL
                 logger.info(f"Markdown path in batch processor: {result.get('markdown_path')}")
                 simple_result.markdown_path = result.get('markdown_path')
