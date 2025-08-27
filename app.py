@@ -1423,6 +1423,33 @@ def convert_processed_articles(selected_indices, results):
     """Convert processed articles to individual newspaper documents in a zip file"""
     with st.spinner("Converting processed articles to individual newspaper documents..."):
         try:
+            # Get original URL order from session state for order preservation
+            original_url_order = st.session_state.get('extracted_urls', [])
+            
+            # Reorder selected_indices based on original URL order to preserve document order
+            if original_url_order:
+                # Create URL to result index mapping
+                url_to_result_index = {}
+                for idx in selected_indices:
+                    article_url = results[idx].get('url', '')
+                    if article_url:
+                        url_to_result_index[article_url] = idx
+                
+                # Reorder selected indices based on original URL order
+                ordered_indices = []
+                for url in original_url_order:
+                    if url in url_to_result_index:
+                        ordered_indices.append(url_to_result_index[url])
+                
+                # Add any remaining selected indices that weren't in original order
+                for idx in selected_indices:
+                    if idx not in ordered_indices:
+                        ordered_indices.append(idx)
+                        logger.info(f"Added selected article not in original order for zip: index {idx}")
+                
+                selected_indices = ordered_indices
+                logger.info(f"Reordered {len(selected_indices)} articles based on original URL order for zip documents")
+            
             # Create individual markdown content for each selected article
             markdown_contents = []
             
@@ -1523,6 +1550,33 @@ def convert_processed_articles_to_components(selected_indices, results):
     """Convert processed articles to component documents organized by word count, font, and title"""
     with st.spinner("Converting processed articles to component documents..."):
         try:
+            # Get original URL order from session state for order preservation
+            original_url_order = st.session_state.get('extracted_urls', [])
+            
+            # Reorder selected_indices based on original URL order to preserve document order
+            if original_url_order:
+                # Create URL to result index mapping
+                url_to_result_index = {}
+                for idx in selected_indices:
+                    article_url = results[idx].get('url', '')
+                    if article_url:
+                        url_to_result_index[article_url] = idx
+                
+                # Reorder selected indices based on original URL order
+                ordered_indices = []
+                for url in original_url_order:
+                    if url in url_to_result_index:
+                        ordered_indices.append(url_to_result_index[url])
+                
+                # Add any remaining selected indices that weren't in original order
+                for idx in selected_indices:
+                    if idx not in ordered_indices:
+                        ordered_indices.append(idx)
+                        logger.info(f"Added selected article not in original order for components: index {idx}")
+                
+                selected_indices = ordered_indices
+                logger.info(f"Reordered {len(selected_indices)} articles based on original URL order for component documents")
+            
             # Transform processed articles into the format expected by component converter
             articles_data = []
             
@@ -1654,6 +1708,33 @@ def convert_to_single_word_document(selected_indices, results):
             # Update progress
             status_text.text("📝 Preparing articles for document creation...")
             progress_placeholder.progress(0.1)
+            
+            # Get original URL order from session state for order preservation
+            original_url_order = st.session_state.get('extracted_urls', [])
+            
+            # Reorder selected_indices based on original URL order to preserve document order
+            if original_url_order:
+                # Create URL to result index mapping
+                url_to_result_index = {}
+                for idx in selected_indices:
+                    article_url = results[idx].get('url', '')
+                    if article_url:
+                        url_to_result_index[article_url] = idx
+                
+                # Reorder selected indices based on original URL order
+                ordered_indices = []
+                for url in original_url_order:
+                    if url in url_to_result_index:
+                        ordered_indices.append(url_to_result_index[url])
+                
+                # Add any remaining selected indices that weren't in original order
+                for idx in selected_indices:
+                    if idx not in ordered_indices:
+                        ordered_indices.append(idx)
+                        logger.info(f"Added selected article not in original order: index {idx}")
+                
+                selected_indices = ordered_indices
+                logger.info(f"Reordered {len(selected_indices)} articles based on original URL order for Word document")
             
             # Transform processed articles into the format expected by the converter
             articles_data = []

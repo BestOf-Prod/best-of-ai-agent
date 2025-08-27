@@ -91,8 +91,10 @@ class BatchProcessor:
         # Set batch processing flag for newspapers extractor timeout adjustments
         os.environ['BATCH_PROCESSING'] = 'true'
         
-        results = []
-        errors = []
+        # Initialize ordered results storage to preserve URL order
+        url_to_index = {url: i for i, url in enumerate(urls)}
+        ordered_results = [None] * len(urls)
+        ordered_errors = [None] * len(urls)
         processed_count = 0
         
         try:
@@ -116,16 +118,20 @@ class BatchProcessor:
                     time.sleep(delay_between_requests)
                 except Exception as e:
                     logger.error(f"Error submitting task for URL {url}: {str(e)}")
-                    errors.append({
+                    # Store error at correct index to preserve order
+                    error_dict = {
                         'url': url,
                         'error': f"Task submission failed: {str(e)}",
                         'processing_time_seconds': 0.0
-                    })
+                    }
+                    url_index = url_to_index[url]
+                    ordered_errors[url_index] = error_dict
                     self.total_failed += 1
             
             # Collect results as they complete
             for future in concurrent.futures.as_completed(future_to_url):
                 url = future_to_url[future]
+                url_index = url_to_index[url]
                 processed_count += 1
                 
                 try:
@@ -193,7 +199,8 @@ class BatchProcessor:
                                 'typography_capsule': result.get('typography_capsule') if isinstance(result, dict) else getattr(result, 'typography_capsule', None),  # Preserve capsule data
                                 'structured_content': result.get('structured_content', []) if isinstance(result, dict) else getattr(result, 'structured_content', [])  # Preserve structured content
                             }
-                        results.append(result_dict)
+                        # Store result at correct index to preserve order
+                        ordered_results[url_index] = result_dict
                         self.total_successful += 1
                         logger.info(f"Successfully processed: {url}")
                     else:
@@ -202,13 +209,15 @@ class BatchProcessor:
                             'error': result.get('error', '') if isinstance(result, dict) else getattr(result, 'error', 'General extraction failed'),
                             'processing_time_seconds': result.get('processing_time_seconds', 0.0) if isinstance(result, dict) else getattr(result, 'processing_time_seconds', 0.0)
                         }
-                        errors.append(error_dict)
+                        # Store error at correct index to preserve order
+                        ordered_errors[url_index] = error_dict
                         self.total_failed += 1
                         logger.warning(f"Failed to process: {url} - {error_dict['error']}")
                     
                     # Call progress callback if provided
                     if progress_callback:
-                        progress_callback(processed_count, len(urls), result_dict if is_success else error_dict)
+                        result_for_callback = ordered_results[url_index] if ordered_results[url_index] else ordered_errors[url_index]
+                        progress_callback(processed_count, len(urls), result_for_callback)
                         
                 except concurrent.futures.TimeoutError:
                     error_dict = {
@@ -216,7 +225,8 @@ class BatchProcessor:
                         'error': "Processing timed out after 10 minutes",
                         'processing_time_seconds': 600.0
                     }
-                    errors.append(error_dict)
+                    # Store timeout error at correct index to preserve order
+                    ordered_errors[url_index] = error_dict
                     self.total_failed += 1
                     logger.error(f"Timeout processing {url}")
                     
@@ -226,7 +236,8 @@ class BatchProcessor:
                         'error': f"Unexpected error: {str(e)}",
                         'processing_time_seconds': 0.0
                     }
-                    errors.append(error_dict)
+                    # Store exception error at correct index to preserve order
+                    ordered_errors[url_index] = error_dict
                     self.total_failed += 1
                     logger.error(f"Unexpected error processing {url}: {str(e)}", exc_info=True)
                     
@@ -237,15 +248,18 @@ class BatchProcessor:
                 
         except Exception as e:
             logger.error(f"Critical error in batch processing: {str(e)}", exc_info=True)
+            # Convert ordered arrays to lists, filtering out None values but preserving order
+            final_results = [item for item in ordered_results if item is not None]
+            final_errors = [item for item in ordered_errors if item is not None]
             # Ensure we return partial results even if there's a critical error
             return {
                 'total_urls': len(urls),
                 'processed': processed_count,
-                'successful': len(results),
-                'failed': len(errors),
+                'successful': len(final_results),
+                'failed': len(final_errors),
                 'processing_time_seconds': time.time() - self.start_time,
-                'results': results,
-                'errors': errors,
+                'results': final_results,
+                'errors': final_errors,
                 'critical_error': str(e)
             }
         finally:
@@ -254,26 +268,34 @@ class BatchProcessor:
         
         total_time = time.time() - self.start_time
         
-        # Compile final results
+        # Convert ordered arrays to lists, filtering out None values but preserving order
+        final_results = [item for item in ordered_results if item is not None]
+        final_errors = [item for item in ordered_errors if item is not None]
+        
+        # Log order preservation confirmation
+        logger.info(f"Order preservation: {len(final_results)} successful results, {len(final_errors)} errors in original URL order")
+        
+        # Compile final results with preserved order
         batch_results = {
             'total_urls': len(urls),
             'processed': processed_count,
-            'successful': len(results),
-            'failed': len(errors),
+            'successful': len(final_results),
+            'failed': len(final_errors),
             'processing_time_seconds': total_time,
             'average_time_per_url': total_time / len(urls) if urls else 0,
-            'results': results,
-            'errors': errors,
+            'results': final_results,
+            'errors': final_errors,
             'statistics': {
                 'newspapers_com_urls': len([url for url in urls if 'newspapers.com' in url.lower()]),
                 'other_urls': len([url for url in urls if 'newspapers.com' not in url.lower()]),
-                'success_rate': (len(results) / len(urls) * 100) if urls else 0,
+                'success_rate': (len(final_results) / len(urls) * 100) if urls else 0,
                 'enhanced_processing_enabled': enable_advanced_processing,
-                'auto_authentication_used': self.newspapers_extractor is not None
+                'auto_authentication_used': self.newspapers_extractor is not None,
+                'order_preserved': True  # Flag to confirm order preservation
             }
         }
         
-        logger.info(f"Batch processing completed: {len(results)}/{len(urls)} successful in {total_time:.2f}s")
+        logger.info(f"Batch processing completed: {len(final_results)}/{len(urls)} successful in {total_time:.2f}s")
         
         # Clean up batch processing flag
         if 'BATCH_PROCESSING' in os.environ:
@@ -700,8 +722,11 @@ class EnhancedBatchProcessor(BatchProcessor):
         retry_delay: float = 5.0,
         **kwargs
     ) -> Dict:
-        """Process URLs with retry logic for failed extractions"""
-        logger.info(f"Starting batch processing with retry (max {max_retries} retries)")
+        """Process URLs with retry logic for failed extractions while preserving original order"""
+        logger.info(f"Starting batch processing with retry (max {max_retries} retries), preserving URL order")
+        
+        # Create URL index mapping for order preservation
+        url_to_index = {url: i for i, url in enumerate(urls)}
         
         # Initial processing
         result = self.process_urls_batch(urls, **kwargs)
@@ -721,16 +746,56 @@ class EnhancedBatchProcessor(BatchProcessor):
             # Retry processing
             retry_result = self.process_urls_batch(failed_urls, **kwargs)
             
-            # Merge results
-            result['results'].extend(retry_result['results'])
-            result['successful'] += retry_result['successful']
-            result['failed'] = len(retry_result['errors'])
-            result['errors'] = retry_result['errors']
+            # Merge results while preserving original order
+            # Create a mapping from URL to retry result
+            retry_url_to_result = {}
+            retry_url_to_error = {}
+            for retry_res in retry_result['results']:
+                retry_url_to_result[retry_res['url']] = retry_res
+            for retry_err in retry_result['errors']:
+                retry_url_to_error[retry_err['url']] = retry_err
+            
+            # Rebuild results and errors in original URL order
+            all_items = []  # Will store tuples of (index, item, type)
+            
+            # Add all current successful results
+            for res in result['results']:
+                url_index = url_to_index[res['url']]
+                all_items.append((url_index, res, 'result'))
+            
+            # Process current errors: replace with retry results if available
+            for error in result['errors']:
+                url = error['url']
+                url_index = url_to_index[url]
+                
+                if url in retry_url_to_result:
+                    # This URL succeeded on retry
+                    all_items.append((url_index, retry_url_to_result[url], 'result'))
+                elif url in retry_url_to_error:
+                    # This URL failed again
+                    all_items.append((url_index, retry_url_to_error[url], 'error'))
+                else:
+                    # This URL wasn't retried - keep original error
+                    all_items.append((url_index, error, 'error'))
+            
+            # Sort by original index to preserve order
+            all_items.sort(key=lambda x: x[0])
+            
+            # Separate results and errors while maintaining order
+            updated_results = [item[1] for item in all_items if item[2] == 'result']
+            updated_errors = [item[1] for item in all_items if item[2] == 'error']
+            
+            # Update result with merged data
+            result['results'] = updated_results
+            result['successful'] = len(updated_results)
+            result['failed'] = len(updated_errors)
+            result['errors'] = updated_errors
             result['processing_time_seconds'] += retry_result['processing_time_seconds']
             
             # Update statistics
             result['statistics']['retry_attempts'] = retry_count
             result['statistics']['final_success_rate'] = (result['successful'] / result['total_urls'] * 100)
+            result['statistics']['order_preserved_with_retries'] = True
         
         # Store in history
         self.processing_history.append({
