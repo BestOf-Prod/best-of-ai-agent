@@ -403,6 +403,25 @@ class BatchProcessor:
                 simple_result.content = text_content
                 simple_result.text = text_content  # alias
                 simple_result.full_content = text_content  # Add full_content field for Word doc compatibility
+                
+                # Create structured_content for proper Word doc indentation (like URL extractor)
+                if text_content and not result.get('structured_content'):
+                    # Split text into paragraphs and create structured content
+                    paragraphs = text_content.split('\n\n')
+                    structured_paragraphs = []
+                    for para in paragraphs:
+                        if para.strip():
+                            # Detect if paragraph should be indented (starts with spaces or is a continuation)
+                            is_indented = para.startswith('    ') or (len(structured_paragraphs) > 0)
+                            structured_paragraphs.append({
+                                'type': 'paragraph',
+                                'text': para.strip(),
+                                'indented': is_indented
+                            })
+                    simple_result.structured_content = structured_paragraphs
+                    logger.info(f"Created structured_content with {len(structured_paragraphs)} paragraphs for Word doc formatting")
+                else:
+                    simple_result.structured_content = result.get('structured_content', [])
                 # LAPL can now have images (e.g., from NewspaperArchive)
                 simple_result.image_data = result.get('image_data')  # Pass through image data if available
                 simple_result.image_url = result.get('image_url')
