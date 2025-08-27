@@ -399,8 +399,9 @@ class BatchProcessor:
                 simple_result.date = result.get('date', datetime.now().strftime('%Y-%m-%d'))
                 simple_result.content = result.get('text', '')
                 simple_result.text = simple_result.content  # alias
-                simple_result.image_data = None  # LAPL typically doesn't have images
-                simple_result.image_url = None
+                # LAPL can now have images (e.g., from NewspaperArchive)
+                simple_result.image_data = result.get('image_data')  # Pass through image data if available
+                simple_result.image_url = result.get('image_url')
                 simple_result.markdown_path = result.get('markdown_path', '')
                 simple_result.word_count = result.get('word_count', 0)
                 simple_result.processing_time_seconds = processing_time

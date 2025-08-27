@@ -12,6 +12,7 @@ import time
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse
 from utils.logger import setup_logging
+from extractors.newspaperarchive_extractor import NewspaperArchiveExtractor
 
 logger = setup_logging(__name__)
 
@@ -35,6 +36,9 @@ class LAPLExtractor:
         self.base_domain = "lapl.idm.oclc.org"
         self.newspaper_archive_domain = "access-newspaperarchive-com.lapl.idm.oclc.org"
         self.is_render = 'RENDER' in os.environ or 'RENDER_SERVICE_ID' in os.environ
+        
+        # Initialize NewspaperArchive extractor
+        self.newspaperarchive_extractor = None
         
         logger.info("LAPL Extractor initialized")
         
@@ -440,9 +444,26 @@ class LAPLExtractor:
         return (any(indicator in parsed.netloc.lower() for indicator in proquest_indicators) and 'lapl.idm.oclc.org' in parsed.netloc) or \
                ('proquest.com' in parsed.netloc and ('docview' in url or 'usnews' in url))
     
+    def is_newspaperarchive_url(self, url: str) -> bool:
+        """
+        Check if URL is from NewspaperArchive via LAPL
+        
+        Args:
+            url: URL to check
+            
+        Returns:
+            bool: True if NewspaperArchive URL
+        """
+        parsed = urlparse(url)
+        newspaperarchive_indicators = [
+            'access-newspaperarchive-com',
+            'newspaperarchive'
+        ]
+        return any(indicator in parsed.netloc.lower() for indicator in newspaperarchive_indicators) and 'lapl.idm.oclc.org' in parsed.netloc
+
     def is_lapl_news_url(self, url: str) -> bool:
         """
-        Check if URL is from a LAPL news source (NewsBank or ProQuest)
+        Check if URL is from a LAPL news source (NewsBank, ProQuest, or NewspaperArchive)
         
         Args:
             url: URL to check
@@ -450,7 +471,7 @@ class LAPLExtractor:
         Returns:
             bool: True if LAPL news source URL
         """
-        return self.is_newsbank_url(url) or self.is_proquest_url(url)
+        return self.is_newsbank_url(url) or self.is_proquest_url(url) or self.is_newspaperarchive_url(url)
     
     def extract_newsbank_content(self, url: str) -> Dict[str, Any]:
         """
@@ -969,13 +990,77 @@ class LAPLExtractor:
                     self.driver = None
                 except:
                     pass
+
+    def extract_newspaperarchive_content(self, url: str, project_name: str = "lapl_extracts") -> Dict[str, Any]:
+        """
+        Extract article content from NewspaperArchive URLs via LAPL
+        
+        Args:
+            url: NewspaperArchive URL via LAPL
+            project_name: Project name for storage
+            
+        Returns:
+            dict: Extracted article data
+        """
+        try:
+            logger.info(f"Starting NewspaperArchive extraction for: {url}")
+            
+            # Initialize NewspaperArchive extractor if needed
+            if not self.newspaperarchive_extractor:
+                self.newspaperarchive_extractor = NewspaperArchiveExtractor(auto_auth=False, project_name=project_name)
+            
+            # Initialize with LAPL cookies
+            if not self.newspaperarchive_extractor.initialize(self.cookies):
+                return {
+                    'success': False,
+                    'error': 'Failed to initialize NewspaperArchive extractor with LAPL cookies'
+                }
+            
+            # Extract using click-to-download method
+            result = self.newspaperarchive_extractor.extract_from_url(url, project_name=project_name)
+            
+            if result.get('success'):
+                logger.info(f"NewspaperArchive extraction successful for: {url}")
+                # Pass through all important fields from newspaperarchive extractor
+                return {
+                    'success': True,
+                    'method': 'newspaperarchive_download',
+                    'files': result.get('files', []),
+                    'total_files': result.get('total_files', 0),
+                    'url': url,
+                    'content_type': 'newspaperarchive',
+                    'extraction_method': 'click_download',
+                    # Pass through fields needed for UI and Word doc generation
+                    'image_data': result.get('image_data'),
+                    'image_url': result.get('files', [{}])[0].get('path') if result.get('files') else None,  # Set image_url to first file path for UI compatibility
+                    'headline': result.get('headline', f'NewspaperArchive extraction from {url}'),
+                    'source': result.get('source', 'newspaperarchive.com'),
+                    'date': result.get('date'),
+                    'timestamp': result.get('timestamp'),
+                    'player_name': result.get('player_name')
+                }
+            else:
+                logger.error(f"NewspaperArchive extraction failed: {result.get('error', 'Unknown error')}")
+                return {
+                    'success': False,
+                    'error': result.get('error', 'NewspaperArchive extraction failed'),
+                    'message': f'NewspaperArchive extraction failed: {result.get("error", "Unknown error")}'
+                }
+                
+        except Exception as e:
+            logger.error(f"NewspaperArchive extraction exception: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e),
+                'message': f'NewspaperArchive extraction failed: {str(e)}'
+            }
     
     def extract_article_content(self, url: str, project_name: str = "lapl_extracts") -> Dict[str, Any]:
         """
         Main method to extract article content from LAPL news sources
         
         Args:
-            url: Article URL from NewsBank or ProQuest via LAPL
+            url: Article URL from NewsBank, ProQuest, or NewspaperArchive via LAPL
             project_name: Project name for organizing storage
             
         Returns:
@@ -988,7 +1073,7 @@ class LAPLExtractor:
             if not self.is_lapl_news_url(url):
                 return {
                     'success': False,
-                    'error': 'URL is not from a supported LAPL news source (NewsBank or ProQuest)'
+                    'error': 'URL is not from a supported LAPL news source (NewsBank, ProQuest, or NewspaperArchive)'
                 }
             
             # Check authentication
@@ -1003,6 +1088,8 @@ class LAPLExtractor:
                 article_data = self.extract_newsbank_content(url)
             elif self.is_proquest_url(url):
                 article_data = self.extract_proquest_content(url)
+            elif self.is_newspaperarchive_url(url):
+                article_data = self.extract_newspaperarchive_content(url, project_name)
             else:
                 return {
                     'success': False,

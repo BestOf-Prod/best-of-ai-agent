@@ -1081,7 +1081,13 @@ def display_batch_results(config):
                     
                     with preview_col2:
                         st.write("#### Image Preview")
-                        if selected_article.get('image_url'):
+                        
+                        # First check for image_data (in-memory image)
+                        if selected_article.get('image_data'):
+                            logger.debug("Displaying image from image_data")
+                            st.image(selected_article['image_data'], caption="Extracted Article Image")
+                        # Then check for image_url and try to find file on disk
+                        elif selected_article.get('image_url'):
                             # Try to find the downloaded image
                             image_path = None
                             source = selected_article.get('source', 'unknown')
@@ -1103,7 +1109,7 @@ def display_batch_results(config):
                                 logger.warning(f"No image found at path: {image_path}")
                                 st.warning("Image not found locally")
                         else:
-                            logger.info("No image URL available for this article")
+                            logger.info("No image data or URL available for this article")
                             st.info("No image available for this article")
             else:
                 st.info("No successful extractions in this batch.")
