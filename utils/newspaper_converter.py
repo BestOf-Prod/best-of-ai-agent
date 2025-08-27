@@ -979,7 +979,8 @@ def convert_articles_to_component_zip(articles_data, output_zip_path=None):
             if components.get('image'):
                 logger.info(f"Found {len(components['image'])} images in components for directory: {directory_name}")
                 for img_idx, img in enumerate(components['image']):
-                    img_filename = f"image_{img_idx + 1}_{os.path.basename(img['path'])}"
+                    # Make filename more unique by including article index
+                    img_filename = f"article_{i+1}_image_{img_idx + 1}_{os.path.basename(img['path'])}"
                     img_info = {
                         'source_path': img['path'],
                         'clip_filename': img_filename,
@@ -1143,8 +1144,8 @@ def convert_multiple_markdown_to_newspaper_zip(markdown_contents, output_zip_pat
                 if article.get('image_data'):
                     logger.info(f"Processing image_data for article: {title}")
                     try:
-                        # Save the PIL Image to temp directory
-                        image_filename = f"{safe_filename}_scraped_image.png"
+                        # Save the PIL Image to temp directory with unique identifier
+                        image_filename = f"{safe_filename}_article_{i+1}_scraped_image.png"
                         image_path = os.path.join(temp_dir, image_filename)
                         
                         image_saved = False
@@ -1180,8 +1181,8 @@ def convert_multiple_markdown_to_newspaper_zip(markdown_contents, output_zip_pat
                             # Add image reference to markdown
                             enhanced_md_content = md_content + f"\n\n![Scraped Article Image]({image_path})\n\n"
                             
-                            # Add to clippings collection
-                            clip_filename = f"{safe_filename}_scraped_image.png"
+                            # Add to clippings collection with unique identifier
+                            clip_filename = f"{safe_filename}_article_{i+1}_scraped_image.png"
                             all_images.append({
                                 'source_path': image_path,
                                 'clip_filename': clip_filename,
@@ -1191,6 +1192,7 @@ def convert_multiple_markdown_to_newspaper_zip(markdown_contents, output_zip_pat
                             newspapers_image_added = True
                             
                             logger.info(f"Successfully processed scraped image for {title} and added to all_images collection")
+                            logger.info(f"Total images in collection after newspapers.com addition: {len(all_images)}")
                         
                     except Exception as e:
                         logger.error(f"Failed to process image_data for {title}: {str(e)}")
@@ -1200,9 +1202,9 @@ def convert_multiple_markdown_to_newspaper_zip(markdown_contents, output_zip_pat
             
             # Collect images from this document (from markdown URLs)
             if hasattr(doc, '_downloaded_images'):
-                for img in doc._downloaded_images:
+                for img_idx, img in enumerate(doc._downloaded_images):
                     # Create unique filename for the clippings directory
-                    img_filename = f"{safe_filename}_{os.path.basename(img['path'])}"
+                    img_filename = f"{safe_filename}_article_{i+1}_url_img_{img_idx+1}_{os.path.basename(img['path'])}"
                     all_images.append({
                         'source_path': img['path'],
                         'clip_filename': img_filename,
@@ -1210,6 +1212,7 @@ def convert_multiple_markdown_to_newspaper_zip(markdown_contents, output_zip_pat
                         'alt_text': img['alt_text']
                     })
                     logger.info(f"Added URL-based image to all_images: {img_filename}")
+                    logger.info(f"Total images in collection after URL addition: {len(all_images)}")
             
             # Log final image count for this article
             if newspapers_image_added:
@@ -1247,6 +1250,26 @@ def convert_multiple_markdown_to_newspaper_zip(markdown_contents, output_zip_pat
             
             # Add images to clippings directory
             logger.info(f"Adding {len(all_images)} images to clippings directory")
+            
+            # Debug: Log image sources and check for duplicates
+            newspapers_images = len([img for img in all_images if 'scraped_from_newspapers.com' in img['url']])
+            url_images = len([img for img in all_images if 'scraped_from_newspapers.com' not in img['url']])
+            logger.info(f"Image source breakdown: {newspapers_images} from newspapers.com, {url_images} from URLs")
+            
+            # Check for duplicate filenames
+            clip_filenames = [img['clip_filename'] for img in all_images]
+            unique_filenames = set(clip_filenames)
+            if len(clip_filenames) != len(unique_filenames):
+                logger.warning(f"Found duplicate filenames! {len(clip_filenames)} total vs {len(unique_filenames)} unique")
+                # Log duplicate filenames
+                from collections import Counter
+                filename_counts = Counter(clip_filenames)
+                for filename, count in filename_counts.items():
+                    if count > 1:
+                        logger.warning(f"Duplicate filename: {filename} appears {count} times")
+            else:
+                logger.info(f"✅ All {len(clip_filenames)} image filenames are unique")
+            
             successful_image_count = 0
             for img in all_images:
                 try:
@@ -1271,6 +1294,7 @@ def convert_multiple_markdown_to_newspaper_zip(markdown_contents, output_zip_pat
                     zip_file.writestr(zip_path, img_data)
                     successful_image_count += 1
                     logger.info(f"Successfully added image to zip: {zip_path} ({len(img_data)} bytes)")
+                    logger.info(f"Image source: {img.get('url', 'unknown')}, filename: {img['clip_filename']}")
                     
                 except Exception as e:
                     logger.error(f"Failed to add image {img['clip_filename']} to zip: {str(e)}")
@@ -1553,6 +1577,21 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
         
         # Copy all images to the images folder
         logger.info(f"Processing {len(all_images)} images for export to images folder")
+        
+        # Debug: Check for duplicate filenames in Word document
+        if all_images:
+            image_filenames = [img['filename'] for img in all_images]
+            unique_filenames = set(image_filenames)
+            if len(image_filenames) != len(unique_filenames):
+                logger.warning(f"Word doc: Found duplicate image filenames! {len(image_filenames)} total vs {len(unique_filenames)} unique")
+                from collections import Counter
+                filename_counts = Counter(image_filenames)
+                for filename, count in filename_counts.items():
+                    if count > 1:
+                        logger.warning(f"Word doc: Duplicate filename: {filename} appears {count} times")
+            else:
+                logger.info(f"Word doc: ✅ All {len(image_filenames)} image filenames are unique")
+        
         exported_images = []
         for img in all_images:
             try:
