@@ -176,14 +176,11 @@ class NewspaperArchiveExtractor:
         Returns:
             Dict with extraction results including downloaded files
         """
-        # Check if we should use selenium-wire or fall back to regular selenium
-        use_selenium_wire = SELENIUM_WIRE_AVAILABLE and not (self.is_render or self.is_replit_deployment)
+        # Use selenium-wire if available (same as newspapers_extractor which works on Render)
+        use_selenium_wire = SELENIUM_WIRE_AVAILABLE
         
         if not use_selenium_wire:
-            if self.is_render or self.is_replit_deployment:
-                logger.info("Using regular selenium for deployment environment due to compatibility constraints")
-            else:
-                logger.warning("selenium-wire not available, falling back to regular selenium")
+            logger.warning("selenium-wire not available, falling back to regular selenium")
         
         try:
             # Setup Chrome options optimized for Render deployment
