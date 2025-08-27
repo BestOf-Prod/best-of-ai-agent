@@ -186,9 +186,9 @@ class NewspaperArchiveExtractor:
                 logger.warning("selenium-wire not available, falling back to regular selenium")
         
         try:
-            # Setup Chrome options optimized for speed
+            # Setup Chrome options optimized for Render deployment
             chrome_options = Options()
-            # chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--headless")  # Must be headless on Render
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
             chrome_options.add_argument("--disable-gpu")
@@ -198,6 +198,21 @@ class NewspaperArchiveExtractor:
             chrome_options.add_argument("--disable-blink-features=AutomationControlled")
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
+            
+            # Render-specific options to fix user-data-dir issues
+            chrome_options.add_argument("--disable-background-timer-throttling")
+            chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+            chrome_options.add_argument("--disable-renderer-backgrounding")
+            chrome_options.add_argument("--disable-features=TranslateUI")
+            chrome_options.add_argument("--disable-ipc-flooding-protection")
+            chrome_options.add_argument("--single-process")  # Helps prevent user-data-dir conflicts
+            chrome_options.add_argument("--no-zygote")  # Prevents zygote process issues
+            
+            # Set a unique user data directory to avoid conflicts
+            import tempfile
+            import uuid
+            unique_user_data_dir = os.path.join(tempfile.gettempdir(), f"chrome_user_data_{uuid.uuid4().hex[:8]}")
+            chrome_options.add_argument(f"--user-data-dir={unique_user_data_dir}")
             
             # Add user agent to avoid detection
             chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
