@@ -211,7 +211,7 @@ class NewspaperArchiveExtractor:
             # Set a unique user data directory to avoid conflicts
             import tempfile
             import uuid
-            unique_user_data_dir = os.path.join(tempfile.gettempdir(), f"chrome_user_data_{uuid.uuid4().hex[:8]}")
+            unique_user_data_dir = tempfile.gettempdir() + f"/chrome_user_data_{uuid.uuid4().hex[:8]}"
             chrome_options.add_argument(f"--user-data-dir={unique_user_data_dir}")
             
             # Add user agent to avoid detection
