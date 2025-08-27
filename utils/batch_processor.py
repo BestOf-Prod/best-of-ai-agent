@@ -272,8 +272,26 @@ class BatchProcessor:
         final_results = [item for item in ordered_results if item is not None]
         final_errors = [item for item in ordered_errors if item is not None]
         
-        # Log order preservation confirmation
+        # Log order preservation confirmation with URL details
         logger.info(f"Order preservation: {len(final_results)} successful results, {len(final_errors)} errors in original URL order")
+        
+        # Log first few URLs from original input and final results for debugging
+        if final_results and len(urls) > 0:
+            logger.info(f"Original URL order (first 3): {urls[:3]}")
+            result_urls = [r['url'] for r in final_results[:3]]
+            logger.info(f"Final result order (first 3): {result_urls}")
+            
+            # Check if order is preserved for debugging
+            first_three_match = True
+            for i in range(min(3, len(urls), len(final_results))):
+                if urls[i] != final_results[i]['url']:
+                    first_three_match = False
+                    logger.warning(f"Order mismatch at position {i}: expected {urls[i]}, got {final_results[i]['url']}")
+            
+            if first_three_match:
+                logger.info("✅ URL order confirmed preserved for first 3 results")
+            else:
+                logger.error("❌ URL order NOT preserved - investigation needed")
         
         # Compile final results with preserved order
         batch_results = {

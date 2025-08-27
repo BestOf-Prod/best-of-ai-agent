@@ -847,6 +847,11 @@ def start_enhanced_batch_processing(config):
     st.session_state.processing_active = True
     urls = st.session_state.extracted_urls
     
+    # Debug logging for URL order
+    logger.info(f"Processing {len(urls)} URLs with Process All button")
+    if urls:
+        logger.info(f"URLs in session state (first 3): {urls[:3]}")
+    
     # Initialize enhanced storage manager and batch processor
     storage_manager = StorageManager(bucket_name=config['bucket_name'], project_name=config['project_name'])
     batch_processor = BatchProcessor(
@@ -890,6 +895,27 @@ def start_enhanced_batch_processing(config):
         # Store enhanced results
         st.session_state.batch_results = results
         st.session_state.processing_active = False
+        
+        # Debug: Show order preservation status to user
+        if results.get('successful', 0) > 0 and results.get('results'):
+            original_urls = st.session_state.extracted_urls
+            result_urls = [r['url'] for r in results['results']]
+            
+            # Simple order check: see if results appear in the same relative order as original
+            logger.info(f"Order check - Original URLs (first 3): {original_urls[:3]}")
+            logger.info(f"Order check - Result URLs (first 3): {result_urls[:3]}")
+            
+            # Show first few URLs to user for manual verification
+            if len(result_urls) >= 2:
+                st.info(f"📋 Processing order - First result: {result_urls[0][:60]}...")
+                if len(result_urls) >= 2:
+                    st.info(f"📋 Processing order - Second result: {result_urls[1][:60]}...")
+                    
+            # Check if order preservation flag is set
+            if results.get('statistics', {}).get('order_preserved'):
+                st.success("✅ Order preservation enabled in batch processor")
+            else:
+                st.warning("⚠️ Order preservation status unknown")
         
         # Update uploaded images list
         if results['successful'] > 0:
@@ -974,10 +1000,13 @@ def display_batch_results(config):
         
         with tab1:
             if results['results']:
-                # Debug: Print available results
+                # Debug: Print available results and check order
                 logger.debug(f"Number of results: {len(results['results'])}")
+                logger.info("Results display order check:")
                 for idx, r in enumerate(results['results']):
                     logger.debug(f"Result {idx + 1}: {r.get('headline', 'Unknown')} - Markdown path: {r.get('markdown_path', 'Not available')}")
+                    if idx < 3:  # Log first 3 for order verification
+                        logger.info(f"Display position {idx + 1}: URL {r.get('url', 'unknown')[:50]}...")
                 
                 # Create a DataFrame for the results table
                 success_df = pd.DataFrame([
