@@ -229,11 +229,13 @@ class NewspaperArchiveExtractor:
             
             # Initialize appropriate webdriver
             if use_selenium_wire:
+                # Use the same selenium-wire options as newspapers_extractor (which works on Render)
                 seleniumwire_options = {
-                    'verify_ssl': False,
+                    'port': 0,  # Use random port
+                    'disable_encoding': True,  # Don't decode responses
+                    'request_storage_base_dir': tempfile.gettempdir(),
                     'suppress_connection_errors': True,
-                    'connection_timeout': 30,
-                    'read_timeout': 30
+                    'request_storage': 'memory',  # Use memory storage for speed
                 }
                 driver = wire_webdriver.Chrome(
                     options=chrome_options,
@@ -428,6 +430,119 @@ class NewspaperArchiveExtractor:
                         logger.info(f"Found {len(downloaded_files)} files through selenium-wire monitoring")
                     else:
                         logger.warning("Selenium-wire not available or driver doesn't have requests attribute")
+                        
+                        # Alternative approach: Use JavaScript to capture download URLs
+                        logger.info("Trying JavaScript-based download capture...")
+                        try:
+                            # Wait a bit more for download to process
+                            time.sleep(5)
+                            
+                            # Use JavaScript to find any download-related elements or recently created blob URLs
+                            js_script = """
+                            var downloadLinks = [];
+                            var images = [];
+                            
+                            // Look for any download links that might have been created
+                            var links = document.querySelectorAll('a[href]');
+                            for (var i = 0; i < links.length; i++) {
+                                var href = links[i].href;
+                                if (href.includes('download') || href.includes('blob:') || 
+                                    href.includes('.jpg') || href.includes('.png') || href.includes('.pdf')) {
+                                    downloadLinks.push(href);
+                                }
+                            }
+                            
+                            // Look for images that might be the newspaper page
+                            var imgs = document.querySelectorAll('img');
+                            for (var j = 0; j < imgs.length; j++) {
+                                var src = imgs[j].src;
+                                if (src && !src.includes('icon') && !src.includes('logo') && 
+                                    (imgs[j].width > 200 || imgs[j].height > 200)) {
+                                    images.push({
+                                        src: src,
+                                        width: imgs[j].width,
+                                        height: imgs[j].height,
+                                        naturalWidth: imgs[j].naturalWidth,
+                                        naturalHeight: imgs[j].naturalHeight
+                                    });
+                                }
+                            }
+                            
+                            return {
+                                downloadLinks: downloadLinks,
+                                images: images
+                            };
+                            """
+                            
+                            result = driver.execute_script(js_script)
+                            logger.info(f"JavaScript found {len(result.get('downloadLinks', []))} download links and {len(result.get('images', []))} images")
+                            
+                            # Try to download from any found links
+                            for link in result.get('downloadLinks', []):
+                                try:
+                                    logger.info(f"Attempting to download from JS-found link: {link[:100]}")
+                                    response = self.session.get(link, timeout=30, headers={
+                                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                                    })
+                                    
+                                    if response.status_code == 200 and len(response.content) > 10000:  # At least 10KB
+                                        content_type = response.headers.get('content-type', 'image/jpeg')
+                                        file_extension = 'jpg'
+                                        if 'png' in content_type.lower():
+                                            file_extension = 'png'
+                                        elif 'pdf' in content_type.lower():
+                                            file_extension = 'pdf'
+                                        
+                                        downloaded_files.append({
+                                            'url': link,
+                                            'content': response.content,
+                                            'content_type': content_type,
+                                            'headers': dict(response.headers),
+                                            'filename': f"newspaperarchive_js_{int(time.time())}.{file_extension}"
+                                        })
+                                        logger.info(f"Successfully downloaded via JavaScript method: {len(response.content)} bytes")
+                                        break  # Stop after first successful download
+                                        
+                                except Exception as e:
+                                    logger.warning(f"Failed to download JS link {link}: {e}")
+                            
+                            # If no download links worked, try the images
+                            if not downloaded_files:
+                                logger.info("No download links worked, trying to capture large images...")
+                                for img in result.get('images', []):
+                                    try:
+                                        # Focus on large images (likely newspaper pages)
+                                        if (img.get('naturalWidth', 0) > 500 and img.get('naturalHeight', 0) > 500) or \
+                                           (img.get('width', 0) > 500 and img.get('height', 0) > 500):
+                                            
+                                            src = img['src']
+                                            logger.info(f"Attempting to download large image: {src[:100]} ({img.get('width')}x{img.get('height')})")
+                                            
+                                            response = self.session.get(src, timeout=30, headers={
+                                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                                            })
+                                            
+                                            if response.status_code == 200 and len(response.content) > 50000:  # At least 50KB for newspaper image
+                                                content_type = response.headers.get('content-type', 'image/jpeg')
+                                                file_extension = 'jpg'
+                                                if 'png' in content_type.lower():
+                                                    file_extension = 'png'
+                                                
+                                                downloaded_files.append({
+                                                    'url': src,
+                                                    'content': response.content,
+                                                    'content_type': content_type,
+                                                    'headers': dict(response.headers),
+                                                    'filename': f"newspaperarchive_img_{int(time.time())}.{file_extension}"
+                                                })
+                                                logger.info(f"Successfully captured newspaper image: {len(response.content)} bytes")
+                                                break  # Stop after first successful image
+                                                
+                                    except Exception as e:
+                                        logger.warning(f"Failed to download image {img['src']}: {e}")
+                                        
+                        except Exception as e:
+                            logger.error(f"JavaScript-based capture failed: {e}")
                     
                     # Also check for files downloaded to the temp directory
                     logger.info("Checking for files downloaded to filesystem...")
