@@ -1,7 +1,7 @@
 import re
 import logging
 from docx import Document
-from typing import List, Set
+from typing import List
 from utils.logger import setup_logging
 
 # Setup logging
@@ -24,16 +24,21 @@ def extract_urls_from_docx(file_content) -> List[str]:
         doc = Document(file_content)
         logger.info(f"Successfully loaded Word document")
         
-        urls = set()  # Use set to avoid duplicates
+        urls = []  # Use list to preserve order
+        seen_urls = set()  # Track duplicates
         
-        # Extract URLs from paragraph text
+        # Extract URLs from paragraph text in document order
         logger.debug("Extracting URLs from paragraph text")
         for paragraph in doc.paragraphs:
             text = paragraph.text
             found_urls = extract_urls_from_text(text)
-            urls.update(found_urls)
+            # Add URLs in the order they appear, avoiding duplicates
+            for url in found_urls:
+                if url not in seen_urls:
+                    urls.append(url)
+                    seen_urls.add(url)
         
-        # Extract URLs from hyperlinks
+        # Extract URLs from hyperlinks in document order
         logger.debug("Extracting URLs from hyperlinks")
         for paragraph in doc.paragraphs:
             for run in paragraph.runs:
@@ -44,22 +49,32 @@ def extract_urls_from_docx(file_content) -> List[str]:
                         if r_id:
                             try:
                                 url = doc.part.rels[r_id].target_ref
-                                if url and is_valid_url(url):
-                                    urls.add(url)
+                                if url and is_valid_url(url) and url not in seen_urls:
+                                    urls.append(url)
+                                    seen_urls.add(url)
                                     logger.debug(f"Found hyperlink URL: {url}")
                             except Exception as e:
                                 logger.warning(f"Error processing hyperlink: {str(e)}")
         
-        # Extract URLs from tables
+        # Extract URLs from tables in document order
         logger.debug("Extracting URLs from tables")
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     found_urls = extract_urls_from_text(cell.text)
-                    urls.update(found_urls)
+                    # Add URLs in the order they appear in table cells
+                    for url in found_urls:
+                        if url not in seen_urls:
+                            urls.append(url)
+                            seen_urls.add(url)
         
-        url_list = list(urls)
-        logger.info(f"Successfully extracted {len(url_list)} unique URLs from document")
+        url_list = urls  # Already a list in correct order
+        logger.info(f"Successfully extracted {len(url_list)} unique URLs from document in document order")
+        
+        # Log first few URLs to verify order preservation
+        if url_list:
+            sample_urls = url_list[:3]  # First 3 URLs
+            logger.info(f"URLs extracted in order (showing first 3): {sample_urls}")
         
         return url_list
         
@@ -67,29 +82,31 @@ def extract_urls_from_docx(file_content) -> List[str]:
         logger.error(f"Error extracting URLs from Word document: {str(e)}")
         raise Exception(f"Failed to process Word document: {str(e)}")
 
-def extract_urls_from_text(text: str) -> Set[str]:
+def extract_urls_from_text(text: str) -> List[str]:
     """
-    Extract URLs from plain text using regex
+    Extract URLs from plain text using regex, preserving order
     
     Args:
         text (str): The text to search for URLs
         
     Returns:
-        Set[str]: Set of URLs found in the text
+        List[str]: List of URLs found in the text in order of appearance
     """
     if not text:
-        return set()
+        return []
     
     # Regex pattern to match URLs
     url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+(?:[^\s<>"{}|\\^`\[\].,;!?])'
     
-    urls = set()
+    urls = []
+    seen_urls = set()
     matches = re.finditer(url_pattern, text, re.IGNORECASE)
     
     for match in matches:
         url = match.group(0)
-        if is_valid_url(url):
-            urls.add(url)
+        if is_valid_url(url) and url not in seen_urls:
+            urls.append(url)
+            seen_urls.add(url)
     
     return urls
 
