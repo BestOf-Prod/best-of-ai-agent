@@ -376,6 +376,7 @@ class BatchProcessor:
                 self.date = ""
                 self.content = ""
                 self.text = ""  # alias for content
+                self.full_content = ""  # For Word doc compatibility
                 self.image_data = None
                 self.image_url = None
                 self.markdown_path = ""
@@ -397,8 +398,11 @@ class BatchProcessor:
                 simple_result.headline = result.get('headline', '')
                 simple_result.source = result.get('source', 'LAPL')
                 simple_result.date = result.get('date', datetime.now().strftime('%Y-%m-%d'))
-                simple_result.content = result.get('text', '')
-                simple_result.text = simple_result.content  # alias
+                # Get text content and ensure it's available in both fields expected by Word doc generator
+                text_content = result.get('text', result.get('content', ''))
+                simple_result.content = text_content
+                simple_result.text = text_content  # alias
+                simple_result.full_content = text_content  # Add full_content field for Word doc compatibility
                 # LAPL can now have images (e.g., from NewspaperArchive)
                 simple_result.image_data = result.get('image_data')  # Pass through image data if available
                 simple_result.image_url = result.get('image_url')
