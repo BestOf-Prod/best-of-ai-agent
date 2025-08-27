@@ -328,8 +328,11 @@ class NewspaperArchiveExtractor:
                     logger.info("Clicked final Save button (#SaveImagebtn)")
                     time.sleep(3)  # Wait for download to initiate
                     
-                    # Step 5: Monitor for downloads with polling loop (similar to newspapers_extractor)
-                    if use_selenium_wire:
+                    # Step 5: Monitor for downloads with enhanced debugging
+                    logger.info(f"Using selenium-wire: {use_selenium_wire}")
+                    logger.info(f"Driver has requests attribute: {hasattr(driver, 'requests')}")
+                    
+                    if use_selenium_wire and hasattr(driver, 'requests'):
                         logger.info("Monitoring selenium-wire requests for downloads...")
                         
                         # Wait for downloads with polling loop
@@ -339,14 +342,23 @@ class NewspaperArchiveExtractor:
                         
                         while waited_time < max_wait_time and not downloaded_files:
                             logger.info(f"Checking for downloads... ({waited_time}/{max_wait_time}s)")
+                            logger.info(f"Total requests so far: {len(driver.requests)}")
                             
                             # Monitor network requests for downloads - look for content-disposition header
                             found_downloads = 0
+                            image_requests = 0
+                            
                             for request in driver.requests:
                                 # Log all requests for debugging (only on first check to avoid spam)
                                 if waited_time == 0:
                                     logger.debug(f"Request: {request.url} - Response: {bool(request.response)} - Content-Type: {request.response.headers.get('content-type', 'N/A') if request.response else 'N/A'}")
                                 
+                                # Count image requests
+                                if request.response:
+                                    content_type = request.response.headers.get('content-type', '').lower()
+                                    if 'image/' in content_type:
+                                        image_requests += 1
+                                        
                                 # Look for the content-disposition header which indicates a file download
                                 if request.response and request.response.headers.get('content-disposition'):
                                     content_type = request.response.headers.get('content-type', '')
@@ -373,6 +385,8 @@ class NewspaperArchiveExtractor:
                                         except Exception as e:
                                             logger.warning(f"Failed to capture download {request.url}: {e}")
                             
+                            logger.info(f"Found {image_requests} image requests, {found_downloads} downloads after {waited_time}s")
+                            
                             if found_downloads > 0:
                                 logger.info(f"Found {found_downloads} downloads after {waited_time}s")
                                 break
@@ -382,9 +396,38 @@ class NewspaperArchiveExtractor:
                             waited_time += wait_interval
                         
                         if waited_time >= max_wait_time and not downloaded_files:
-                            logger.warning(f"No downloads found after waiting {max_wait_time}s")
+                            logger.warning(f"No downloads found after waiting {max_wait_time}s - trying fallback approach")
+                            
+                            # Fallback: try to capture any large image responses
+                            logger.info("Trying fallback: capturing large image responses...")
+                            for request in driver.requests:
+                                if request.response and request.response.status_code == 200:
+                                    content_type = request.response.headers.get('content-type', '').lower()
+                                    if 'image/' in content_type:
+                                        try:
+                                            content_length = len(request.response.body)
+                                            logger.info(f"Found image request: {request.url[:100]} - Size: {content_length} - Type: {content_type}")
+                                            
+                                            # Capture large images (likely newspaper pages)
+                                            if content_length > 50000:  # 50KB threshold
+                                                file_extension = 'jpg'
+                                                if 'png' in content_type:
+                                                    file_extension = 'png'
+                                                
+                                                downloaded_files.append({
+                                                    'url': request.url,
+                                                    'content': request.response.body,
+                                                    'content_type': content_type,
+                                                    'headers': dict(request.response.headers),
+                                                    'filename': f"newspaperarchive_fallback_{int(time.time())}.{file_extension}"
+                                                })
+                                                logger.info(f"Captured large image as fallback: {content_length} bytes")
+                                        except Exception as e:
+                                            logger.warning(f"Failed to capture fallback image {request.url}: {e}")
                         
                         logger.info(f"Found {len(downloaded_files)} files through selenium-wire monitoring")
+                    else:
+                        logger.warning("Selenium-wire not available or driver doesn't have requests attribute")
                     
                     # Also check for files downloaded to the temp directory
                     logger.info("Checking for files downloaded to filesystem...")
