@@ -2052,6 +2052,28 @@ class NewspapersComExtractor:
                         
                     except TimeoutException:
                         logger.warning(f"Timeout waiting for click {i} element: {click_config['description']}")
+                        # Try alternative selectors if the primary one fails
+                        try:
+                            alternative_selectors = [
+                                "button[aria-label='Download']",
+                                ".download-button",
+                                "[data-test='download-btn']",
+                                "button:contains('Download')",
+                                ".btn-download",
+                                "#download-btn"
+                            ]
+                            for alt_selector in alternative_selectors:
+                                try:
+                                    alt_element = WebDriverWait(driver, 3).until(
+                                        EC.element_to_be_clickable((By.CSS_SELECTOR, alt_selector))
+                                    )
+                                    alt_element.click()
+                                    logger.info(f"Successfully clicked alternative selector: {alt_selector}")
+                                    break
+                                except:
+                                    continue
+                        except Exception as e:
+                            logger.warning(f"All alternative selectors failed for click {i}: {e}")
                         continue
                     except Exception as e:
                         logger.error(f"Error during click {i}: {str(e)}")

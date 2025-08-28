@@ -345,7 +345,7 @@ def create_headline_style(paragraph, text, font_name=None):
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = paragraph.add_run(text)
     run.font.name = font_name or 'Times New Roman'
-    run.font.size = Pt(38)  # Fixed headline size
+    run.font.size = Pt(28)  # Reduced headline size from 38pt to prevent full-page headlines
     run.font.bold = True
     paragraph.space_after = Pt(6)
 

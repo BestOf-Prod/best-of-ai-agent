@@ -538,23 +538,51 @@ class LAPLExtractor:
                     date_text = date_elem.text.strip()
                     break
             
-            # Extract author
+            # Extract author with NewsBank-specific structure
             author = "Unknown Author"
             author_selectors = [
+                '.author-byline',  # NewsBank specific: <span class="author-byline">Author/Byline: By WES CROSBY, Associated Press</span>
+                'span.author-byline',  # More specific NewsBank byline selector
+                '.author-name',
+                '.byline-author',
+                '.article-byline',
                 '.author',
                 '.byline',
+                '.reporter', 
+                '.contributor',
                 '.writer',
-                '.contributor'
+                '.source-author',
+                'meta[name="author"]',
+                '[data-testid="author"]',
+                '.metadata .author',
+                'span[class*="author"]',
+                'div[class*="byline"]'
             ]
             
             for selector in author_selectors:
                 author_elem = soup.select_one(selector)
                 if author_elem:
-                    author = author_elem.text.strip()
-                    # Clean up common prefixes
-                    import re
-                    author = re.sub(r'^By\s+', '', author, flags=re.IGNORECASE)
-                    break
+                    if author_elem.name == 'meta':
+                        author_text = author_elem.get('content', '').strip()
+                    else:
+                        author_text = author_elem.text.strip()
+                    
+                    # Skip if this looks like a publication name rather than author
+                    if len(author_text) > 3 and not any(pub_word in author_text.lower() for pub_word in ['times', 'herald', 'tribune', 'post', 'news', 'daily', 'journal']):
+                        # Clean up NewsBank-specific prefixes and common prefixes
+                        import re
+                        # Remove NewsBank-specific "Author/Byline:" prefix
+                        author = re.sub(r'^(Author/Byline:\s*)?', '', author_text, flags=re.IGNORECASE).strip()
+                        # Remove common "By" prefix
+                        author = re.sub(r'^By\s+', '', author, flags=re.IGNORECASE).strip()
+                        # Clean up other prefixes
+                        author = re.sub(r'^(Writer:|Author:)\s+', '', author, flags=re.IGNORECASE).strip()
+                        
+                        if author and len(author) > 3:  # Use if we have meaningful content after cleaning
+                            break
+                        elif len(author_text) > 5:  # Fallback to original if reasonably long
+                            author = author_text
+                            break
             
             # Extract article content with preserved formatting
             content = ""
@@ -736,26 +764,29 @@ class LAPLExtractor:
             if pub_elem:
                 publication = pub_elem.get_text().strip()
             
-            # Extract author
+            # Extract author with ProQuest-specific structure
             author = "Unknown Author"
             author_selectors = [
-                '.author-name',  # New ProQuest structure
-                '.truncatedAuthor .author-name',
+                '.scholUnivAuthors .author-name',  # ProQuest specific: <span class="author-name">Gorman, Kevin</span>
+                '.truncatedAuthor .author-name',  # ProQuest truncated author
+                'span.author-name',  # Direct author name span
+                '.author-name',  # General author name class
                 '.author',
                 '.byline',
                 '.docAuthor',
-                '.contributor',
-                '.scholUnivAuthors .author-name'
+                '.contributor'
             ]
             
             for selector in author_selectors:
                 author_elem = soup.select_one(selector)
                 if author_elem:
-                    author = author_elem.text.strip()
-                    # Clean up common prefixes
-                    import re
-                    author = re.sub(r'^By\s+', '', author, flags=re.IGNORECASE)
-                    break
+                    author_text = author_elem.text.strip()
+                    # Clean up common prefixes and validate
+                    if len(author_text) > 2:  # Must have meaningful content
+                        import re
+                        author = re.sub(r'^By\s+', '', author_text, flags=re.IGNORECASE).strip()
+                        if author:  # Use cleaned version if not empty
+                            break
             
             # Extract article content with debugging
             content = ""

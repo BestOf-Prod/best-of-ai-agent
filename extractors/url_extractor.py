@@ -524,18 +524,37 @@ def extract_from_url(url, project_name: str = "default"):
         logger.debug("Parsing HTML content with BeautifulSoup")
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Extract headline - try multiple selectors
+        # Extract headline - try multiple selectors with domain-specific logic
         logger.debug("Extracting headline")
         headline = None
-        headline_selectors = [
-            'h1', 
-            'article h1',
-            '.article-header h1', 
-            '.article-headline',
-            '.headline',
-            '.story-headline',
-            'header h1'
-        ]
+        
+        # Get domain for specific handling
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc.lower()
+        
+        # ESPN-specific selectors (to avoid grabbing scores)
+        if 'espn.com' in domain:
+            headline_selectors = [
+                'h1[data-module="Headline"]',  # ESPN article headlines
+                'h1.headline',
+                'article h1',
+                '.article-header h1',
+                '.story-headline',
+                'h1.ContentHeader__Headline',  # ESPN content header
+                'h1',
+                'header h1'
+            ]
+        else:
+            # Default selectors for other sites
+            headline_selectors = [
+                'h1', 
+                'article h1',
+                '.article-header h1', 
+                '.article-headline',
+                '.headline',
+                '.story-headline',
+                'header h1'
+            ]
         
         for selector in headline_selectors:
             headline_elem = soup.select_one(selector)
@@ -591,18 +610,37 @@ def extract_from_url(url, project_name: str = "default"):
                 
         logger.info(f"Extracted date: {date_text}")
         
-        # Extract author
+        # Extract author with domain-specific selectors
         logger.debug("Extracting author")
         author = "Unknown Author"
-        author_selectors = [
-            '.author', 
-            '.byline',
-            '.author-name',
-            '.article-meta .name',
-            '.writer',
-            'meta[name="author"]',
-            '.contributor'
-        ]
+        
+        # TheAthletic.com specific selectors
+        if 'theathletic.com' in domain:
+            author_selectors = [
+                '#articleByLineString',  # Athletic byline string ID (stable)
+                'span[id="articleByLineString"]',  # More specific ID selector
+                'span[class*="Article_BylineString"]',  # Partial class match for byline string
+                'span[class*="BylineString"]',  # Even more flexible partial match
+                '[data-testid="author-name"]',  # Athletic specific test ID
+                '.author-name',
+                '.byline-author',
+                '.article-author',
+                'a[href*="/author/"]',  # Author link pattern
+                '.author',
+                '.byline',
+                'meta[name="author"]'
+            ]
+        else:
+            # Default selectors for other sites
+            author_selectors = [
+                '.author', 
+                '.byline',
+                '.author-name',
+                '.article-meta .name',
+                '.writer',
+                'meta[name="author"]',
+                '.contributor'
+            ]
         
         for selector in author_selectors:
             author_element = soup.select_one(selector)

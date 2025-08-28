@@ -789,10 +789,34 @@ class NewspaperArchiveExtractor:
                     logger.error(f"Error processing downloaded file {i}: {e}")
                     continue
             
-            # Get image data for UI preview (same as newspapers_extractor)
-            image_data = (processed_files[0]['content'] 
-                         if processed_files and 'image' in processed_files[0].get('content_type', '').lower() 
-                         else None)
+            # Get image data for UI preview with quality enhancement (same as newspapers_extractor)
+            image_data = None
+            if processed_files and 'image' in processed_files[0].get('content_type', '').lower():
+                try:
+                    # Apply quality enhancement for consistency with newspapers_extractor
+                    raw_image = Image.open(io.BytesIO(processed_files[0]['content']))
+                    
+                    # Ensure RGB mode for consistency 
+                    if raw_image.mode != 'RGB':
+                        raw_image = raw_image.convert('RGB')
+                        logger.info(f"Converted NewspaperArchive image to RGB mode")
+                    
+                    # Apply quality enhancements
+                    enhancer = ImageEnhance.Contrast(raw_image)
+                    enhanced_image = enhancer.enhance(1.2)  # Slight contrast boost
+                    
+                    enhancer = ImageEnhance.Sharpness(enhanced_image)
+                    enhanced_image = enhancer.enhance(1.1)  # Slight sharpness boost
+                    
+                    # Return PIL Image object for consistent quality
+                    image_data = enhanced_image
+                    logger.info(f"Enhanced NewspaperArchive image quality: {enhanced_image.size}")
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to enhance NewspaperArchive image, using original: {str(e)}")
+                    image_data = processed_files[0]['content']  # Fallback to original bytes
+            else:
+                image_data = None
             
             if processed_files:
                 now = datetime.now()
