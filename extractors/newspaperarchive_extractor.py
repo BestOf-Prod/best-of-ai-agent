@@ -88,6 +88,23 @@ class NewspaperArchiveExtractor:
     
     def __init__(self, auto_auth: bool = True, project_name: str = "default"):
         self.session = requests.Session()
+        
+        # Set realistic headers to get high-quality images (matching manual browser downloads)
+        realistic_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'image',
+            'Sec-Fetch-Mode': 'no-cors',
+            'Sec-Fetch-Site': 'same-origin'
+        }
+        self.session.headers.update(realistic_headers)
+        logger.info("Initialized session with realistic browser headers for high-quality image downloads")
+        
         self.cookies = {}
         self.results = []
         self.auto_auth = auto_auth
@@ -195,6 +212,10 @@ class NewspaperArchiveExtractor:
             chrome_options.add_argument("--disable-blink-features=AutomationControlled")
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
+            
+            # Add realistic User-Agent to get high-quality images like manual browser downloads
+            realistic_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            chrome_options.add_argument(f"--user-agent={realistic_user_agent}")
             
             # Render-specific options to fix user-data-dir issues
             chrome_options.add_argument("--disable-background-timer-throttling")
@@ -325,7 +346,7 @@ class NewspaperArchiveExtractor:
                     final_save_button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, self.css_selectors['save_button'])))
                     final_save_button.click()
                     logger.info("Clicked final Save button (#SaveImagebtn)")
-                    time.sleep(3)  # Wait for download to initiate
+                    time.sleep(5)  # Wait longer for high-resolution image processing and download to initiate
                     
                     # Step 5: Monitor for downloads with enhanced debugging
                     logger.info(f"Using selenium-wire: {use_selenium_wire}")
@@ -334,8 +355,8 @@ class NewspaperArchiveExtractor:
                     if use_selenium_wire and hasattr(driver, 'requests'):
                         logger.info("Monitoring selenium-wire requests for downloads...")
                         
-                        # Wait for downloads with polling loop
-                        max_wait_time = 15  # Maximum 15 seconds to wait
+                        # Wait for downloads with polling loop (longer for high-res images)
+                        max_wait_time = 25  # Maximum 25 seconds to wait for high-resolution processing
                         wait_interval = 2   # Check every 2 seconds
                         waited_time = 0
                         
@@ -361,7 +382,8 @@ class NewspaperArchiveExtractor:
                                 # Look for the content-disposition header which indicates a file download
                                 if request.response and request.response.headers.get('content-disposition'):
                                     content_type = request.response.headers.get('content-type', '')
-                                    logger.info(f"Found downloadable response: {request.url} - Content-Type: {content_type}")
+                                    content_length = len(request.response.body)
+                                    logger.info(f"Found downloadable response: {request.url[:150]} - Content-Type: {content_type} - Size: {content_length} bytes ({content_length/1024:.1f} KB)")
                                     
                                     # Save both JPG and PDF files
                                     if any(img_type in content_type.lower() for img_type in ['jpeg', 'jpg', 'png', 'pdf']):
@@ -405,10 +427,22 @@ class NewspaperArchiveExtractor:
                                     if 'image/' in content_type:
                                         try:
                                             content_length = len(request.response.body)
-                                            logger.info(f"Found image request: {request.url[:100]} - Size: {content_length} - Type: {content_type}")
+                                            logger.info(f"Found image request: {request.url[:100]} - Size: {content_length} bytes - Type: {content_type}")
                                             
-                                            # Capture large images (likely newspaper pages)
-                                            if content_length > 50000:  # 50KB threshold
+                                            # Look for clues in the URL about image quality
+                                            url_lower = request.url.lower()
+                                            is_likely_full_size = any(keyword in url_lower for keyword in [
+                                                'download', 'full', 'original', 'hi-res', 'high', 'large'
+                                            ])
+                                            is_likely_thumbnail = any(keyword in url_lower for keyword in [
+                                                'thumb', 'preview', 'small', 'mini', 'icon'
+                                            ])
+                                            
+                                            logger.info(f"URL analysis - Full-size indicators: {is_likely_full_size}, Thumbnail indicators: {is_likely_thumbnail}")
+                                            
+                                            # Prioritize images that are likely full-size and larger than 100KB for higher quality
+                                            size_threshold = 100000 if is_likely_full_size else 50000  # 100KB for likely full-size, 50KB otherwise
+                                            if content_length > size_threshold and not is_likely_thumbnail:
                                                 file_extension = 'jpg'
                                                 if 'png' in content_type:
                                                     file_extension = 'png'
@@ -421,6 +455,8 @@ class NewspaperArchiveExtractor:
                                                     'filename': f"newspaperarchive_fallback_{int(time.time())}.{file_extension}"
                                                 })
                                                 logger.info(f"Captured large image as fallback: {content_length} bytes")
+                                                # Add size metadata for sorting later
+                                                downloaded_files[-1]['size'] = content_length
                                         except Exception as e:
                                             logger.warning(f"Failed to capture fallback image {request.url}: {e}")
                         
@@ -478,9 +514,8 @@ class NewspaperArchiveExtractor:
                             for link in result.get('downloadLinks', []):
                                 try:
                                     logger.info(f"Attempting to download from JS-found link: {link[:100]}")
-                                    response = self.session.get(link, timeout=30, headers={
-                                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                                    })
+                                    # Session already has realistic headers set
+                                    response = self.session.get(link, timeout=30)
                                     
                                     if response.status_code == 200 and len(response.content) > 10000:  # At least 10KB
                                         content_type = response.headers.get('content-type', 'image/jpeg')
@@ -515,9 +550,8 @@ class NewspaperArchiveExtractor:
                                             src = img['src']
                                             logger.info(f"Attempting to download large image: {src[:100]} ({img.get('width')}x{img.get('height')})")
                                             
-                                            response = self.session.get(src, timeout=30, headers={
-                                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                                            })
+                                            # Session already has realistic headers set
+                                            response = self.session.get(src, timeout=30)
                                             
                                             if response.status_code == 200 and len(response.content) > 50000:  # At least 50KB for newspaper image
                                                 content_type = response.headers.get('content-type', 'image/jpeg')
@@ -690,15 +724,29 @@ class NewspaperArchiveExtractor:
     def _process_downloaded_files(self, downloaded_files: List[Dict], url: str, player_name: Optional[str], project_name: str) -> Dict:
         """Process and save downloaded files"""
         try:
-            processed_files = []
+            # Sort downloaded files by size (largest first) to prioritize highest quality
+            sorted_files = sorted(downloaded_files, key=lambda x: len(x.get('content', b'')), reverse=True)
             
-            # Process all downloaded files (should now only be actual downloads with content-disposition)
-            logger.info(f"Processing {len(downloaded_files)} downloaded files")
+            if len(sorted_files) != len(downloaded_files):
+                logger.info(f"Sorted {len(downloaded_files)} files by size for quality prioritization")
+            
+            # Log file sizes for debugging
+            for i, file_data in enumerate(sorted_files[:3]):  # Log first 3 files
+                size = len(file_data.get('content', b''))
+                logger.info(f"File {i+1} size: {size} bytes ({size/1024:.1f} KB)")
+                if size > 500000:  # 500KB+
+                    logger.info(f"High-quality file detected: {size} bytes - likely full resolution")
+                elif size < 100000:  # <100KB
+                    logger.warning(f"Potentially low-quality file: {size} bytes - might be thumbnail/preview")
+            
+            processed_files = []
             
             # Pre-compute values used multiple times (like newspapers_extractor)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            logger.info(f"Processing {len(sorted_files)} downloaded files (sorted by size)")
             
-            for i, file_data in enumerate(downloaded_files):
+            # Process files in size-sorted order (largest/highest quality first)
+            for i, file_data in enumerate(sorted_files):
                 try:
                     content_type = file_data['content_type']
                     content = file_data['content']
