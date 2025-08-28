@@ -440,9 +440,9 @@ class NewspaperArchiveExtractor:
                                             
                                             logger.info(f"URL analysis - Full-size indicators: {is_likely_full_size}, Thumbnail indicators: {is_likely_thumbnail}")
                                             
-                                            # Prioritize images that are likely full-size and larger than 100KB for higher quality
-                                            size_threshold = 100000 if is_likely_full_size else 50000  # 100KB for likely full-size, 50KB otherwise
-                                            if content_length > size_threshold and not is_likely_thumbnail:
+                                            # Use consistent high threshold to prevent low-quality images (minimum 200KB for newspaper quality)
+                                            min_size_threshold = 200000  # 200KB minimum for all images to ensure quality
+                                            if content_length > min_size_threshold and not is_likely_thumbnail:
                                                 file_extension = 'jpg'
                                                 if 'png' in content_type:
                                                     file_extension = 'png'
@@ -517,7 +517,7 @@ class NewspaperArchiveExtractor:
                                     # Session already has realistic headers set
                                     response = self.session.get(link, timeout=30)
                                     
-                                    if response.status_code == 200 and len(response.content) > 10000:  # At least 10KB
+                                    if response.status_code == 200 and len(response.content) > 200000:  # At least 200KB for quality consistency
                                         content_type = response.headers.get('content-type', 'image/jpeg')
                                         file_extension = 'jpg'
                                         if 'png' in content_type.lower():
@@ -553,7 +553,7 @@ class NewspaperArchiveExtractor:
                                             # Session already has realistic headers set
                                             response = self.session.get(src, timeout=30)
                                             
-                                            if response.status_code == 200 and len(response.content) > 50000:  # At least 50KB for newspaper image
+                                            if response.status_code == 200 and len(response.content) > 200000:  # At least 200KB for consistent newspaper quality
                                                 content_type = response.headers.get('content-type', 'image/jpeg')
                                                 file_extension = 'jpg'
                                                 if 'png' in content_type.lower():
@@ -730,14 +730,24 @@ class NewspaperArchiveExtractor:
             if len(sorted_files) != len(downloaded_files):
                 logger.info(f"Sorted {len(downloaded_files)} files by size for quality prioritization")
             
-            # Log file sizes for debugging
-            for i, file_data in enumerate(sorted_files[:3]):  # Log first 3 files
+            # Log file sizes for debugging and filter out low-quality files
+            quality_filtered_files = []
+            for i, file_data in enumerate(sorted_files):
                 size = len(file_data.get('content', b''))
                 logger.info(f"File {i+1} size: {size} bytes ({size/1024:.1f} KB)")
-                if size > 500000:  # 500KB+
-                    logger.info(f"High-quality file detected: {size} bytes - likely full resolution")
-                elif size < 100000:  # <100KB
-                    logger.warning(f"Potentially low-quality file: {size} bytes - might be thumbnail/preview")
+                
+                # Apply strict quality filter - reject files under 200KB to prevent compressed versions
+                if size >= 200000:  # 200KB minimum
+                    quality_filtered_files.append(file_data)
+                    if size > 1000000:  # 1MB+
+                        logger.info(f"High-quality file accepted: {size} bytes - excellent resolution")
+                    else:
+                        logger.info(f"Good-quality file accepted: {size} bytes - adequate resolution")
+                else:
+                    logger.warning(f"Low-quality file REJECTED: {size} bytes - likely compressed/thumbnail")
+            
+            logger.info(f"Quality filter: {len(quality_filtered_files)}/{len(sorted_files)} files passed minimum 200KB threshold")
+            sorted_files = quality_filtered_files  # Use only quality-filtered files
             
             processed_files = []
             
