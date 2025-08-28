@@ -437,7 +437,6 @@ Search Query → Filter Options → Results Preview → Selection → Download
 - `document_processor.py`: Word document handling and URL extraction
 - `storage_manager.py`: File storage and cloud integration
 - `batch_processor.py`: Concurrent processing coordination
-- `google_drive_manager.py`: Google Drive API integration
 - `credential_manager.py`: Authentication and credential storage
 - `newspaper_converter.py`: Newspaper layout generation
 - `logger.py`: Comprehensive logging system
@@ -943,7 +942,6 @@ best-of-ai-agent/
 │   ├── __init__.py
 │   ├── batch_processor.py
 │   ├── document_processor.py
-│   ├── google_drive_manager.py
 │   ├── storage_manager.py
 │   └── logger.py
 ├── feature-docs/             # Feature documentation

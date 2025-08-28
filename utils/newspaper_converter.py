@@ -18,7 +18,6 @@ from bs4 import BeautifulSoup
 import logging
 from datetime import datetime
 from utils.logger import setup_logging
-from utils.google_drive_manager import GoogleDriveManager
 
 # Import capsule parser for typography specifications
 from utils.capsule_parser import get_typography_for_article, TypographySpec
@@ -1336,19 +1335,17 @@ def convert_multiple_markdown_to_newspaper_zip(markdown_contents, output_zip_pat
         except Exception as e:
             logger.warning(f"Failed to clean up temp directory: {str(e)}")
 
-def create_single_word_document_with_images(articles_data, output_path=None, original_url_order=None, upload_to_drive=True):
+def create_single_word_document_with_images(articles_data, output_path=None, original_url_order=None):
     """
     Create a single Word document with all articles in original order and export all images to a separate folder.
-    Optionally upload to Google Drive.
     
     Args:
         articles_data: List of article data dictionaries
         output_path: Optional path to save the document
         original_url_order: Optional list of URLs in original document order for preservation
-        upload_to_drive: Whether to upload the result to Google Drive (default: True)
         
     Returns:
-        dict: Dictionary containing document path, images folder path, summary, and Google Drive info
+        dict: Dictionary containing document path, images folder path, and summary
     """
     logger.info(f"Creating single Word document with {len(articles_data)} articles")
     
@@ -1620,127 +1617,8 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
             'images_count': len(exported_images),
             'articles': processed_articles,
             'images': exported_images,
-            'document_size': os.path.getsize(output_path) if os.path.exists(output_path) else 0,
-            'google_drive': None
+            'document_size': os.path.getsize(output_path) if os.path.exists(output_path) else 0
         }
-        
-        # Upload to Google Drive if requested
-        if upload_to_drive:
-            logger.info("Attempting to upload to Google Drive...")
-            try:
-                # Import credential manager to get proper paths
-                from utils.credential_manager import CredentialManager
-                cred_manager = CredentialManager()
-                google_status = cred_manager.get_google_credentials_status()
-                
-                # Initialize GoogleDriveManager with credential manager paths
-                drive_manager = GoogleDriveManager(
-                    credentials_path=google_status['credentials_path'],
-                    token_path=google_status['token_path'],
-                    auto_init=False
-                )
-                
-                # Debug: Log credential paths
-                logger.info(f"GoogleDriveManager using credentials: {google_status['credentials_path']}")
-                logger.info(f"GoogleDriveManager using token: {google_status['token_path']}")
-                logger.info(f"Credentials exist: {google_status['has_credentials']}")
-                logger.info(f"Token exists: {google_status['has_token']}")
-                
-                # Try to initialize from existing credentials first
-                init_result = drive_manager.initialize_if_ready()
-                
-                logger.info(f"GoogleDriveManager init result: {init_result}")
-                
-                if init_result['success']:
-                    # Generate project name based on timestamp and article count
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    project_name = f"Article_Export_{len(processed_articles)}_articles_{timestamp}"
-                    
-                    # Upload document and images to Google Drive
-                    drive_result = drive_manager.upload_document_and_images(
-                        document_path=output_path,
-                        images_folder_path=images_dir,
-                        project_name=project_name
-                    )
-                    
-                    if drive_result['success']:
-                        logger.info(f"Successfully uploaded to Google Drive project: {project_name}")
-                        summary['google_drive'] = drive_result
-                        
-                        # Set folder to be publicly accessible
-                        try:
-                            drive_manager.set_file_permissions(
-                                file_id=drive_result['project_folder_id'],
-                                role='reader',
-                                type='anyone'
-                            )
-                            logger.info("Set Google Drive folder to be publicly accessible")
-                        except Exception as e:
-                            logger.warning(f"Failed to set public permissions: {str(e)}")
-                    else:
-                        logger.error(f"Failed to upload to Google Drive: {drive_result.get('error', 'Unknown error')}")
-                        summary['google_drive'] = {'success': False, 'error': drive_result.get('error', 'Upload failed')}
-                else:
-                    logger.warning(f"Google Drive initialization failed: {init_result.get('error', 'Unknown error')}")
-                    
-                    # Check if this is a re-authentication requirement (missing refresh token)
-                    if init_result.get('requires_reauth'):
-                        logger.error("Re-authentication required - missing or invalid refresh token")
-                        summary['google_drive'] = {
-                            'success': False, 
-                            'error': 'Re-authentication required: Please clear Google credentials in sidebar and re-authenticate with offline access',
-                            'requires_reauth': True
-                        }
-                    # If we have credentials but initialization failed, it might be a token issue
-                    elif google_status['has_credentials']:
-                        logger.info("Attempting full re-authentication since token may be invalid")
-                        try:
-                            # Try to force a fresh authentication
-                            drive_manager._initialize_service()
-                            if drive_manager.is_available():
-                                logger.info("Successfully authenticated Google Drive with fresh token")
-                                
-                                # Retry the upload with fresh authentication
-                                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                project_name = f"Article_Export_{len(processed_articles)}_articles_{timestamp}"
-                                
-                                # Upload document and images to Google Drive
-                                drive_result = drive_manager.upload_document_and_images(
-                                    document_path=output_path,
-                                    images_folder_path=images_dir,
-                                    project_name=project_name
-                                )
-                                
-                                if drive_result['success']:
-                                    logger.info(f"Successfully uploaded to Google Drive project: {project_name}")
-                                    summary['google_drive'] = drive_result
-                                    
-                                    # Set folder to be publicly accessible
-                                    try:
-                                        drive_manager.set_file_permissions(
-                                            file_id=drive_result['project_folder_id'],
-                                            role='reader',
-                                            type='anyone'
-                                        )
-                                        logger.info("Set Google Drive folder to be publicly accessible")
-                                    except Exception as e:
-                                        logger.warning(f"Failed to set public permissions: {str(e)}")
-                                else:
-                                    logger.error(f"Upload failed even after re-authentication: {drive_result.get('error', 'Unknown error')}")
-                                    summary['google_drive'] = {'success': False, 'error': drive_result.get('error', 'Upload failed after re-auth')}
-                            else:
-                                logger.error("Re-authentication failed - Google Drive service not available")
-                                summary['google_drive'] = {'success': False, 'error': 'Re-authentication failed'}
-                        except Exception as reauth_error:
-                            logger.error(f"Re-authentication attempt failed: {str(reauth_error)}")
-                            summary['google_drive'] = {'success': False, 'error': f'Authentication error: {str(reauth_error)}'}
-                    else:
-                        logger.warning("Google Drive not configured - no credentials available")
-                        summary['google_drive'] = {'success': False, 'error': 'Google Drive not configured'}
-                    
-            except Exception as e:
-                logger.error(f"Google Drive upload failed: {str(e)}")
-                summary['google_drive'] = {'success': False, 'error': str(e)}
         
         logger.info(f"Successfully created single Word document with {len(processed_articles)} articles and {len(exported_images)} images")
         image_breakdown = ', '.join([f"{img['source']}({img['filename']})" for img in exported_images])
