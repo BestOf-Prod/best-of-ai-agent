@@ -221,3 +221,80 @@ class CredentialManager:
                 'error': str(e)
             }
     
+    def get_newspapers_status(self) -> Dict[str, Any]:
+        """
+        Get the status of newspapers.com credentials
+        
+        Returns:
+            dict: Status information including whether cookies exist and count
+        """
+        try:
+            has_cookies = os.path.exists(self.newspapers_cookies_file)
+            cookie_count = 0
+            
+            if has_cookies:
+                try:
+                    with open(self.newspapers_cookies_file, 'r') as f:
+                        cookies_data = json.load(f)
+                        if isinstance(cookies_data, list):
+                            cookie_count = len(cookies_data)
+                        elif isinstance(cookies_data, dict) and 'cookies' in cookies_data:
+                            cookie_count = len(cookies_data['cookies'])
+                        else:
+                            cookie_count = len(cookies_data) if cookies_data else 0
+                except Exception as e:
+                    logger.warning(f"Failed to read newspapers cookies for status: {str(e)}")
+                    has_cookies = False
+            
+            return {
+                'has_cookies': has_cookies,
+                'cookie_count': cookie_count,
+                'cookies_file': self.newspapers_cookies_file
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get newspapers status: {str(e)}")
+            return {
+                'has_cookies': False,
+                'cookie_count': 0,
+                'error': str(e)
+            }
+    
+    def get_lapl_status(self) -> Dict[str, Any]:
+        """
+        Get the status of LAPL credentials
+        
+        Returns:
+            dict: Status information including whether cookies exist and count
+        """
+        try:
+            has_cookies = os.path.exists(self.lapl_cookies_file)
+            cookie_count = 0
+            
+            if has_cookies:
+                try:
+                    with open(self.lapl_cookies_file, 'r') as f:
+                        cookies_data = json.load(f)
+                        if isinstance(cookies_data, list):
+                            cookie_count = len(cookies_data)
+                        elif isinstance(cookies_data, dict) and 'cookies' in cookies_data:
+                            cookie_count = len(cookies_data['cookies'])
+                        else:
+                            cookie_count = len(cookies_data) if cookies_data else 0
+                except Exception as e:
+                    logger.warning(f"Failed to read LAPL cookies for status: {str(e)}")
+                    has_cookies = False
+            
+            return {
+                'has_cookies': has_cookies,
+                'cookie_count': cookie_count,
+                'cookies_file': self.lapl_cookies_file
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get LAPL status: {str(e)}")
+            return {
+                'has_cookies': False,
+                'cookie_count': 0,
+                'error': str(e)
+            }
