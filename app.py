@@ -251,33 +251,6 @@ def streamlined_sidebar_config():
         if st.button("🔍 Test LAPL URL Access", key="test_lapl_access"):
             test_lapl_url_access(test_url)
     
-    
-    # Project settings
-    project_name = st.sidebar.text_input(
-        "📁 Project Name",
-        value="default",
-        help="Organizes files in folders"
-    )
-    
-    # Storage configuration (collapsed)
-    with st.sidebar.expander("☁️ Storage", expanded=False):
-        bucket_name = st.text_input(
-            "Bucket Name", 
-            value="newspaper-clippings"
-        )
-    
-    # Processing settings
-    max_workers = st.sidebar.slider("⚡ Workers", 1, 5, 3, help="Concurrent processing")
-    delay_between_requests = st.sidebar.slider("⏱️ Delay (sec)", 0.5, 5.0, 1.0, 0.5, help="Between requests")
-    
-    # Additional settings (collapsed)
-    with st.sidebar.expander("📰 Filters", expanded=False):
-        date_range = st.selectbox(
-            "Date Range",
-            ["Any", "2020-2025", "2010-2019", "2000-2009", "1990-1999", "1980-1989"]
-        )
-    
-    
     # Display auth status compactly with persistent credential info
     auth_status = st.session_state.get('authentication_status', {})
     ensure_credential_manager()
