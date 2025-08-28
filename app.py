@@ -250,6 +250,8 @@ def streamlined_sidebar_config():
         test_url = st.text_input("Test URL", value="https://access-newspaperarchive-com.lapl.idm.oclc.org/us/california/marysville/marysville-appeal-democrat/2014/12-12/page-10", key="lapl_test_url")
         if st.button("🔍 Test LAPL URL Access", key="test_lapl_access"):
             test_lapl_url_access(test_url)
+    
+    
     # Display auth status compactly with persistent credential info
     auth_status = st.session_state.get('authentication_status', {})
     ensure_credential_manager()
@@ -267,14 +269,7 @@ def streamlined_sidebar_config():
         st.sidebar.info("ℹ️ Login for newspapers.com")
         st.sidebar.caption("📋 No saved cookies")
     
-    return {
-        'bucket_name': bucket_name,
-        'project_name': project_name,
-        'max_workers': max_workers,
-        'delay_between_requests': delay_between_requests,
-        'date_range': date_range
-        # extraction_method parameter removed - using optimized download_clicks only
-    }
+    return {}
 
 def initialize_newspapers_authentication(email: str, password: str, uploaded_cookies=None):
     """Initialize Newspapers.com authentication"""
