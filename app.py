@@ -250,7 +250,6 @@ def streamlined_sidebar_config():
         test_url = st.text_input("Test URL", value="https://access-newspaperarchive-com.lapl.idm.oclc.org/us/california/marysville/marysville-appeal-democrat/2014/12-12/page-10", key="lapl_test_url")
         if st.button("🔍 Test LAPL URL Access", key="test_lapl_access"):
             test_lapl_url_access(test_url)
-    
     # Display auth status compactly with persistent credential info
     auth_status = st.session_state.get('authentication_status', {})
     ensure_credential_manager()
