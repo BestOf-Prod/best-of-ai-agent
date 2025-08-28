@@ -535,14 +535,15 @@ def extract_from_url(url, project_name: str = "default"):
         # ESPN-specific selectors (to avoid grabbing scores)
         if 'espn.com' in domain:
             headline_selectors = [
+                'header.article-header h1',  # ESPN article headlines - primary selector
+                '.article-header h1',
                 'h1[data-module="Headline"]',  # ESPN article headlines
                 'h1.headline',
                 'article h1',
-                '.article-header h1',
                 '.story-headline',
                 'h1.ContentHeader__Headline',  # ESPN content header
-                'h1',
-                'header h1'
+                'header h1',
+                'h1'
             ]
         else:
             # Default selectors for other sites
