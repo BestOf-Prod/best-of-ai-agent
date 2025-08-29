@@ -8,7 +8,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.common.exceptions import TimeoutException, WebDriverException, StaleElementReferenceException
 from selenium.webdriver.support import expected_conditions as EC
 try:
     import seleniumwire
@@ -167,7 +167,7 @@ class SeleniumLoginManager:
             # Add deployment-specific options for even more resource constraints
             if self.is_replit_deployment or self.is_render:
                 chrome_options.add_argument('--memory-pressure-off')
-                chrome_options.add_argument('--max_old_space_size=256')  # Even more aggressive for Render
+                chrome_options.add_argument('--max-old-space-size=3072')  # Reserve 1GB for system on Render (3GB for V8)
                 chrome_options.add_argument('--disable-background-mode')
                 chrome_options.add_argument('--disable-plugins')
                 chrome_options.add_argument('--disable-java')
@@ -1838,10 +1838,110 @@ class NewspapersComExtractor:
             logger.error(f"Error extracting article data from element: {e}")
             return None
     
+    def _cleanup_memory_resources(self):
+        """
+        Clean up memory resources during extraction - particularly helpful on Render.
+        """
+        try:
+            import gc
+            gc.collect()  # Force garbage collection
+            
+            # Clear Chrome cache if driver is available
+            if hasattr(self, 'driver') and self.driver:
+                try:
+                    self.driver.execute_script("window.stop();")  # Stop any pending operations
+                    if hasattr(self.driver, 'requests'):
+                        self.driver.requests.clear()  # Clear selenium-wire requests
+                except Exception as e:
+                    logger.debug(f"Minor error during memory cleanup: {e}")
+            
+            logger.debug("Memory cleanup completed")
+        except Exception as e:
+            logger.warning(f"Error during memory cleanup: {e}")
+    
     def extract_from_url(self, url: str, player_name: Optional[str] = None, project_name: str = "default") -> Dict:
         """Extract article using the optimized two-click + GET request method."""
         logger.info(f"Extracting article from URL: {url}")
+        
+        # Perform memory cleanup before extraction on Render
+        if self.is_render:
+            self._cleanup_memory_resources()
+            
         return self.extract_via_download_clicks(url, player_name, project_name)
+
+    def _robust_click_element(self, driver, selector: str, description: str, max_retries: int = 3, timeout: int = 8) -> bool:
+        """
+        Robust element clicking with retry logic to handle stale element references.
+        
+        Args:
+            driver: Selenium WebDriver instance
+            selector: CSS selector for the element
+            description: Human-readable description for logging
+            max_retries: Maximum number of retry attempts
+            timeout: Timeout for waiting for element
+            
+        Returns:
+            bool: True if click succeeded, False otherwise
+        """
+        # Adjust timeout for Render's resource constraints
+        if self.is_render:
+            timeout = min(timeout, 12)  # Cap timeout at 12s for Render
+            max_retries = min(max_retries, 5)  # Allow more retries on Render
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Attempting {description} (attempt {attempt + 1}/{max_retries})")
+                
+                # Wait for element to be clickable and immediately click
+                element = WebDriverWait(driver, timeout).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                )
+                
+                # Try to click immediately to avoid stale reference
+                element.click()
+                logger.info(f"Successfully clicked {description}")
+                return True
+                
+            except StaleElementReferenceException:
+                logger.warning(f"Stale element reference for {description}, retrying (attempt {attempt + 1})")
+                time.sleep(0.5)  # Brief pause before retry
+                continue
+                
+            except TimeoutException:
+                logger.warning(f"Timeout waiting for {description} (attempt {attempt + 1})")
+                if attempt == max_retries - 1:
+                    # Last attempt - try alternative selectors
+                    alternative_selectors = [
+                        "button[aria-label='Download']",
+                        ".download-button", 
+                        "[data-test='download-btn']",
+                        "button:contains('Download')",
+                        ".btn-download",
+                        "#download-btn"
+                    ]
+                    
+                    for alt_selector in alternative_selectors:
+                        try:
+                            alt_element = WebDriverWait(driver, 3).until(
+                                EC.element_to_be_clickable((By.CSS_SELECTOR, alt_selector))
+                            )
+                            alt_element.click()
+                            logger.info(f"Successfully clicked alternative selector {alt_selector} for {description}")
+                            return True
+                        except Exception:
+                            continue
+                continue
+                
+            except Exception as e:
+                logger.warning(f"Error clicking {description}: {str(e)} (attempt {attempt + 1})")
+                if attempt < max_retries - 1:
+                    time.sleep(0.5)
+                    continue
+                else:
+                    break
+        
+        logger.error(f"Failed to click {description} after {max_retries} attempts")
+        return False
 
     def extract_via_download_clicks(self, url: str, player_name: Optional[str] = None, project_name: str = "default") -> Dict:
         """
@@ -1888,7 +1988,29 @@ class NewspapersComExtractor:
             chrome_options.add_argument("--disable-images")  # Don't load images for faster page loads
             chrome_options.add_argument("--disable-javascript")  # Disable JS for faster loads
             chrome_options.add_argument("--window-size=1366,768")  # Smaller window for speed
+            
+            # Additional Render.com optimizations for stability with 4GB RAM / 2 CPU constraints
+            chrome_options.add_argument("--memory-pressure-off")  # Disable memory pressure handling
+            chrome_options.add_argument("--max-old-space-size=3584")  # Leave headroom for 4GB RAM (3.5GB for V8)
+            chrome_options.add_argument("--disable-background-timer-throttling")  # Prevent throttling
+            chrome_options.add_argument("--disable-backgrounding-occluded-windows")  # Keep tabs active
+            chrome_options.add_argument("--disable-renderer-backgrounding")  # Keep renderer active
+            chrome_options.add_argument("--disable-features=TranslateUI,BlinkGenPropertyTrees")  # Disable heavy features
+            chrome_options.add_argument("--aggressive-cache-discard")  # Manage memory more aggressively
+            chrome_options.add_argument("--disable-ipc-flooding-protection")  # Prevent IPC issues in containers
             chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            
+            # Additional resource constraint optimizations for Render
+            chrome_options.add_argument("--renderer-process-limit=1")  # Single renderer process for 2 CPU constraint
+            chrome_options.add_argument("--force-device-scale-factor=1")  # Reduce rendering complexity
+            chrome_options.add_argument("--disable-background-media-playback")  # Save resources
+            chrome_options.add_argument("--disable-component-extensions-with-background-pages")  # Reduce background load
+            chrome_options.add_argument("--purge-memory-button")  # Enable memory purging
+            chrome_options.add_argument("--max-files=1000")  # Limit file handles
+            chrome_options.add_argument("--disable-threaded-compositing")  # Reduce threading overhead
+            chrome_options.add_argument("--disable-accelerated-2d-canvas")  # Reduce GPU usage
+            chrome_options.add_argument("--disable-accelerated-video-decode")  # Save resources
+            
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
             
@@ -2004,18 +2126,22 @@ class NewspapersComExtractor:
                 # Execute the 2-click sequence (optimized)
                 for i, click_config in enumerate(CLICK_SELECTORS, 1):
                     try:
-                        logger.info(f"Click {i}: {click_config['description']}")
-                        
-                        # Wait for element to be clickable (reduced timeout)
-                        element = WebDriverWait(driver, 8).until(
-                            EC.element_to_be_clickable((By.CSS_SELECTOR, click_config["selector"]))
-                        )
-                        
-                        # Clear requests and click (only for selenium-wire)
+                        # Clear requests before attempting click (only for selenium-wire)
                         if use_selenium_wire and hasattr(driver, 'requests'):
                             driver.requests.clear()
                         
-                        element.click()
+                        # Use robust clicking method to handle stale element references
+                        success = self._robust_click_element(
+                            driver=driver,
+                            selector=click_config["selector"], 
+                            description=f"Click {i}: {click_config['description']}",
+                            max_retries=3,
+                            timeout=8
+                        )
+                        
+                        if not success:
+                            logger.warning(f"Failed to complete click {i}, continuing...")
+                            continue
                         
                         # Reduced wait time
                         time.sleep(1.5)
@@ -2083,20 +2209,7 @@ class NewspapersComExtractor:
                 if not downloaded_files:
                     logger.info("No downloads captured via selenium-wire, attempting direct download click")
                     try:
-                        # Wait for the JPG download button to appear
-                        jpg_button = WebDriverWait(driver, 8).until(
-                            EC.element_to_be_clickable((By.CSS_SELECTOR, "a.btn.btn-outline-light.border-primary.jpg"))
-                        )
-                        
-                        # Capture button attributes before clicking to avoid stale element issues
-                        button_href = None
-                        try:
-                            button_href = jpg_button.get_attribute("href")
-                            logger.info(f"Captured download button href: {button_href}")
-                        except Exception as e:
-                            logger.warning(f"Could not capture button href: {e}")
-                        
-                        logger.info("Clicking JPG download button directly")
+                        logger.info("Attempting to click JPG download button directly")
                         
                         # Set up download monitoring if not using selenium-wire
                         download_dir = tempfile.mkdtemp()
@@ -2119,23 +2232,18 @@ class NewspapersComExtractor:
                         if use_selenium_wire and hasattr(driver, 'requests'):
                             driver.requests.clear()
                         
-                        # Click the download button with error handling
-                        try:
-                            jpg_button.click()
-                            logger.info("Clicked JPG download button")
-                        except Exception as click_error:
-                            logger.error(f"Error clicking download button: {click_error}")
-                            # Try to find the button again if it became stale
-                            try:
-                                logger.info("Attempting to re-locate download button")
-                                jpg_button = WebDriverWait(driver, 5).until(
-                                    EC.element_to_be_clickable((By.CSS_SELECTOR, "a.btn.btn-outline-light.border-primary.jpg"))
-                                )
-                                jpg_button.click()
-                                logger.info("Successfully clicked download button on second attempt")
-                            except Exception as retry_error:
-                                logger.error(f"Failed to click download button on retry: {retry_error}")
-                                raise retry_error
+                        # Use robust clicking method for JPG download button
+                        jpg_button_success = self._robust_click_element(
+                            driver=driver,
+                            selector="a.btn.btn-outline-light.border-primary.jpg",
+                            description="JPG download button",
+                            max_retries=5,  # More retries for this critical step
+                            timeout=10
+                        )
+                        
+                        if not jpg_button_success:
+                            logger.error("Failed to click JPG download button with robust method")
+                            raise Exception("Unable to click JPG download button after multiple attempts")
                         
                         # Wait for download to complete
                         max_wait_time = 30
@@ -2354,17 +2462,35 @@ class NewspapersComExtractor:
 # Keeping the direct extraction function for external use (e.g., batch_processor)
 def extract_from_newspapers_com(url: str, cookies: str = "", player_name: Optional[str] = None, project_name: str = "default") -> Dict:
     extractor = NewspapersComExtractor(auto_auth=False, project_name=project_name)
+    
     if cookies:
-        # In this enhanced version, the `cookies` argument for direct extraction is less relevant
-        # as the extractor now manages its own authentication state via SeleniumLoginManager.
-        # However, for backward compatibility or specific use cases, we can log it.
-        logger.warning("Direct 'cookies' argument is provided but primary authentication is now managed internally by Selenium.")
-        # If you still want to try to use external cookies, you would update extractor.cookie_manager.cookies here
-        # But this might conflict with the Selenium-managed session.
-        # For this setup, it's best to rely on the extractor's internal authentication.
+        logger.info("Setting provided cookies for extraction")
+        # Parse cookies from JSON string if provided
+        try:
+            import json
+            if isinstance(cookies, str):
+                cookies_dict = json.loads(cookies)
+            else:
+                cookies_dict = cookies
+            
+            # Set cookies on the cookie manager
+            extractor.cookie_manager.cookies = cookies_dict
+            logger.info(f"Set {len(cookies_dict)} cookies on the extractor")
+            
+        except Exception as e:
+            logger.error(f"Error parsing cookies: {e}")
+            return {'success': False, 'error': f"Error parsing cookies: {e}"}
 
     # Ensure the extractor is initialized and authenticated before extraction
     if not extractor.initialize():
         return {'success': False, 'error': "Newspapers.com extractor could not initialize or authenticate."}
     
-    return extractor.extract_from_url(url, player_name, project_name=project_name)
+    # Access the selenium login manager which has the actual extraction method
+    selenium_manager = extractor.cookie_manager.selenium_login_manager
+    
+    # Set cookies directly on the selenium manager if they exist
+    if hasattr(extractor.cookie_manager, 'cookies') and extractor.cookie_manager.cookies:
+        selenium_manager.cookies = extractor.cookie_manager.cookies
+        logger.info(f"Transferred {len(selenium_manager.cookies)} cookies to selenium manager")
+    
+    return selenium_manager.extract_from_url(url, player_name, project_name=project_name)
