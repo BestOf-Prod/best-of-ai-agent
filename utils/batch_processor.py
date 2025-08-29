@@ -390,7 +390,15 @@ class BatchProcessor:
             thread_extractor.cookie_manager = self.newspapers_extractor.cookie_manager
             
             # Use the thread-safe extractor instance
-            return thread_extractor.extract_from_url(url, player_name=player_name, project_name=project_name)
+            result = thread_extractor.extract_from_url(url, player_name=player_name, project_name=project_name)
+            
+            # Sync cookies back to main extractor and persistent storage after successful extraction
+            if result.get('success') and thread_extractor.cookie_manager.cookies:
+                self.newspapers_extractor.cookie_manager = thread_extractor.cookie_manager
+                self.newspapers_extractor.sync_cookies_to_persistent_storage()
+                logger.debug("Synced cookies after batch extraction")
+            
+            return result
         else:
             # Fall back to standard extraction
             logger.debug("Using standard Newspapers.com extraction")

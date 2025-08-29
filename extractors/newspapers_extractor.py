@@ -594,6 +594,7 @@ class AutoCookieManager:
             self.selenium_login_manager.cookies = self.cookies
             
         if self.selenium_login_manager.login():
+            # Ensure cookies are synced from selenium manager back to us
             self.cookies = self.selenium_login_manager.cookies
             self.last_extraction = datetime.now()
 
@@ -603,9 +604,28 @@ class AutoCookieManager:
                 # Add domain and path for robustness, though requests usually handles it
                 self.session.cookies.set(name, value, domain=".newspapers.com", path="/")
             logger.info(f"Transferred {len(self.cookies)} cookies to requests.Session.")
+            
+            # Save cookies to persistent storage for future sessions
+            self._save_cookies_to_persistent_storage()
+            
             return True
         logger.error("Selenium auto-authentication failed.")
         return False
+    
+    def _save_cookies_to_persistent_storage(self):
+        """Save current cookies to persistent storage via Streamlit session state"""
+        try:
+            import streamlit as st
+            if hasattr(st, 'session_state') and 'credential_manager' in st.session_state:
+                cred_manager = st.session_state.credential_manager
+                if cred_manager and self.cookies:
+                    save_result = cred_manager.save_newspapers_cookies(self.cookies)
+                    if save_result['success']:
+                        logger.info(f"Saved {save_result['cookie_count']} cookies to persistent storage")
+                    else:
+                        logger.warning(f"Failed to save cookies to persistent storage: {save_result.get('error')}")
+        except Exception as e:
+            logger.debug(f"Could not save cookies to persistent storage (expected in some contexts): {e}")
     
     def test_authentication(self, test_url: str = "https://www.newspapers.com/") -> bool:
         """Test if extracted cookies provide valid authentication using Selenium."""
@@ -1674,6 +1694,15 @@ class NewspapersComExtractor:
             'last_extraction': self.cookie_manager.last_extraction
         }
     
+    def sync_cookies_to_persistent_storage(self):
+        """Ensure current cookies are saved to persistent storage"""
+        try:
+            if self.cookie_manager.cookies:
+                self.cookie_manager._save_cookies_to_persistent_storage()
+                logger.info("Synced cookies to persistent storage")
+        except Exception as e:
+            logger.warning(f"Failed to sync cookies to persistent storage: {e}")
+    
     def search_articles(self, query: str, date_range: Optional[str] = None, limit: int = 20) -> List[Dict]:
         logger.info(f"Starting search for query: '{query}'")
         logger.info(f"Date range: {date_range}")
@@ -1893,8 +1922,28 @@ class NewspapersComExtractor:
         # Perform memory cleanup before extraction on Render
         if self.is_render:
             self._cleanup_memory_resources()
+        
+        # Ensure cookies are available before extraction
+        if not self.cookie_manager.cookies:
+            logger.warning("No cookies available for extraction, attempting to reload from storage")
+            try:
+                import streamlit as st
+                if hasattr(st, 'session_state') and 'credential_manager' in st.session_state:
+                    cred_manager = st.session_state.credential_manager
+                    cookies_result = cred_manager.load_newspapers_cookies()
+                    if cookies_result['success']:
+                        self.cookie_manager.cookies = cookies_result['cookies']
+                        logger.info(f"Reloaded {len(self.cookie_manager.cookies)} cookies from storage")
+            except Exception as e:
+                logger.debug(f"Could not reload cookies from storage: {e}")
+        
+        result = self.extract_via_download_clicks(url, player_name, project_name)
+        
+        # Sync cookies back to storage after successful extraction
+        if result.get('success') and self.cookie_manager.cookies:
+            self.sync_cookies_to_persistent_storage()
             
-        return self.extract_via_download_clicks(url, player_name, project_name)
+        return result
 
     def _robust_click_element(self, driver, selector: str, description: str, max_retries: int = 3, timeout: int = 8) -> bool:
         """
@@ -2520,4 +2569,12 @@ def extract_from_newspapers_com(url: str, cookies: str = "", player_name: Option
         selenium_manager.cookies = extractor.cookie_manager.cookies
         logger.info(f"Transferred {len(selenium_manager.cookies)} cookies to selenium manager")
     
-    return selenium_manager.extract_from_url(url, player_name, project_name=project_name)
+    result = selenium_manager.extract_from_url(url, player_name, project_name=project_name)
+    
+    # Sync cookies back after extraction to ensure persistence
+    if result.get('success') and selenium_manager.cookies:
+        extractor.cookie_manager.cookies = selenium_manager.cookies
+        extractor.sync_cookies_to_persistent_storage()
+        logger.info("Synced cookies after extraction for persistence")
+    
+    return result
