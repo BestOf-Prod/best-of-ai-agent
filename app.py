@@ -269,7 +269,16 @@ def streamlined_sidebar_config():
         st.sidebar.info("ℹ️ Login for newspapers.com")
         st.sidebar.caption("📋 No saved cookies")
     
-    return {}
+    # Return configuration with defaults for Render hosting
+    return {
+        'project_name': 'default',
+        'max_workers': 3,
+        'delay_between_requests': 1.0,
+        'newspapers_cookies': '',
+        'player_name': None,
+        'enable_advanced_processing': True,
+        'date_range': None
+    }
 
 def initialize_newspapers_authentication(email: str, password: str, uploaded_cookies=None):
     """Initialize Newspapers.com authentication"""
@@ -649,7 +658,7 @@ def start_enhanced_batch_processing(config):
         logger.info(f"URLs in session state (first 3): {urls[:3]}")
     
     # Initialize enhanced storage manager and batch processor
-    storage_manager = StorageManager(bucket_name=config['bucket_name'], project_name=config['project_name'])
+    storage_manager = StorageManager(project_name=config['project_name'])
     batch_processor = BatchProcessor(
         storage_manager=storage_manager, 
         max_workers=config['max_workers'],
@@ -736,11 +745,11 @@ def start_enhanced_batch_processing(config):
         st.error(f"Enhanced batch processing error: {str(e)}")
         st.session_state.processing_active = False
 
-def test_storage_connection(bucket_name, project_name):
+def test_storage_connection(project_name):
     """Test storage connection with enhanced feedback"""
     logger.info("Testing enhanced storage connection")
     try:
-        storage_manager = StorageManager(bucket_name=bucket_name, project_name=project_name)
+        storage_manager = StorageManager(project_name=project_name)
         result = storage_manager.list_uploaded_images()
         
         if result['success']:

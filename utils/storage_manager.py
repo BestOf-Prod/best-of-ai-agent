@@ -26,22 +26,18 @@ class StorageManager:
     Manages interactions with Replit Object Storage for uploading generated newspaper clippings
     """
     
-    def __init__(self, bucket_name: Optional[str] = None, project_name: Optional[str] = None):
+    def __init__(self, project_name: Optional[str] = None):
         """
         Initialize the storage manager
         
         Args:
-            bucket_name (str, optional): Name of the bucket to use. Note: bucket_name is deprecated in favor of bucket_id
             project_name (str, optional): Name of the project folder to use. If not provided, will use 'default'
         """
-        # Note: bucket_name is kept for backwards compatibility but the SDK uses bucket_id
-        self.bucket_name = bucket_name or os.environ.get('REPLIT_BUCKET_NAME', 'newspaper-clippings')
         self.project_name = project_name or 'default'
         self.client = None
         
         if REPLIT_STORAGE_AVAILABLE:
             try:
-                # The official SDK uses bucket_id, not bucket_name
                 # If no bucket_id is provided, it uses the default bucket from .replit config
                 self.client = Client()
                 logger.info(f"Storage manager initialized for project: {self.project_name}")
