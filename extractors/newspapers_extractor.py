@@ -2294,27 +2294,10 @@ class NewspapersComExtractor:
                 except Exception as e:
                     logger.warning(f"Error closing driver: {e}")
                 
-        except StaleElementReferenceException as e:
-            logger.warning(f"Stale element encountered during download extraction, retrying: {str(e)}")
-            # Wait a moment for page to stabilize and retry once
-            time.sleep(2)
-            try:
-                return self._extract_with_download_clicks_retry(url, player_name, project_name)
-            except Exception as retry_error:
-                logger.error(f"Retry failed after stale element: {str(retry_error)}")
-                return {'success': False, 'error': f"Download extraction failed after stale element retry: {str(retry_error)}"}
         except Exception as e:
             logger.error(f"Error in download extraction: {str(e)}")
             return {'success': False, 'error': f"Download extraction failed: {str(e)}"}
     
-    def _extract_with_download_clicks_retry(self, url: str, player_name: Optional[str] = None, project_name: str = "default") -> Dict:
-        """Retry download extraction with completely fresh driver state after stale element error"""
-        logger.info(f"Retrying extraction with completely fresh driver state for URL: {url}")
-        
-        # For retry, we need a completely fresh extraction to avoid any stale state
-        # This will create a new driver instance and start fresh
-        logger.info("Creating completely fresh extraction for retry")
-        return self.extract_via_download_clicks(url, player_name, project_name)
     
     def _perform_download_sequence(self, driver, url: str, player_name: Optional[str] = None, project_name: str = "default") -> Dict:
         """Perform the actual download sequence with fresh elements"""

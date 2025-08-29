@@ -384,19 +384,50 @@ class BatchProcessor:
             from extractors.newspapers_extractor import NewspapersComExtractor
             
             # Create a new extractor instance for this thread
-            thread_extractor = NewspapersComExtractor(auto_auth=True, project_name=project_name)
+            thread_extractor = NewspapersComExtractor(auto_auth=False, project_name=project_name)
             
-            # Copy authentication state from the main extractor
-            thread_extractor.cookie_manager = self.newspapers_extractor.cookie_manager
+            # Copy authentication cookies but create independent cookie manager to prevent state corruption
+            if self.newspapers_extractor.cookie_manager.cookies:
+                # Create a deep copy of cookies to prevent reference sharing
+                import copy
+                thread_extractor.cookie_manager.cookies = copy.deepcopy(self.newspapers_extractor.cookie_manager.cookies)
+                thread_extractor.cookie_manager.last_extraction = self.newspapers_extractor.cookie_manager.last_extraction
+                logger.debug(f"Copied {len(thread_extractor.cookie_manager.cookies)} cookies to thread extractor")
             
             # Use the thread-safe extractor instance
             result = thread_extractor.extract_from_url(url, player_name=player_name, project_name=project_name)
             
-            # Sync cookies back to main extractor and persistent storage after successful extraction
+            # Handle authentication failures by trying to refresh from main extractor
+            if not result.get('success') and 'authentication' in result.get('error', '').lower():
+                logger.warning("Authentication failure in batch thread, attempting recovery")
+                # Try to test authentication first and refresh if needed
+                try:
+                    # Test current authentication without Streamlit dependencies
+                    auth_valid = self.newspapers_extractor.cookie_manager.test_authentication()
+                    if not auth_valid:
+                        logger.info("Main extractor authentication also invalid, attempting refresh")
+                        # Force refresh without Streamlit error messages
+                        self.newspapers_extractor.cookie_manager.auto_authenticate()
+                    
+                    # Get fresh cookies and retry
+                    if self.newspapers_extractor.cookie_manager.cookies:
+                        logger.info("Got fresh cookies, retrying extraction")
+                        thread_extractor.cookie_manager.cookies = copy.deepcopy(self.newspapers_extractor.cookie_manager.cookies)
+                        thread_extractor.cookie_manager.last_extraction = self.newspapers_extractor.cookie_manager.last_extraction
+                        # Retry the extraction once with fresh authentication
+                        result = thread_extractor.extract_from_url(url, player_name=player_name, project_name=project_name)
+                    else:
+                        logger.error("No valid cookies available for authentication recovery")
+                except Exception as auth_error:
+                    logger.error(f"Authentication recovery failed: {auth_error}")
+            
+            # Only sync fresh cookies back if extraction succeeded and we got new cookies
             if result.get('success') and thread_extractor.cookie_manager.cookies:
-                self.newspapers_extractor.cookie_manager = thread_extractor.cookie_manager
+                # Update main extractor's cookies without replacing the entire cookie manager
+                self.newspapers_extractor.cookie_manager.cookies = thread_extractor.cookie_manager.cookies
+                self.newspapers_extractor.cookie_manager.last_extraction = thread_extractor.cookie_manager.last_extraction
                 self.newspapers_extractor.sync_cookies_to_persistent_storage()
-                logger.debug("Synced cookies after batch extraction")
+                logger.debug("Synced fresh cookies back after successful batch extraction")
             
             return result
         else:
