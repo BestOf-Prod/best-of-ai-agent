@@ -1611,6 +1611,33 @@ class NewspapersComExtractor:
         self.storage_manager = StorageManager(project_name=project_name)
         self.project_name = project_name
         
+        # Add environment detection for Render optimizations
+        self.is_render = 'RENDER' in os.environ or 'RENDER_SERVICE_ID' in os.environ
+        self.is_replit = 'REPL_ID' in os.environ or 'REPL_SLUG' in os.environ
+        
+    def _cleanup_memory_resources(self):
+        """
+        Clean up memory resources during extraction - particularly helpful on Render.
+        """
+        try:
+            import gc
+            gc.collect()  # Force garbage collection
+            
+            # Clear Chrome cache if selenium manager driver is available
+            if hasattr(self.cookie_manager, 'selenium_login_manager'):
+                selenium_manager = self.cookie_manager.selenium_login_manager
+                if hasattr(selenium_manager, 'driver') and selenium_manager.driver:
+                    try:
+                        selenium_manager.driver.execute_script("window.stop();")  # Stop any pending operations
+                        if hasattr(selenium_manager.driver, 'requests'):
+                            selenium_manager.driver.requests.clear()  # Clear selenium-wire requests
+                    except Exception as e:
+                        logger.debug(f"Minor error during memory cleanup: {e}")
+            
+            logger.debug("Memory cleanup completed for NewspapersComExtractor")
+        except Exception as e:
+            logger.warning(f"Error during memory cleanup: {e}")
+        
     def initialize(self, email: str = None, password: str = None) -> bool:
         st.info("🔍 Setting up Newspapers.com authentication...")
         
