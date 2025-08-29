@@ -307,7 +307,7 @@ class SeleniumLoginManager:
             if driver:
                 self.driver = driver
                 # Set context-specific timeouts
-                if self.is_replit_deployment:
+                if self.is_replit_deployment or self.is_render:
                     page_load_timeout = 180  # Even longer for deployment
                     implicit_wait = 30
                     logger.info("Applied deployment-specific timeouts (180s page load, 30s implicit wait)")
@@ -374,7 +374,7 @@ class SeleniumLoginManager:
                 
                 # Wait for the 'ncom' object and its 'isloggedin' property to be accessible and true
                 try:
-                    wait_timeout = 90 if self.is_replit else 30
+                    wait_timeout = 90 if (self.is_replit or self.is_render) else 30
                     WebDriverWait(self.driver, wait_timeout).until(
                         EC.presence_of_element_located((By.CSS_SELECTOR, "span.MemberNavigation_Subscription__RU0Cu"))
                     )
@@ -390,7 +390,7 @@ class SeleniumLoginManager:
 
             # Wait for either (1) email field to appear OR (2) Cloudflare CAPTCHA to appear
             try:
-                wait_timeout = 60 if self.is_replit else 20
+                wait_timeout = 60 if (self.is_replit or self.is_render) else 20
                 WebDriverWait(self.driver, wait_timeout).until(
                     EC.presence_of_element_located((By.ID, "email"))
                 )
@@ -443,7 +443,7 @@ class SeleniumLoginManager:
             login_successful = False
             try:
                 # Wait for either successful login indicators or error messages
-                wait_timeout = 90 if self.is_replit else 30
+                wait_timeout = 90 if (self.is_replit or self.is_render) else 30
                 WebDriverWait(self.driver, wait_timeout).until(
                     lambda d: (
                         d.execute_script("return window.ncom && window.ncom.statsiguser && window.ncom.statsiguser.custom && window.ncom.statsiguser.custom.isloggedin;") or
@@ -641,7 +641,7 @@ class AutoCookieManager:
             driver.get(test_url)
 
             # Wait for the 'ncom' object and its 'isloggedin' property to be accessible and true
-            wait_timeout = 90 if self.selenium_login_manager.is_replit else 30
+            wait_timeout = 90 if (self.selenium_login_manager.is_replit or self.selenium_login_manager.is_render) else 30
             WebDriverWait(driver, wait_timeout).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "span.MemberNavigation_Subscription__RU0Cu"))
             )
@@ -1453,7 +1453,7 @@ class NewspaperImageProcessor:
                 ocr_thread.daemon = True
                 ocr_thread.start()
                 
-                ocr_timeout = 45.0 if self.cookie_manager.selenium_login_manager.is_replit else 15.0
+                ocr_timeout = 45.0 if (self.cookie_manager.selenium_login_manager.is_replit or self.cookie_manager.selenium_login_manager.is_render) else 15.0
                 ocr_thread.join(timeout=ocr_timeout)
                 
                 if ocr_thread.is_alive():
