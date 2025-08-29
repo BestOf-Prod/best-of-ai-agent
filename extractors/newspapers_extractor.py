@@ -1979,36 +1979,33 @@ class NewspapersComExtractor:
                 # Initialize selenium-wire driver
                 driver = wire_webdriver.Chrome(options=chrome_options, seleniumwire_options=wire_options)
             else:
-                # Use the existing driver or create a new one using the standard initialization logic
-                if hasattr(self.cookie_manager.selenium_login_manager, 'driver') and self.cookie_manager.selenium_login_manager.driver:
-                    # Reuse the existing driver if available
-                    driver = self.cookie_manager.selenium_login_manager.driver
-                    logger.info("Reusing existing selenium driver from login manager")
-                else:
-                    # Create a new driver using standard selenium
-                    try:
-                        # For deployment environments, use the same initialization logic as login manager
-                        if is_render or is_replit_deployment:
-                            # Try undetected-chromedriver first for deployments
-                            try:
-                                import undetected_chromedriver as uc
-                                uc_options = uc.ChromeOptions()
-                                for arg in chrome_options.arguments:
-                                    uc_options.add_argument(arg)
-                                driver = uc.Chrome(options=uc_options, headless=True, version_main=None)
-                                logger.info("Successfully initialized undetected Chrome WebDriver for deployment")
-                            except Exception as e:
-                                logger.warning(f"Undetected Chrome WebDriver failed: {str(e)}")
-                                # Fallback to regular selenium
-                                driver = webdriver.Chrome(options=chrome_options)
-                                logger.info("Fallback to regular Chrome WebDriver")
-                        else:
-                            # Standard selenium for non-deployment environments
+                # Always create a fresh driver for batch processing to avoid stale element issues
+                # Reusing drivers across multiple extractions causes state management problems
+                logger.info("Creating fresh selenium driver for extraction (avoids stale element issues)")
+                # Create a new driver using standard selenium
+                try:
+                    # For deployment environments, use the same initialization logic as login manager
+                    if is_render or is_replit_deployment:
+                        # Try undetected-chromedriver first for deployments
+                        try:
+                            import undetected_chromedriver as uc
+                            uc_options = uc.ChromeOptions()
+                            for arg in chrome_options.arguments:
+                                uc_options.add_argument(arg)
+                            driver = uc.Chrome(options=uc_options, headless=True, version_main=None)
+                            logger.info("Successfully initialized undetected Chrome WebDriver for deployment")
+                        except Exception as e:
+                            logger.warning(f"Undetected Chrome WebDriver failed: {str(e)}")
+                            # Fallback to regular selenium
                             driver = webdriver.Chrome(options=chrome_options)
-                            logger.info("Successfully initialized regular Chrome WebDriver")
-                    except Exception as e:
-                        logger.error(f"Failed to create selenium driver: {str(e)}")
-                        raise
+                            logger.info("Fallback to regular Chrome WebDriver")
+                    else:
+                        # Standard selenium for non-deployment environments
+                        driver = webdriver.Chrome(options=chrome_options)
+                        logger.info("Successfully initialized regular Chrome WebDriver")
+                except Exception as e:
+                    logger.error(f"Failed to create selenium driver: {str(e)}")
+                    raise
             
             try:
                 # Add cookies for authentication
@@ -2058,8 +2055,9 @@ class NewspapersComExtractor:
                     try:
                         logger.info(f"Click {i}: {click_config['description']}")
                         
-                        # Wait for element to be clickable (reduced timeout)
-                        element = WebDriverWait(driver, 8).until(
+                        # Wait for element to be clickable (deployment-aware timeout)
+                        click_timeout = 30 if (is_render or is_replit_deployment) else 8
+                        element = WebDriverWait(driver, click_timeout).until(
                             EC.element_to_be_clickable((By.CSS_SELECTOR, click_config["selector"]))
                         )
                         
@@ -2072,7 +2070,8 @@ class NewspapersComExtractor:
                             element.click()
                         except StaleElementReferenceException:
                             logger.warning(f"Stale element for click {i}, re-finding element")
-                            element = WebDriverWait(driver, 5).until(
+                            retry_timeout = 15 if (is_render or is_replit_deployment) else 5
+                            element = WebDriverWait(driver, retry_timeout).until(
                                 EC.element_to_be_clickable((By.CSS_SELECTOR, click_config["selector"]))
                             )
                             element.click()
@@ -2121,8 +2120,9 @@ class NewspapersComExtractor:
                 if not downloaded_files:
                     logger.info("No downloads captured via selenium-wire, attempting direct download click")
                     try:
-                        # Wait for the JPG download button to appear
-                        jpg_button = WebDriverWait(driver, 8).until(
+                        # Wait for the JPG download button to appear (deployment-aware timeout)
+                        jpg_timeout = 30 if (is_render or is_replit_deployment) else 8
+                        jpg_button = WebDriverWait(driver, jpg_timeout).until(
                             EC.element_to_be_clickable((By.CSS_SELECTOR, "a.btn.btn-outline-light.border-primary.jpg"))
                         )
                         
@@ -2133,7 +2133,8 @@ class NewspapersComExtractor:
                             logger.info(f"Captured download button href: {button_href}")
                         except StaleElementReferenceException:
                             logger.warning("Element became stale while getting href, re-finding")
-                            jpg_button = WebDriverWait(driver, 5).until(
+                            retry_jpg_timeout = 15 if (is_render or is_replit_deployment) else 5
+                            jpg_button = WebDriverWait(driver, retry_jpg_timeout).until(
                                 EC.element_to_be_clickable((By.CSS_SELECTOR, "a.btn.btn-outline-light.border-primary.jpg"))
                             )
                             try:
@@ -2173,7 +2174,8 @@ class NewspapersComExtractor:
                             logger.info("Clicked JPG download button")
                         except StaleElementReferenceException:
                             logger.warning("JPG button became stale, re-finding element")
-                            jpg_button = WebDriverWait(driver, 5).until(
+                            retry_click_timeout = 15 if (is_render or is_replit_deployment) else 5
+                            jpg_button = WebDriverWait(driver, retry_click_timeout).until(
                                 EC.element_to_be_clickable((By.CSS_SELECTOR, "a.btn.btn-outline-light.border-primary.jpg"))
                             )
                             jpg_button.click()
@@ -2183,7 +2185,8 @@ class NewspapersComExtractor:
                             # Try to find the button again for any other error
                             try:
                                 logger.info("Attempting to re-locate download button for general error")
-                                jpg_button = WebDriverWait(driver, 5).until(
+                                final_retry_timeout = 15 if (is_render or is_replit_deployment) else 5
+                                jpg_button = WebDriverWait(driver, final_retry_timeout).until(
                                     EC.element_to_be_clickable((By.CSS_SELECTOR, "a.btn.btn-outline-light.border-primary.jpg"))
                                 )
                                 jpg_button.click()
@@ -2266,6 +2269,10 @@ class NewspapersComExtractor:
                         except Exception as e:
                             logger.warning(f"Failed to clean up download directory: {e}")
                             
+                    except TimeoutException as e:
+                        # Specific handling for timeout issues which are common in batch processing
+                        logger.error(f"Timeout during direct download click (likely due to slow page load in deployment): {str(e)}")
+                        # For timeout issues, this may still be a partial success if selenium-wire captured something
                     except Exception as e:
                         logger.error(f"Error during direct download click: {str(e)}")
                 else:
@@ -2278,12 +2285,14 @@ class NewspapersComExtractor:
                     return {'success': False, 'error': "No files were downloaded during the process"}
                 
             finally:
-                # Only quit the driver if we created a new one (not reusing from login manager)
-                if not (hasattr(self.cookie_manager.selenium_login_manager, 'driver') and 
-                       self.cookie_manager.selenium_login_manager.driver == driver):
-                    driver.quit()
-                else:
-                    logger.info("Preserving reused driver from login manager")
+                # Always quit the driver to prevent state management issues in batch processing
+                # This matches the pattern used by the working newspaperarchive_extractor
+                try:
+                    if 'driver' in locals() and driver:
+                        driver.quit()
+                        logger.debug("Successfully closed fresh selenium driver")
+                except Exception as e:
+                    logger.warning(f"Error closing driver: {e}")
                 
         except StaleElementReferenceException as e:
             logger.warning(f"Stale element encountered during download extraction, retrying: {str(e)}")
@@ -2299,43 +2308,13 @@ class NewspapersComExtractor:
             return {'success': False, 'error': f"Download extraction failed: {str(e)}"}
     
     def _extract_with_download_clicks_retry(self, url: str, player_name: Optional[str] = None, project_name: str = "default") -> Dict:
-        """Retry download extraction with fresh driver state after stale element error"""
-        logger.info(f"Retrying extraction with fresh state for URL: {url}")
+        """Retry download extraction with completely fresh driver state after stale element error"""
+        logger.info(f"Retrying extraction with completely fresh driver state for URL: {url}")
         
-        # Get fresh driver reference
-        driver = None
-        try:
-            # Use existing driver but refresh the page to reset DOM state
-            if hasattr(self.cookie_manager.selenium_login_manager, 'driver') and self.cookie_manager.selenium_login_manager.driver:
-                driver = self.cookie_manager.selenium_login_manager.driver
-                logger.info("Refreshing existing driver for retry")
-                driver.refresh()
-                time.sleep(3)  # Allow page to fully load
-            else:
-                logger.error("No driver available for retry")
-                return {'success': False, 'error': 'No driver available for retry'}
-            
-            # Re-navigate to URL with fresh DOM state
-            logger.info(f"Re-navigating to URL for retry: {url}")
-            driver.get(url)
-            
-            # Wait for page to be fully loaded
-            WebDriverWait(driver, 30).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-            time.sleep(2)  # Extra stability wait
-            
-            # Wait for download button (this will get fresh element references)
-            WebDriverWait(driver, 45).until(
-                EC.element_to_be_clickable((By.ID, "btn-print"))
-            )
-            
-            # Continue with normal download process - all elements will be fresh
-            return self._perform_download_sequence(driver, url, player_name, project_name)
-            
-        except Exception as e:
-            logger.error(f"Retry extraction failed: {str(e)}")
-            return {'success': False, 'error': f"Retry extraction failed: {str(e)}"}
+        # For retry, we need a completely fresh extraction to avoid any stale state
+        # This will create a new driver instance and start fresh
+        logger.info("Creating completely fresh extraction for retry")
+        return self.extract_via_download_clicks(url, player_name, project_name)
     
     def _perform_download_sequence(self, driver, url: str, player_name: Optional[str] = None, project_name: str = "default") -> Dict:
         """Perform the actual download sequence with fresh elements"""
