@@ -179,7 +179,6 @@ class SeleniumLoginManager:
                 chrome_options.add_argument('--disable-threaded-scrolling')
                 chrome_options.add_argument('--disable-smooth-scrolling')
                 chrome_options.add_argument('--window-size=800,600')  # Smaller window for deployment
-                chrome_options.add_argument('--remote-debugging-port=9222')  # Enable remote debugging
                 
                 # Render-specific ultra-low memory options
                 if self.is_render:
@@ -190,7 +189,18 @@ class SeleniumLoginManager:
                     chrome_options.add_argument('--aggressive-cache-discard')
                     chrome_options.add_argument('--disable-shared-workers')
                     chrome_options.add_argument('--disable-service-worker-navigation-preload')
-                    logger.info("Applied Render-specific ultra-low memory Chrome options")
+                    
+                    # Connection stability fixes for Render
+                    chrome_options.add_argument('--no-zygote')  # Disable zygote process forking
+                    chrome_options.add_argument('--disable-dev-shm-usage')  # Force use of tmp instead of shared memory  
+                    chrome_options.add_argument('--disable-setuid-sandbox')  # Disable setuid sandbox
+                    chrome_options.add_argument('--remote-debugging-address=127.0.0.1')  # Explicit localhost
+                    chrome_options.add_argument('--remote-debugging-port=0')  # Let system choose port
+                    chrome_options.add_argument('--disable-logging')  # Reduce I/O overhead
+                    chrome_options.add_argument('--disable-crash-reporter')  # Reduce overhead
+                    chrome_options.add_argument('--disable-in-process-stack-traces')  # Reduce memory usage
+                    
+                    logger.info("Applied Render-specific ultra-low memory Chrome options with connection fixes")
                 else:
                     logger.info("Applied deployment-specific Chrome options for resource constraints")
             
@@ -303,8 +313,48 @@ class SeleniumLoginManager:
                             except Exception as e:
                                 logger.error(f"Manual Chrome binary detection failed: {str(e)}")
             
+            # Render-specific fallback with simplified options if all else fails
+            if not driver and self.is_render:
+                logger.warning("All standard Chrome initialization methods failed on Render, trying minimal fallback")
+                try:
+                    # Ultra-minimal Chrome options for Render as last resort
+                    fallback_options = Options()
+                    fallback_options.add_argument('--headless=new')
+                    fallback_options.add_argument('--no-sandbox')
+                    fallback_options.add_argument('--disable-dev-shm-usage')
+                    fallback_options.add_argument('--disable-gpu')
+                    fallback_options.add_argument('--single-process')
+                    fallback_options.add_argument('--disable-web-security')
+                    fallback_options.add_argument('--disable-features=VizDisplayCompositor')
+                    fallback_options.add_argument('--disable-logging')
+                    fallback_options.add_argument('--no-zygote')
+                    fallback_options.add_argument('--remote-debugging-port=0')
+                    
+                    driver = webdriver.Chrome(options=fallback_options)
+                    logger.info("Successfully initialized Chrome WebDriver with minimal fallback options for Render")
+                    
+                except Exception as e:
+                    logger.error(f"Render minimal fallback also failed: {str(e)}")
+                    logger.error("All Chrome WebDriver initialization methods exhausted")
+            
             if driver:
                 self.driver = driver
+                logger.info(f"WebDriver successfully initialized: {type(driver).__name__}")
+                
+                # Verify driver is actually working by testing basic functionality
+                try:
+                    # Test that we can get the session_id (indicates successful connection)
+                    session_id = driver.session_id
+                    logger.info(f"WebDriver session established: {session_id[:8]}...")
+                except Exception as e:
+                    logger.error(f"WebDriver session test failed: {e}")
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+                    self.driver = None
+                    return False
+                
                 # Set context-specific timeouts
                 if self.is_replit_deployment:
                     page_load_timeout = 180  # Even longer for deployment
@@ -355,21 +405,46 @@ class SeleniumLoginManager:
             return False
 
         try:
+            # Verify driver is available before proceeding
+            if not self.driver:
+                logger.error("WebDriver is None after initialization - cannot proceed with authentication")
+                return False
+                
             # If we have cookies, go directly to home page and verify authentication
             if self.cookies:
                 logger.info("Cookies provided, verifying authentication from home page...")
-                self.driver.get('https://www.newspapers.com/')
+                try:
+                    self.driver.get('https://www.newspapers.com/')
+                except Exception as e:
+                    logger.error(f"Failed to navigate to newspapers.com: {e}")
+                    return False
                 
                 # Add cookies to the driver
+                cookies_added = 0
                 for name, value in self.cookies.items():
                     try:
-                        cookie_domain = '.newspapers.com'
-                        self.driver.add_cookie({'name': name, 'value': value, 'domain': cookie_domain, 'path': '/'})
+                        if self.driver:  # Double-check driver is still available
+                            cookie_domain = '.newspapers.com'
+                            self.driver.add_cookie({'name': name, 'value': value, 'domain': cookie_domain, 'path': '/'})
+                            cookies_added += 1
+                        else:
+                            logger.error("Driver became None while adding cookies")
+                            return False
                     except Exception as e:
                         logger.warning(f"Could not add cookie {name} to driver: {e}")
                 
+                logger.info(f"Successfully added {cookies_added}/{len(self.cookies)} cookies to driver")
+                
                 # Refresh page to apply cookies
-                self.driver.refresh()
+                try:
+                    if self.driver:
+                        self.driver.refresh()
+                    else:
+                        logger.error("Driver is None - cannot refresh page")
+                        return False
+                except Exception as e:
+                    logger.error(f"Failed to refresh page after adding cookies: {e}")
+                    return False
                 
                 # Wait for the 'ncom' object and its 'isloggedin' property to be accessible and true
                 try:
@@ -530,10 +605,19 @@ class SeleniumLoginManager:
     def _save_debug_html(self, driver, url: str) -> None:
         """Saves debug HTML and a summary of the page."""
         try:
+            # Check if driver is None
+            if not driver:
+                logger.warning(f"Cannot save debug HTML for {url}: driver is None")
+                return
+                
             debug_dir = "debug_html"
             os.makedirs(debug_dir, exist_ok=True)
             
-            page_html = driver.page_source
+            try:
+                page_html = driver.page_source
+            except Exception as e:
+                logger.warning(f"Cannot get page source for debug HTML: {e}")
+                page_html = f"<!-- Could not get page source: {e} -->"
             
             url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
