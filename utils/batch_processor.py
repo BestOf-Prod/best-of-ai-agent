@@ -529,6 +529,13 @@ class BatchProcessor:
                 simple_result.word_count = result.get('word_count', 0)
                 simple_result.processing_time_seconds = processing_time
                 
+                # Debug: Log what we're storing for this LAPL result
+                has_image_data = bool(simple_result.image_data)
+                has_image_url = bool(simple_result.image_url)
+                image_data_type = type(simple_result.image_data).__name__ if simple_result.image_data else 'None'
+                logger.info(f"LAPL batch result: has_image_data={has_image_data}, has_image_url={has_image_url}, image_data_type={image_data_type}")
+                logger.info(f"LAPL batch result image_url: {simple_result.image_url}")
+                
                 # Store additional LAPL-specific metadata
                 simple_result.metadata = {
                     'content_type': result.get('content_type', 'unknown'),
