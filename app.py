@@ -1272,12 +1272,15 @@ def convert_processed_articles(selected_indices, results):
                 article = results[idx]
                 headline = article.get('headline', 'Untitled Article')
                 source = article.get('source', 'Unknown Source')
+                author = article.get('author', '')
                 date = article.get('date', 'Unknown Date')
                 content = article.get('full_content') or article.get('content', 'No content available')
                 
                 # Create individual markdown content
                 article_markdown = f"# {headline}\n\n"
-                article_markdown += f"*By {source} - {date}*\n\n"
+                if author:
+                    article_markdown += f"*By {author}*\n\n"
+                article_markdown += f"*{source} - {date}*\n\n"
                 article_markdown += f"{content}\n\n"
                 
                 # Add image if available
@@ -1408,6 +1411,7 @@ def convert_processed_articles_to_components(selected_indices, results):
                     'headline': headline,
                     'text': content,
                     'source': source,
+                    'author': article.get('author', ''),
                     'date': date,
                     'url': url,
                     'image_url': article.get('image_url'),  # Pass through the image URL from batch results
@@ -1558,6 +1562,7 @@ def convert_to_single_word_document(selected_indices, results):
                 article = results[idx]
                 headline = article.get('headline', 'Untitled Article')
                 source = article.get('source', 'Unknown Source')
+                author = article.get('author', '')
                 date = article.get('date', 'Unknown Date')
                 content = article.get('full_content') or article.get('content', 'No content available')
                 url = article.get('url', '')
@@ -1566,6 +1571,7 @@ def convert_to_single_word_document(selected_indices, results):
                 article_data = {
                     'headline': headline,
                     'source': source,
+                    'author': author,
                     'date': date,
                     'content': content,
                     'full_content': content,

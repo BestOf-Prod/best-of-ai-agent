@@ -604,7 +604,7 @@ def create_component_documents(article_data, temp_dir):
     
     # Create author document
     author = article_data.get('author')
-    if author and author.strip() and author.strip() != "Unknown Author":
+    if author and author.strip():
         author_doc = Document()
         apply_newspaper_styling(author_doc)
         set_column_layout(author_doc.sections[0], 1)
@@ -1404,6 +1404,7 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
             # Extract article information
             headline = article_data.get('headline', 'Unknown Article')
             source = article_data.get('source', 'Unknown Source')
+            author = article_data.get('author', '')
             date = article_data.get('date', 'Unknown Date')
             content = article_data.get('full_content') or article_data.get('content', 'No content available')
             url = article_data.get('url', '')
@@ -1429,6 +1430,16 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
                 run.font.size = Pt(16)
                 run.font.italic = True
                 drophead_para.space_after = Pt(6)
+            
+            # Add author if available
+            if author and author.strip():
+                author_para = doc.add_paragraph()
+                author_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = author_para.add_run(f"By {author}")
+                run.font.name = font_name
+                run.font.size = Pt(14)
+                run.font.italic = True
+                author_para.space_after = Pt(6)
             
             # Add source and date with enhanced formatting
             if source != 'Unknown Source' or date != 'Unknown Date':
@@ -1558,6 +1569,7 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
             processed_articles.append({
                 'headline': headline,
                 'source': source,
+                'author': author,
                 'date': date,
                 'url': url,
                 'images': len(article_images)

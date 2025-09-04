@@ -640,7 +640,8 @@ def extract_from_url(url, project_name: str = "default"):
                 '.article-meta .name',
                 '.writer',
                 'meta[name="author"]',
-                '.contributor'
+                '.contributor',
+                '.contributor__text--name'
             ]
         
         for selector in author_selectors:

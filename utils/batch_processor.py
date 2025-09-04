@@ -164,6 +164,7 @@ class BatchProcessor:
                                 'success': True,
                                 'headline': result.get('headline', '') if isinstance(result, dict) else getattr(result, 'headline', ''),
                                 'source': result.get('source', '') if isinstance(result, dict) else getattr(result, 'source', ''),
+                                'author': result.get('author', '') if isinstance(result, dict) else getattr(result, 'author', ''),
                                 'date': result.get('date', '') if isinstance(result, dict) else getattr(result, 'date', ''),
                                 'content': '',  # No text content for newspaper clippings
                                 'full_content': '',  # No text content for newspaper clippings
@@ -185,6 +186,7 @@ class BatchProcessor:
                                 'success': True,
                                 'headline': result.get('headline', '') if isinstance(result, dict) else getattr(result, 'headline', ''),
                                 'source': result.get('source', '') if isinstance(result, dict) else getattr(result, 'source', ''),
+                                'author': result.get('author', '') if isinstance(result, dict) else getattr(result, 'author', ''),
                                 'date': result.get('date', '') if isinstance(result, dict) else getattr(result, 'date', ''),
                                 'content': content_preview,  # Keep truncated for display
                                 'full_content': full_content,  # Add full content for ICML conversion
@@ -350,6 +352,7 @@ class BatchProcessor:
                     self.processing_time_seconds = processing_time_seconds
                     self.headline = ""
                     self.source = ""
+                    self.author = ""
                     self.date = ""
                     self.content = ""
                     self.image_data = None
@@ -452,6 +455,7 @@ class BatchProcessor:
                 self.processing_time_seconds = processing_time_seconds
                 self.headline = ""
                 self.source = ""
+                self.author = ""
                 self.date = ""
                 self.content = ""
                 self.text = ""  # alias for content
@@ -601,6 +605,7 @@ class BatchProcessor:
                 self.processing_time_seconds = processing_time_seconds
                 self.headline = ""
                 self.source = ""
+                self.author = ""
                 self.date = ""
                 self.content = ""
                 self.image_data = None
@@ -620,6 +625,7 @@ class BatchProcessor:
                 simple_result = SimpleResult(success=True)
                 simple_result.headline = result.get('headline', 'Article')
                 simple_result.source = result.get('source', 'Unknown')
+                simple_result.author = result.get('author', '')
                 simple_result.date = result.get('date', datetime.now().strftime('%Y-%m-%d'))
                 simple_result.content = result.get('text', '')
                 
