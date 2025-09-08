@@ -27,6 +27,7 @@ import zipfile
 import tempfile
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from typing import List, Dict
 
 # Import existing modules
 from extractors.url_extractor import extract_from_url
@@ -950,17 +951,259 @@ def display_batch_results(config):
         
         with tab2:
             if results['errors']:
-                error_df = pd.DataFrame([
-                    {
-                        'URL': e['url'][:50] + ('...' if len(e['url']) > 50 else ''),
-                        'Error': e.get('error', 'Unknown error')[:100] + ('...' if len(e.get('error', '')) > 100 else ''),
-                        'Processing Time': f"{e['processing_time_seconds']:.2f}s"
-                    }
-                    for e in results['errors']
-                ])
-                st.dataframe(error_df, use_container_width=True)
+                display_retry_interface(results['errors'], config)
             else:
                 st.success("No failed extractions in this batch!")
+
+def display_retry_interface(errors: List[Dict], config: Dict):
+    """Display enhanced retry interface with failure categorization and user selection"""
+    st.write("### ❌ Failed Extractions")
+    
+    # Import the categorization function
+    from utils.batch_processor import categorize_failure
+    
+    # Categorize errors and add category info if not already present
+    categorized_errors = []
+    for error in errors:
+        if 'failure_category' not in error:
+            # Add categorization for backward compatibility
+            failure_info = categorize_failure(error.get('error', ''))
+            error.update(failure_info)
+        categorized_errors.append(error)
+    
+    # Group errors by category for better display
+    error_categories = {}
+    for error in categorized_errors:
+        category = error.get('failure_category', 'unknown')
+        if category not in error_categories:
+            error_categories[category] = []
+        error_categories[category].append(error)
+    
+    # Sort categories by priority (most retryable first)
+    sorted_categories = sorted(error_categories.items(), 
+                             key=lambda x: categorized_errors[0].get('priority', 6) if x[1] else 6)
+    
+    # Display categorized errors
+    st.write(f"**{len(categorized_errors)} failed extractions** organized by failure type:")
+    
+    # Create columns for retry statistics
+    col1, col2, col3 = st.columns(3)
+    retryable_count = sum(1 for e in categorized_errors if e.get('retryable', False))
+    
+    with col1:
+        st.metric("Total Failed", len(categorized_errors))
+    with col2:
+        st.metric("Retryable", retryable_count)
+    with col3:
+        st.metric("Categories", len(error_categories))
+    
+    # Display errors by category with selection options
+    st.write("### 🔄 Select URLs to Retry")
+    
+    selected_for_retry = []
+    
+    for category, category_errors in sorted_categories:
+        category_info = category_errors[0]  # Get category display info
+        
+        with st.expander(f"{category_info.get('icon', '❓')} {category_info.get('display_name', 'Unknown')} "
+                        f"({len(category_errors)} URLs) - {category_info.get('recommendation', 'Review Required')}"):
+            
+            # Show category-level controls
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                if category_info.get('retryable', False):
+                    select_all_key = f"select_all_{category}"
+                    select_all = st.checkbox(f"Select all {category_info.get('display_name')} failures for retry", 
+                                           key=select_all_key,
+                                           value=category_info.get('priority', 6) <= 3)  # Auto-select high priority
+                else:
+                    st.warning(f"⚠️ {category_info.get('recommendation', 'Not recommended for retry')}")
+                    select_all = False
+            
+            with col2:
+                st.write(f"**{len(category_errors)}** URLs")
+            
+            # Display individual URLs in this category
+            for error in category_errors:
+                url_short = error['url'][:60] + ('...' if len(error['url']) > 60 else '')
+                error_short = error.get('error', 'Unknown error')[:80] + ('...' if len(error.get('error', '')) > 80 else '')
+                
+                # Individual URL selection
+                if category_info.get('retryable', False):
+                    url_key = f"retry_{hash(error['url'])}"
+                    url_selected = st.checkbox(
+                        f"**{url_short}**\n{error_short}",
+                        key=url_key,
+                        value=select_all,
+                        help=f"Processing time: {error['processing_time_seconds']:.2f}s"
+                    )
+                    
+                    if url_selected:
+                        selected_for_retry.append(error['url'])
+                else:
+                    st.write(f"🚫 **{url_short}**")
+                    st.caption(f"Error: {error_short}")
+    
+    # Retry button and progress
+    if selected_for_retry:
+        st.write("---")
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
+            st.write(f"**{len(selected_for_retry)} URLs selected for retry**")
+        
+        with col2:
+            retry_delay = st.number_input("Delay (seconds)", min_value=0.5, max_value=10.0, value=2.0, step=0.5, key="retry_delay")
+        
+        with col3:
+            if st.button("🔄 Retry Selected URLs", type="primary", use_container_width=True):
+                execute_retry(selected_for_retry, config, retry_delay)
+    else:
+        if retryable_count > 0:
+            st.info("👆 Select URLs above to retry them")
+        else:
+            st.warning("No retryable URLs found. All failures require manual review.")
+
+def execute_retry(selected_urls: List[str], config: Dict, retry_delay: float):
+    """Execute the retry process for selected URLs"""
+    
+    # Import batch processor
+    from utils.batch_processor import BatchProcessor
+    from utils.storage_manager import StorageManager
+    
+    st.write(f"### 🔄 Retrying {len(selected_urls)} URLs...")
+    
+    # Create progress tracking
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    results_container = st.empty()
+    
+    def retry_progress_callback(processed, total, result):
+        """Progress callback for retry process"""
+        progress = processed / total if total > 0 else 0
+        progress_bar.progress(progress)
+        status_text.text(f"Retrying: {processed}/{total} URLs completed ({progress*100:.1f}%)")
+        
+        # Show real-time retry results
+        with results_container:
+            if 'success' in result and result['success']:
+                st.success(f"✅ Retry Success: {result['url'][:50]}... - {result.get('headline', 'Extracted')}")
+            else:
+                st.error(f"❌ Retry Failed: {result['url'][:50]}... - {result.get('error', 'Failed again')}")
+    
+    try:
+        # Initialize batch processor
+        storage_manager = StorageManager(project_name=config['project_name'])
+        batch_processor = BatchProcessor(
+            storage_manager,
+            max_workers=config['max_workers'],
+            newspapers_extractor=st.session_state.get('newspapers_extractor'),
+            lapl_extractor=st.session_state.get('lapl_extractor')
+        )
+        
+        # Execute retry
+        with st.spinner(f"Retrying {len(selected_urls)} failed URLs..."):
+            retry_results = batch_processor.retry_selected_failures(
+                failed_urls=selected_urls,
+                progress_callback=retry_progress_callback,
+                delay_between_requests=retry_delay,
+                player_name=config.get('player_name'),
+                enable_advanced_processing=config.get('enable_advanced_processing', True),
+                project_name=config['project_name']
+            )
+        
+        # Update session state with retry results
+        if 'batch_results' in st.session_state and st.session_state.batch_results:
+            update_session_with_retry_results(retry_results, selected_urls)
+        
+        # Clear progress elements
+        progress_bar.empty()
+        status_text.empty()
+        results_container.empty()
+        
+        # Show retry summary
+        st.write("### 📊 Retry Results")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Retried", len(selected_urls))
+        with col2:
+            st.metric("Now Successful", retry_results['successful'], 
+                     delta=retry_results['successful'])
+        with col3:
+            st.metric("Still Failed", retry_results['failed'])
+        
+        if retry_results['successful'] > 0:
+            st.success(f"✅ {retry_results['successful']} URLs now successful! "
+                      f"They are available for download.")
+        
+        if retry_results['failed'] > 0:
+            st.warning(f"⚠️ {retry_results['failed']} URLs still failed. "
+                      f"Consider checking credentials or reviewing URLs manually.")
+        
+        # Refresh the page to show updated results
+        time.sleep(2)  # Brief pause to let user see results
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"❌ Retry process failed: {str(e)}")
+        logger.error(f"Retry execution error: {str(e)}", exc_info=True)
+
+def update_session_with_retry_results(retry_results: Dict, retried_urls: List[str]):
+    """Update session state by integrating retry results with existing batch results"""
+    
+    if 'batch_results' not in st.session_state:
+        return
+    
+    current_results = st.session_state.batch_results
+    
+    # Create a mapping of retried URLs to their new results
+    retry_url_to_result = {}
+    for result in retry_results.get('results', []):
+        retry_url_to_result[result['url']] = result
+    
+    retry_url_to_error = {}
+    for error in retry_results.get('errors', []):
+        retry_url_to_error[error['url']] = error
+    
+    # Update existing results
+    updated_results = []
+    updated_errors = []
+    
+    # Process existing successful results (keep as-is)
+    for result in current_results.get('results', []):
+        updated_results.append(result)
+    
+    # Process existing errors - replace with retry results if available
+    for error in current_results.get('errors', []):
+        url = error['url']
+        
+        if url in retry_url_to_result:
+            # This URL succeeded on retry - move to results
+            updated_results.append(retry_url_to_result[url])
+            logger.info(f"Moved retried URL to successful results: {url}")
+        elif url in retry_url_to_error:
+            # This URL failed again on retry - update error info
+            updated_errors.append(retry_url_to_error[url])
+        elif url not in retried_urls:
+            # This URL wasn't retried - keep original error
+            updated_errors.append(error)
+        # Note: URLs that were retried but not in either result/error list are excluded
+    
+    # Update session state
+    st.session_state.batch_results['results'] = updated_results
+    st.session_state.batch_results['errors'] = updated_errors
+    st.session_state.batch_results['successful'] = len(updated_results)
+    st.session_state.batch_results['failed'] = len(updated_errors)
+    
+    # Update statistics
+    total_urls = st.session_state.batch_results.get('total_urls', 0)
+    if total_urls > 0:
+        success_rate = (len(updated_results) / total_urls) * 100
+        st.session_state.batch_results['statistics']['success_rate'] = success_rate
+    
+    logger.info(f"Updated session state: {len(updated_results)} successful, {len(updated_errors)} failed")
 
 
 # Removed - footer function not needed

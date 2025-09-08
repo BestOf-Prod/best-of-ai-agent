@@ -16,6 +16,83 @@ from extractors.newspapers_extractor import extract_from_newspapers_com
 
 logger = logging.getLogger(__name__)
 
+def categorize_failure(error_message: str) -> dict:
+    """
+    Categorize failure types for intelligent retry recommendations
+    
+    Args:
+        error_message (str): The error message from failed extraction
+        
+    Returns:
+        dict: Category information with retry recommendation
+    """
+    error_lower = error_message.lower()
+    
+    # Timeout and network issues - highly retryable
+    if any(keyword in error_lower for keyword in ['timeout', 'timed out', 'connection', 'network', 'dns']):
+        return {
+            'category': 'network_timeout',
+            'display_name': 'Network/Timeout',
+            'retryable': True,
+            'recommendation': 'Retry Recommended',
+            'icon': '⏱️',
+            'priority': 1
+        }
+    
+    # Authentication issues - retryable after credential check
+    if any(keyword in error_lower for keyword in ['authentication', 'login', 'unauthorized', 'credentials', 'cookies']):
+        return {
+            'category': 'authentication',
+            'display_name': 'Authentication',
+            'retryable': True,
+            'recommendation': 'Check Credentials & Retry',
+            'icon': '🔐',
+            'priority': 2
+        }
+    
+    # Rate limiting - retryable with delay
+    if any(keyword in error_lower for keyword in ['rate limit', 'too many requests', '429']):
+        return {
+            'category': 'rate_limit',
+            'display_name': 'Rate Limited',
+            'retryable': True,
+            'recommendation': 'Retry with Delay',
+            'icon': '🚦',
+            'priority': 3
+        }
+    
+    # Server errors - moderately retryable
+    if any(keyword in error_lower for keyword in ['server error', '500', '502', '503', '504']):
+        return {
+            'category': 'server_error',
+            'display_name': 'Server Error',
+            'retryable': True,
+            'recommendation': 'Retry Possible',
+            'icon': '🔧',
+            'priority': 4
+        }
+    
+    # URL/Content issues - generally not retryable
+    if any(keyword in error_lower for keyword in ['404', 'not found', 'invalid url', 'malformed']):
+        return {
+            'category': 'url_invalid',
+            'display_name': 'Invalid URL',
+            'retryable': False,
+            'recommendation': 'Manual Review Required',
+            'icon': '🚫',
+            'priority': 5
+        }
+    
+    # Generic failures - potentially retryable
+    return {
+        'category': 'unknown',
+        'display_name': 'Unknown Error',
+        'retryable': True,
+        'recommendation': 'Retry Possible',
+        'icon': '❓',
+        'priority': 6
+    }
+
 class BatchProcessor:
     """Enhanced batch processor with auto-authentication support"""
     
@@ -119,10 +196,18 @@ class BatchProcessor:
                 except Exception as e:
                     logger.error(f"Error submitting task for URL {url}: {str(e)}")
                     # Store error at correct index to preserve order
+                    error_message = f"Task submission failed: {str(e)}"
+                    failure_info = categorize_failure(error_message)
                     error_dict = {
                         'url': url,
-                        'error': f"Task submission failed: {str(e)}",
-                        'processing_time_seconds': 0.0
+                        'error': error_message,
+                        'processing_time_seconds': 0.0,
+                        'failure_category': failure_info['category'],
+                        'failure_display_name': failure_info['display_name'],
+                        'retryable': failure_info['retryable'],
+                        'recommendation': failure_info['recommendation'],
+                        'icon': failure_info['icon'],
+                        'priority': failure_info['priority']
                     }
                     url_index = url_to_index[url]
                     ordered_errors[url_index] = error_dict
@@ -206,10 +291,18 @@ class BatchProcessor:
                         self.total_successful += 1
                         logger.info(f"Successfully processed: {url}")
                     else:
+                        error_message = result.get('error', '') if isinstance(result, dict) else getattr(result, 'error', 'General extraction failed')
+                        failure_info = categorize_failure(error_message)
                         error_dict = {
                             'url': url,
-                            'error': result.get('error', '') if isinstance(result, dict) else getattr(result, 'error', 'General extraction failed'),
-                            'processing_time_seconds': result.get('processing_time_seconds', 0.0) if isinstance(result, dict) else getattr(result, 'processing_time_seconds', 0.0)
+                            'error': error_message,
+                            'processing_time_seconds': result.get('processing_time_seconds', 0.0) if isinstance(result, dict) else getattr(result, 'processing_time_seconds', 0.0),
+                            'failure_category': failure_info['category'],
+                            'failure_display_name': failure_info['display_name'],
+                            'retryable': failure_info['retryable'],
+                            'recommendation': failure_info['recommendation'],
+                            'icon': failure_info['icon'],
+                            'priority': failure_info['priority']
                         }
                         # Store error at correct index to preserve order
                         ordered_errors[url_index] = error_dict
@@ -222,10 +315,18 @@ class BatchProcessor:
                         progress_callback(processed_count, len(urls), result_for_callback)
                         
                 except concurrent.futures.TimeoutError:
+                    error_message = "Processing timed out after 10 minutes"
+                    failure_info = categorize_failure(error_message)
                     error_dict = {
                         'url': url,
-                        'error': "Processing timed out after 10 minutes",
-                        'processing_time_seconds': 600.0
+                        'error': error_message,
+                        'processing_time_seconds': 600.0,
+                        'failure_category': failure_info['category'],
+                        'failure_display_name': failure_info['display_name'],
+                        'retryable': failure_info['retryable'],
+                        'recommendation': failure_info['recommendation'],
+                        'icon': failure_info['icon'],
+                        'priority': failure_info['priority']
                     }
                     # Store timeout error at correct index to preserve order
                     ordered_errors[url_index] = error_dict
@@ -233,10 +334,18 @@ class BatchProcessor:
                     logger.error(f"Timeout processing {url}")
                     
                 except Exception as e:
+                    error_message = f"Unexpected error: {str(e)}"
+                    failure_info = categorize_failure(error_message)
                     error_dict = {
                         'url': url,
-                        'error': f"Unexpected error: {str(e)}",
-                        'processing_time_seconds': 0.0
+                        'error': error_message,
+                        'processing_time_seconds': 0.0,
+                        'failure_category': failure_info['category'],
+                        'failure_display_name': failure_info['display_name'],
+                        'retryable': failure_info['retryable'],
+                        'recommendation': failure_info['recommendation'],
+                        'icon': failure_info['icon'],
+                        'priority': failure_info['priority']
                     }
                     # Store exception error at correct index to preserve order
                     ordered_errors[url_index] = error_dict
@@ -977,6 +1086,53 @@ class EnhancedBatchProcessor(BatchProcessor):
         
         logger.info(f"Batch processing completed with {retry_count} retry attempts")
         return result
+    
+    def retry_selected_failures(
+        self, 
+        failed_urls: List[str], 
+        progress_callback: Optional[Callable] = None,
+        delay_between_requests: float = 1.0,
+        player_name: Optional[str] = None,
+        enable_advanced_processing: bool = True,
+        project_name: str = "default"
+    ) -> Dict:
+        """
+        Retry processing for user-selected failed URLs
+        
+        Args:
+            failed_urls: List of URLs to retry
+            progress_callback: Function to call with progress updates
+            delay_between_requests: Delay between requests in seconds
+            player_name: Optional player name for filtering
+            enable_advanced_processing: Whether to use advanced image processing
+            project_name: Project name for storage organization
+            
+        Returns:
+            Dictionary with retry results
+        """
+        logger.info(f"Starting user-driven retry for {len(failed_urls)} URLs")
+        
+        # Reset counters for retry session
+        retry_start_time = time.time()
+        
+        # Process the selected failed URLs using the same logic as regular batch processing
+        retry_result = self.process_urls_batch(
+            urls=failed_urls,
+            progress_callback=progress_callback,
+            delay_between_requests=delay_between_requests,
+            player_name=player_name,
+            enable_advanced_processing=enable_advanced_processing,
+            project_name=project_name
+        )
+        
+        # Add retry-specific metadata
+        retry_result['retry_session'] = True
+        retry_result['retry_time_seconds'] = time.time() - retry_start_time
+        retry_result['retried_urls'] = failed_urls
+        
+        logger.info(f"User-driven retry completed: {retry_result['successful']}/{len(failed_urls)} successful")
+        
+        return retry_result
     
     def get_processing_history(self) -> List[Dict]:
         """Get processing history"""
