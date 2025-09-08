@@ -1556,7 +1556,7 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
             is_newspapers_com = 'newspapers.com' in url.lower() if url else False
             if is_newspapers_com and article_images:
                 directory_para = doc.add_paragraph()
-                directory_text = "Directory path where newspaper image is stored: article_images/ (exported with this document)"
+                directory_text = f"Directory path where newspaper image is stored: article_images_{timestamp}/ (exported with this document)"
                 create_body_style(directory_para, directory_text, font_name, False)
                 directory_para.space_after = Pt(12)
             
@@ -1575,16 +1575,18 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
                 'images': len(article_images)
             })
         
+        # Generate timestamp for this execution
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
         # Save the document to current directory if no path specified
         if output_path is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_path = f"all_articles_{timestamp}.docx"
         
         doc.save(output_path)
         logger.info(f"Single Word document created: {output_path}")
         
-        # Create images folder
-        images_dir = os.path.join(os.path.dirname(output_path), "article_images")
+        # Create images folder with unique timestamp to prevent old images from persisting
+        images_dir = os.path.join(os.path.dirname(output_path), f"article_images_{timestamp}")
         os.makedirs(images_dir, exist_ok=True)
         
         # Copy all images to the images folder
