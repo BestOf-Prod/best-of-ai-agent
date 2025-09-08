@@ -985,6 +985,53 @@ class BatchProcessor:
         self.total_failed = 0
         self.start_time = None
         logger.info("Processing statistics reset")
+    
+    def retry_selected_failures(
+        self, 
+        failed_urls: List[str], 
+        progress_callback: Optional[Callable] = None,
+        delay_between_requests: float = 1.0,
+        player_name: Optional[str] = None,
+        enable_advanced_processing: bool = True,
+        project_name: str = "default"
+    ) -> Dict:
+        """
+        Retry processing for user-selected failed URLs
+        
+        Args:
+            failed_urls: List of URLs to retry
+            progress_callback: Function to call with progress updates
+            delay_between_requests: Delay between requests in seconds
+            player_name: Optional player name for filtering
+            enable_advanced_processing: Whether to use advanced image processing
+            project_name: Project name for storage organization
+            
+        Returns:
+            Dictionary with retry results
+        """
+        logger.info(f"Starting user-driven retry for {len(failed_urls)} URLs")
+        
+        # Reset counters for retry session
+        retry_start_time = time.time()
+        
+        # Process the selected failed URLs using the same logic as regular batch processing
+        retry_result = self.process_urls_batch(
+            urls=failed_urls,
+            progress_callback=progress_callback,
+            delay_between_requests=delay_between_requests,
+            player_name=player_name,
+            enable_advanced_processing=enable_advanced_processing,
+            project_name=project_name
+        )
+        
+        # Add retry-specific metadata
+        retry_result['retry_session'] = True
+        retry_result['retry_time_seconds'] = time.time() - retry_start_time
+        retry_result['retried_urls'] = failed_urls
+        
+        logger.info(f"User-driven retry completed: {retry_result['successful']}/{len(failed_urls)} successful")
+        
+        return retry_result
 
 class EnhancedBatchProcessor(BatchProcessor):
     """Enhanced batch processor with additional features for newspapers.com"""
@@ -1086,53 +1133,6 @@ class EnhancedBatchProcessor(BatchProcessor):
         
         logger.info(f"Batch processing completed with {retry_count} retry attempts")
         return result
-    
-    def retry_selected_failures(
-        self, 
-        failed_urls: List[str], 
-        progress_callback: Optional[Callable] = None,
-        delay_between_requests: float = 1.0,
-        player_name: Optional[str] = None,
-        enable_advanced_processing: bool = True,
-        project_name: str = "default"
-    ) -> Dict:
-        """
-        Retry processing for user-selected failed URLs
-        
-        Args:
-            failed_urls: List of URLs to retry
-            progress_callback: Function to call with progress updates
-            delay_between_requests: Delay between requests in seconds
-            player_name: Optional player name for filtering
-            enable_advanced_processing: Whether to use advanced image processing
-            project_name: Project name for storage organization
-            
-        Returns:
-            Dictionary with retry results
-        """
-        logger.info(f"Starting user-driven retry for {len(failed_urls)} URLs")
-        
-        # Reset counters for retry session
-        retry_start_time = time.time()
-        
-        # Process the selected failed URLs using the same logic as regular batch processing
-        retry_result = self.process_urls_batch(
-            urls=failed_urls,
-            progress_callback=progress_callback,
-            delay_between_requests=delay_between_requests,
-            player_name=player_name,
-            enable_advanced_processing=enable_advanced_processing,
-            project_name=project_name
-        )
-        
-        # Add retry-specific metadata
-        retry_result['retry_session'] = True
-        retry_result['retry_time_seconds'] = time.time() - retry_start_time
-        retry_result['retried_urls'] = failed_urls
-        
-        logger.info(f"User-driven retry completed: {retry_result['successful']}/{len(failed_urls)} successful")
-        
-        return retry_result
     
     def get_processing_history(self) -> List[Dict]:
         """Get processing history"""
