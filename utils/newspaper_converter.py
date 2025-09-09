@@ -1397,6 +1397,9 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
         all_images = []
         processed_articles = []
         
+        # Generate timestamp for this execution (needed for image folder naming)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
         # Process each article
         for i, article_data in enumerate(articles_data):
             logger.info(f"Processing article {i+1}/{len(articles_data)}: {article_data.get('headline', 'Unknown')}")
@@ -1574,9 +1577,6 @@ def create_single_word_document_with_images(articles_data, output_path=None, ori
                 'url': url,
                 'images': len(article_images)
             })
-        
-        # Generate timestamp for this execution
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # Save the document to current directory if no path specified
         if output_path is None:
